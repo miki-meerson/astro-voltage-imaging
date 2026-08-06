@@ -1,0 +1,473 @@
+{% extends "base.html" %}
+{% block head_extra %}
+<style>
+  {% if embedded %}header{display:none} main{min-height:100vh; padding:16px}{% endif %}
+  .detector-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .detector-control {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 7px 10px;
+    align-items: center;
+    min-width: 0;
+    padding: 10px;
+    background: #0f141a;
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+  }
+  .detector-control label {
+    color: #cbd6e2;
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .detector-control output {
+    min-width: 54px;
+    color: var(--text);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .detector-control input[type="range"] {
+    grid-column: 1 / -1;
+    padding: 0;
+  }
+  .detector-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  @media (max-width: 900px) {
+    .detector-grid { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>Cell {{ neuron.pipeline_neuron_id }} / Spike Detection</h1>
+    <p class="subtitle">{{ neuron.canonical_id }}</p>
+  </div>
+  <div class="toolbar">
+    <a class="button secondary" href="/neurons/{{ neuron.id }}{% if embedded %}?embedded=1{% endif %}">Back To Cell</a>
+    <button id="save-spikes">Save Edits</button>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="toolbar">
+    <button class="secondary" id="zoom-in">Zoom In</button>
+    <button class="secondary" id="zoom-out">Zoom Out</button>
+    <button class="secondary" id="left">Left</button>
+    <button class="secondary" id="right">Right</button>
+    <input id="frame-input" type="number" min="0" placeholder="Frame">
+  </div>
+  <div class="detector-grid">
+    <div class="detector-control">
+      <label for="mad-factor">MAD Threshold</label>
+      <output id="mad-factor-value"></output>
+      <input id="mad-factor" data-detect-param="mad_factor" type="range" min="0.5" max="8" step="0.1">
+    </div>
+    <div class="detector-control">
+      <label for="min-amplitude">Min Amplitude</label>
+      <output id="min-amplitude-value"></output>
+      <input id="min-amplitude" data-detect-param="min_amplitude" type="range" min="0" max="2" step="0.01">
+    </div>
+    <div class="detector-control">
+      <label for="min-width">Min Width</label>
+      <output id="min-width-value"></output>
+      <input id="min-width" data-detect-param="min_width" type="range" min="1" max="120" step="1">
+    </div>
+    <div class="detector-control">
+      <label for="min-subthreshold">Min Subthreshold</label>
+      <output id="min-subthreshold-value"></output>
+      <input id="min-subthreshold" data-detect-param="min_subthreshold" type="range" min="0" max="1" step="0.01">
+    </div>
+    <div class="detector-control">
+      <label for="min-ratio">Min Ratio</label>
+      <output id="min-ratio-value"></output>
+      <input id="min-ratio" data-detect-param="min_ratio" type="range" min="0" max="2" step="0.01">
+    </div>
+    <div class="detector-control">
+      <label for="min-distance">Min Distance</label>
+      <output id="min-distance-value"></output>
+      <input id="min-distance" data-detect-param="min_distance" type="range" min="0" max="500" step="1">
+    </div>
+  </div>
+  <div class="detector-status">
+    <button class="secondary" id="redetect-now">Recalculate</button>
+    <button class="secondary" id="reset-detection">Reset Parameters</button>
+    <span id="detection-stats" class="chip">Detection Not Loaded</span>
+    <span id="detection-status" class="muted"></span>
+  </div>
+  <canvas id="spike-canvas" class="trace-canvas" style="height:560px; margin-top:12px;"></canvas>
+  <div class="toolbar" style="margin-top:12px">
+    <span id="selected-info" class="chip">No Spike Selected</span>
+    <button class="secondary" data-label="simple">Set Simple</button>
+    <button class="secondary" data-label="complex">Set Complex</button>
+    <button class="secondary" data-label="exclude">Exclude</button>
+    <button class="danger" data-label="delete">Delete</button>
+  </div>
+  <p id="save-status" class="muted"></p>
+</section>
+
+<script>
+const canvas = document.getElementById("spike-canvas");
+const ctx = canvas.getContext("2d");
+let trace = [], peaks = [], labels = [], selected = -1, fps = 1;
+let start = 0, stop = 1000;
+let initialDetectionParams = {}, detectTimer = null, detectRequestId = 0;
+const colors = {simple: "#4fa3ff", complex: "#f0a33a", exclude: "#e05260"};
+const plot = {left: 76, right: 22, top: 28, bottom: 62};
+const paramDefaults = {
+  mad_factor: 2.8,
+  min_amplitude: 0.30,
+  min_width: 18.0,
+  min_subthreshold: 0.10,
+  min_ratio: 0.30,
+  min_distance: 0,
+};
+const paramFormat = {
+  mad_factor: v => Number(v).toFixed(1),
+  min_amplitude: v => Number(v).toFixed(2),
+  min_width: v => Math.round(Number(v)).toString(),
+  min_subthreshold: v => Number(v).toFixed(2),
+  min_ratio: v => Number(v).toFixed(2),
+  min_distance: v => Math.round(Number(v)).toString(),
+};
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const w = Math.max(900, Math.round(rect.width * dpr));
+  const h = Math.max(420, Math.round(rect.height * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+}
+function yRange() {
+  const part = trace.slice(start, stop).filter(Number.isFinite);
+  const peakVals = peaks
+    .map(f => Number(f))
+    .filter(f => f >= start && f < stop && Number.isFinite(trace[f]))
+    .map(f => trace[f]);
+  const values = part.concat(peakVals);
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (!isFinite(lo) || !isFinite(hi) || hi <= lo) return [0, 1];
+  const pad = Math.max((hi - lo) * 0.14, 0.02);
+  return [lo - pad, hi + pad];
+}
+function plotWidth() { return canvas.width - plot.left - plot.right; }
+function plotHeight() { return canvas.height - plot.top - plot.bottom; }
+function xToFrame(x) {
+  const frac = Math.max(0, Math.min(1, (x - plot.left) / Math.max(1, plotWidth())));
+  return Math.round(start + frac * (stop - start));
+}
+function frameToX(f) {
+  return plot.left + (f - start) / Math.max(1, stop - start) * plotWidth();
+}
+function valToY(v, lo, hi) {
+  return plot.top + (1 - (v - lo) / Math.max(1e-9, hi - lo)) * plotHeight();
+}
+function fmtTime(frame) {
+  const seconds = frame / Math.max(1e-9, fps);
+  if (seconds >= 60) return `${(seconds / 60).toFixed(1)} min`;
+  return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+}
+function fmtDff(v) {
+  return Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2);
+}
+function niceTicks(lo, hi, n = 5) {
+  const ticks = [];
+  if (!isFinite(lo) || !isFinite(hi) || hi <= lo) return [lo, hi];
+  const raw = (hi - lo) / Math.max(1, n - 1);
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 5, 10].map(x => x * pow).find(x => x >= raw) || raw;
+  const first = Math.ceil(lo / step) * step;
+  for (let v = first; v <= hi + step * 0.5; v += step) ticks.push(v);
+  return ticks;
+}
+function drawAxes(lo, hi) {
+  ctx.save();
+  ctx.strokeStyle = "#43505f";
+  ctx.fillStyle = "#aeb9c6";
+  ctx.lineWidth = 1;
+  ctx.font = "16px Segoe UI";
+  ctx.textBaseline = "middle";
+  ctx.beginPath();
+  ctx.moveTo(plot.left, plot.top);
+  ctx.lineTo(plot.left, plot.top + plotHeight());
+  ctx.lineTo(plot.left + plotWidth(), plot.top + plotHeight());
+  ctx.stroke();
+
+  for (const v of niceTicks(lo, hi, 5)) {
+    const y = valToY(v, lo, hi);
+    ctx.strokeStyle = "#222c36";
+    ctx.beginPath();
+    ctx.moveTo(plot.left, y);
+    ctx.lineTo(plot.left + plotWidth(), y);
+    ctx.stroke();
+    ctx.strokeStyle = "#43505f";
+    ctx.beginPath();
+    ctx.moveTo(plot.left - 5, y);
+    ctx.lineTo(plot.left, y);
+    ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.fillText(fmtDff(v), plot.left - 10, y);
+  }
+
+  const xTicks = 5;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (let i = 0; i < xTicks; i++) {
+    const f = Math.round(start + i / (xTicks - 1) * (stop - start));
+    const x = frameToX(f);
+    ctx.strokeStyle = "#43505f";
+    ctx.beginPath();
+    ctx.moveTo(x, plot.top + plotHeight());
+    ctx.lineTo(x, plot.top + plotHeight() + 5);
+    ctx.stroke();
+    ctx.fillText(fmtTime(f), x, plot.top + plotHeight() + 12);
+  }
+
+  ctx.fillStyle = "#d6dde6";
+  ctx.textAlign = "center";
+  ctx.fillText("Time", plot.left + plotWidth() / 2, canvas.height - 18);
+  ctx.save();
+  ctx.translate(22, plot.top + plotHeight() / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText("dF/F", 0, 0);
+  ctx.restore();
+  ctx.restore();
+}
+function draw() {
+  resizeCanvas();
+  ctx.fillStyle = "#0b0f14";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const [lo, hi] = yRange();
+  drawAxes(lo, hi);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(plot.left, plot.top, plotWidth(), plotHeight());
+  ctx.clip();
+  const grad = ctx.createLinearGradient(plot.left, 0, plot.left + plotWidth(), 0);
+  grad.addColorStop(0, "#8cc7ff");
+  grad.addColorStop(0.55, "#d6dde6");
+  grad.addColorStop(1, "#37c6a6");
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let moved = false;
+  for (let f = start; f < stop && f < trace.length; f++) {
+    if (!Number.isFinite(trace[f])) continue;
+    const x = frameToX(f), y = valToY(trace[f], lo, hi);
+    if (!moved) { ctx.moveTo(x, y); moved = true; } else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  for (let i = 0; i < peaks.length; i++) {
+    const f = Number(peaks[i]);
+    if (f < start || f >= stop) continue;
+    const value = trace[f];
+    if (!isFinite(value)) continue;
+    const x = frameToX(f), y = valToY(value, lo, hi);
+    ctx.fillStyle = colors[labels[i]] || "#d6dde6";
+    ctx.beginPath();
+    ctx.arc(x, y, selected === i ? 8 : 5, 0, Math.PI * 2);
+    ctx.fill();
+    if (selected === i) {
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+  ctx.fillStyle = "#d6dde6";
+  ctx.font = "18px Segoe UI";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(`Frames ${start} - ${stop}  (${fmtTime(start)} - ${fmtTime(stop)})`, plot.left, 22);
+  const legendY = 24;
+  let lx = canvas.width - 360;
+  for (const item of [["simple", colors.simple], ["complex", colors.complex], ["excluded", colors.exclude]]) {
+    ctx.fillStyle = item[1];
+    ctx.beginPath();
+    ctx.arc(lx, legendY - 5, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#d6dde6";
+    ctx.fillText(item[0], lx + 12, legendY);
+    lx += item[0] === "complex" ? 112 : 96;
+  }
+}
+function updateSelected() {
+  const el = document.getElementById("selected-info");
+  el.textContent = selected >= 0 ? `Frame ${peaks[selected]} / ${labels[selected]}` : "No Spike Selected";
+}
+function updateDetectionStats(data = null) {
+  const counts = data || countLabels();
+  document.getElementById("detection-stats").textContent =
+    `${counts.n_total} peaks / ${counts.n_simple} simple / ${counts.n_complex} complex`;
+}
+function countLabels() {
+  let nSimple = 0, nComplex = 0;
+  for (const label of labels) {
+    if (label === "simple") nSimple += 1;
+    if (label === "complex") nComplex += 1;
+  }
+  return {n_total: peaks.length, n_simple: nSimple, n_complex: nComplex};
+}
+function getDetectionParams() {
+  const params = {};
+  document.querySelectorAll("[data-detect-param]").forEach(input => {
+    const key = input.dataset.detectParam;
+    params[key] = key === "min_distance" ? Math.round(Number(input.value)) : Number(input.value);
+  });
+  return params;
+}
+function setDetectionParams(params) {
+  const merged = {...paramDefaults, ...(params || {})};
+  document.querySelectorAll("[data-detect-param]").forEach(input => {
+    const key = input.dataset.detectParam;
+    input.value = merged[key];
+    updateParamOutput(input);
+  });
+}
+function updateParamOutput(input) {
+  const output = document.getElementById(`${input.id}-value`);
+  const formatter = paramFormat[input.dataset.detectParam] || (v => String(v));
+  if (output) output.value = formatter(input.value);
+}
+function scheduleDetect(delay = 180) {
+  window.clearTimeout(detectTimer);
+  document.getElementById("detection-status").textContent = "Updating detection preview...";
+  detectTimer = window.setTimeout(runDetection, delay);
+}
+async function runDetection() {
+  const requestId = ++detectRequestId;
+  const status = document.getElementById("detection-status");
+  status.textContent = "Detecting...";
+  try {
+    const res = await fetch("/neurons/{{ neuron.id }}/spikes/detect", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(getDetectionParams()),
+    });
+    const data = await res.json();
+    if (requestId !== detectRequestId) return;
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    peaks = (data.peaks || []).map(Number);
+    labels = (data.labels || []).map(String);
+    selected = -1;
+    updateSelected();
+    updateDetectionStats(data);
+    draw();
+    status.textContent = "Preview updated. Save Edits to keep these peaks.";
+  } catch (error) {
+    if (requestId === detectRequestId) status.textContent = error.message || "Detection failed.";
+  }
+}
+function addPeak(frame, label) {
+  frame = Math.max(0, Math.min(trace.length - 1, Number(frame)));
+  const idx = peaks.findIndex(p => Math.abs(p - frame) <= 1);
+  if (idx >= 0) { selected = idx; labels[idx] = label; }
+  else { peaks.push(frame); labels.push(label); selected = peaks.length - 1; }
+  updateSelected(); updateDetectionStats(); draw();
+}
+canvas.addEventListener("click", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) * canvas.width / rect.width;
+  const y = (event.clientY - rect.top) * canvas.height / rect.height;
+  if (x < plot.left || x > plot.left + plotWidth() || y < plot.top || y > plot.top + plotHeight()) return;
+  const frame = xToFrame(x);
+  let best = -1, dist = Infinity;
+  for (let i = 0; i < peaks.length; i++) {
+    const d = Math.abs(peaks[i] - frame);
+    if (d < dist) { dist = d; best = i; }
+  }
+  selected = dist <= Math.max(4, (stop - start) * 0.01) ? best : -1;
+  updateSelected(); draw();
+});
+canvas.addEventListener("dblclick", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) * canvas.width / rect.width;
+  const y = (event.clientY - rect.top) * canvas.height / rect.height;
+  if (x < plot.left || x > plot.left + plotWidth() || y < plot.top || y > plot.top + plotHeight()) return;
+  addPeak(xToFrame(x), "simple");
+});
+document.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
+  if (selected < 0) return;
+  const label = btn.dataset.label;
+  if (label === "delete") { peaks.splice(selected, 1); labels.splice(selected, 1); selected = -1; }
+  else labels[selected] = label;
+  updateSelected(); updateDetectionStats(); draw();
+}));
+function shift(frac) {
+  const span = stop - start, delta = Math.round(span * frac);
+  start = Math.max(0, Math.min(trace.length - span, start + delta));
+  stop = start + span; draw();
+}
+function zoom(factor) {
+  const mid = (start + stop) / 2;
+  const span = Math.max(100, Math.round((stop - start) * factor));
+  start = Math.max(0, Math.round(mid - span / 2));
+  stop = Math.min(trace.length, start + span);
+  start = Math.max(0, stop - span); draw();
+}
+document.getElementById("zoom-in").onclick = () => zoom(0.55);
+document.getElementById("zoom-out").onclick = () => zoom(1.8);
+document.getElementById("left").onclick = () => shift(-0.5);
+document.getElementById("right").onclick = () => shift(0.5);
+document.getElementById("add-simple").onclick = () => addPeak(document.getElementById("frame-input").value, "simple");
+document.getElementById("add-complex").onclick = () => addPeak(document.getElementById("frame-input").value, "complex");
+document.querySelectorAll("[data-detect-param]").forEach(input => {
+  input.addEventListener("input", () => {
+    updateParamOutput(input);
+    scheduleDetect();
+  });
+  input.addEventListener("change", () => scheduleDetect(0));
+});
+document.getElementById("redetect-now").onclick = () => {
+  window.clearTimeout(detectTimer);
+  runDetection();
+};
+document.getElementById("reset-detection").onclick = () => {
+  setDetectionParams(initialDetectionParams);
+  runDetection();
+};
+document.getElementById("save-spikes").onclick = async () => {
+  const status = document.getElementById("save-status");
+  status.textContent = "Saving...";
+  const pairs = peaks.map((p, i) => ({p, label: labels[i]})).sort((a, b) => a.p - b.p);
+  const res = await fetch("/neurons/{{ neuron.id }}/spikes/save", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({peaks: pairs.map(x => x.p), labels: pairs.map(x => x.label)}),
+  });
+  const data = await res.json();
+  if (data.ok) {
+    status.textContent = `Saved ${data.n_peaks} spikes. Returning to cell view...`;
+    window.location.href = "/neurons/{{ neuron.id }}{% if embedded %}?embedded=1{% endif %}";
+  } else {
+    status.textContent = data.error || "Save failed.";
+  }
+};
+fetch("/neurons/{{ neuron.id }}/spikes/data").then(r => r.json()).then(data => {
+  trace = data.trace || [];
+  fps = Number(data.fps || 1);
+  peaks = data.peaks || [];
+  labels = data.labels || [];
+  initialDetectionParams = {...paramDefaults, ...(data.params || {})};
+  setDetectionParams(initialDetectionParams);
+  updateDetectionStats();
+  start = 0;
+  stop = trace.length;
+  draw();
+});
+new ResizeObserver(draw).observe(canvas);
+window.addEventListener("resize", draw);
+</script>
+{% endblock %}

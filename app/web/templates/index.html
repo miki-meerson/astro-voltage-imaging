@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block head_extra %}{% if active %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>Experiments</h1>
+    <p class="subtitle">Successful experiment registry and latest analysis results.</p>
+  </div>
+</div>
+
+<div class="grid">
+  <section class="panel">
+    <h2>Add Experiment</h2>
+    <form method="post" action="/experiments/add" class="form-row">
+      <input name="path" placeholder="Z:\...\z18-x2" required>
+      <a class="button secondary" href="/browse">Browse</a>
+      <button>Add and Run</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Discovery Scan</h2>
+    <form method="post" action="/scan" class="form-row">
+      <input name="parent" value="{{ settings.scan_parent }}">
+      <button>Run Scan</button>
+    </form>
+    <p class="muted">Manual scan. Newly added experiments automatically start spike detection, behavior split, and anatomy crop.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Rerun Failed</h2>
+    <div class="toolbar">
+      <form method="post" action="/runs/rerun-failed"><button>All Failed</button></form>
+      <form method="post" action="/runs/rerun-failed">
+        <input type="hidden" name="step" value="spike">
+        <button class="secondary">Spike</button>
+      </form>
+      <form method="post" action="/runs/rerun-failed">
+        <input type="hidden" name="step" value="behavior">
+        <button class="secondary">Behavior</button>
+      </form>
+      <form method="post" action="/runs/rerun-failed">
+        <input type="hidden" name="step" value="anatomy">
+        <button class="secondary">Anatomy</button>
+      </form>
+      <form method="post" action="/runs/rerun-failed">
+        <input type="hidden" name="step" value="sta">
+        <button class="secondary">STA Maps</button>
+      </form>
+    </div>
+    <p class="muted">Creates a fresh run for each experiment whose latest failed step has no active rerun.</p>
+  </section>
+</div>
+
+<div class="table-wrap">
+  <div class="table-toolbar">
+    <a class="button {{ 'secondary' if favorites_only else '' }}" href="/">All Experiments</a>
+    <a class="button {{ '' if favorites_only else 'secondary' }}" href="/?favorites=1">Starred Experiments</a>
+  </div>
+  <table>
+    <tr>
+      <th></th>
+      <th>Experiment</th>
+      <th>Date Desc</th>
+      <th>Metadata</th>
+      <th>Validation</th>
+      <th>Neurons</th>
+      <th>Jobs</th>
+      <th>Source</th>
+      <th></th>
+    </tr>
+    {% for e in experiments %}
+    <tr>
+      <td>
+        <form method="post" action="/experiments/{{ e.id }}/favorite">
+          <input type="hidden" name="favorite" value="{{ 0 if e.is_favorite else 1 }}">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="icon-button" title="{{ 'Unstar' if e.is_favorite else 'Star' }}" aria-label="{{ 'Unstar experiment' if e.is_favorite else 'Star experiment' }}">
+            <i class="{{ 'fa-solid' if e.is_favorite else 'fa-regular' }} fa-star"></i>
+          </button>
+        </form>
+      </td>
+      <td><a href="/experiments/{{ e.id }}">{{ e.canonical_id }}</a></td>
+      <td>{{ e.recording_date }}</td>
+      <td>{{ e.cage }} / {{ e.mouse_name }} / {{ e.behavior }} / {{ e.fov }} / z{{ e.z_plane }} x{{ e.zoom }}</td>
+      <td><span class="chip {{ e.validation_state }}">{{ e.validation_state }}</span></td>
+      <td>{{ e.neuron_count }}</td>
+      <td>
+        {% if e.job_status == "running" %}
+        <span class="running">running: {{ step_labels[e.job_step] if step_labels and e.job_step in step_labels else e.job_step|title }}</span>
+        {% elif e.job_status == "pending" %}
+        <span class="pending">pending: {{ step_labels[e.job_step] if step_labels and e.job_step in step_labels else e.job_step|title }}</span>
+        {% elif e.job_status == "failed" %}
+        <span class="failed">failed: {{ step_labels[e.job_step] if step_labels and e.job_step in step_labels else e.job_step|title }}</span>
+        {% elif e.job_status == "completed" %}
+        <span class="completed">completed</span>
+        {% else %}
+        <span class="muted">no runs</span>
+        {% endif %}
+      </td>
+      <td class="path">{{ e.source_path }}</td>
+      <td>
+        <form method="post" action="/experiments/{{ e.id }}/remove">
+          <button class="danger">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if last_scan %}
+<section class="panel">
+  <h2>Latest Scan</h2>
+  <p class="muted">{{ last_scan.started_at }} to {{ last_scan.completed_at }}</p>
+  <pre>{{ last_scan.summary_json }}</pre>
+</section>
+{% endif %}
+{% endblock %}

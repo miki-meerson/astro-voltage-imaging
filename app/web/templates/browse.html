@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>Browse Folders</h1>
+    <p class="subtitle">{{ current }}</p>
+  </div>
+  <form method="post" action="/experiments/add">
+    <input type="hidden" name="path" value="{{ current }}">
+    <button>Use This Folder</button>
+  </form>
+</div>
+
+<section class="panel">
+  <div class="tile-grid">
+    {% if parent %}
+    <a class="tile" href="/browse?path={{ parent|urlencode }}">..</a>
+    {% endif %}
+    {% for d in dirs %}
+    <a class="tile" href="/browse?path={{ d|urlencode }}">
+      <strong>{{ d.name }}</strong>
+      <p class="path">{{ d }}</p>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

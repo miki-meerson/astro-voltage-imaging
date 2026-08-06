@@ -1,0 +1,741 @@
+{% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .movie-shell {
+    display: grid;
+    gap: 12px;
+  }
+  .movie-stage {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 320px;
+    overflow: hidden;
+    background: #05080c;
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+  }
+  .movie-stage img {
+    display: block;
+    width: 100%;
+    max-height: 620px;
+    object-fit: contain;
+    image-rendering: auto;
+  }
+  .movie-stage .movie-buffer {
+    grid-area: 1 / 1;
+    opacity: 0;
+    visibility: hidden;
+  }
+  .movie-stage .movie-buffer.active {
+    opacity: 1;
+    visibility: visible;
+  }
+  .movie-stage .movie-message {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    color: var(--muted);
+    text-align: center;
+    background: rgba(5, 8, 12, 0.86);
+  }
+  .movie-controls {
+    display: grid;
+    grid-template-columns: auto minmax(220px, 1fr) 116px 130px;
+    gap: 10px;
+    align-items: center;
+  }
+  .movie-controls input[type="range"] {
+    padding: 0;
+  }
+  .movie-readout {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .review-console {
+    display: grid;
+    gap: 12px;
+  }
+  .review-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .review-actions button,
+  .review-actions .button {
+    min-width: 0;
+  }
+  .review-current {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  @media (max-width: 900px) {
+    .movie-controls { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>{{ exp.canonical_id }}</h1>
+    <p class="subtitle">{{ exp.source_path }}</p>
+    <p class="muted">{{ confirmed_count }} confirmed cell(s) in the scientific database.</p>
+  </div>
+  <form method="post" action="/experiments/{{ exp.id }}/validate">
+    <button class="secondary">Validate Again</button>
+  </form>
+</div>
+
+<section class="panel" id="pb-movie">
+  <div class="page-head">
+    <div>
+      <h2>Photobleaching Corrected Movie</h2>
+      <p id="movie-summary" class="muted">Loading movie metadata...</p>
+    </div>
+    <select id="movie-kind" style="max-width:180px">
+      <option value="astro">Astro</option>
+      <option value="neuron">Neuron</option>
+    </select>
+  </div>
+  <div class="movie-shell">
+    <div class="movie-stage">
+      <img id="movie-frame-a" class="movie-buffer active" alt="Photobleaching corrected movie frame" decoding="async">
+      <img id="movie-frame-b" class="movie-buffer" alt="" decoding="async" aria-hidden="true">
+      <div id="movie-message" class="movie-message">Loading movie...</div>
+    </div>
+    <div class="movie-controls">
+      <button class="secondary" id="movie-play" type="button">Play</button>
+      <input id="movie-scrub" type="range" min="0" max="0" value="0" step="1">
+      <input id="movie-frame-input" type="number" min="0" value="0">
+      <select id="movie-rate">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+      </select>
+    </div>
+    <div class="toolbar">
+      <span id="movie-readout" class="chip movie-readout">Frame 0 / 0</span>
+      <span id="movie-load-state" class="muted"></span>
+    </div>
+  </div>
+</section>
+
+{% if notice == "already_registered" %}
+<section class="panel">
+  <span class="chip completed">Already Registered</span>
+  <p class="muted">This experiment was already in the registry, so no duplicate record was created.</p>
+</section>
+{% endif %}
+
+<div class="grid">
+  {% if not validation_all_ok %}
+  <section class="panel">
+    <h2>Validation</h2>
+    <p><span class="chip {{ exp.validation_state }}">{{ exp.validation_state }}</span></p>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Check</th><th>Status</th><th>File</th></tr>
+        {% for row in validation_rows %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td><span class="chip {{ 'completed' if row.status == 'OK' else 'failed' }}">{{ row.status }}</span></td>
+          <td>{{ row.detail }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Run Analysis</h2>
+    {% for step in ["spike","behavior","anatomy","sta"] %}
+    <form method="post" action="/experiments/{{ exp.id }}/run" class="run-form" data-step-form="{{ step }}">
+      <input type="hidden" name="step" value="{{ step }}">
+      <span class="chip">{{ step_labels[step] }}</span>
+      <span class="muted">{{ "Cluster" if step == "sta" else "Local" }}</span>
+      {% if step == "sta" %}
+      <div class="checkbox-strip">
+        {% for option in sta_result_types %}
+        <label class="check">
+          <input type="checkbox" name="result_types" value="{{ option.value }}" {% if option.checked %}checked{% endif %} {% if option.disabled %}disabled{% endif %}>
+          {{ option.label }}{% if option.note %} <span class="muted">({{ option.note }})</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <span></span>
+      {% endif %}
+      <button>Run</button>
+    </form>
+    {% endfor %}
+  </section>
+</div>
+
+<section class="panel" id="behavior-results">
+  <div class="page-head">
+    <div>
+      <h2>Behavior Split</h2>
+      <p id="behavior-summary" class="muted">Loading behavior results...</p>
+    </div>
+    <span id="behavior-run" class="chip">No Run</span>
+  </div>
+  <div class="behavior-legend" aria-label="Behavior split legend">
+    <span><i class="legend-line velocity"></i> Mouse Velocity</span>
+    <span><i class="legend-fill active"></i> Active Frames</span>
+    <span><i class="legend-fill inactive"></i> Inactive Frames</span>
+    <span><i class="legend-fill unlabeled"></i> Covered But Unlabeled</span>
+    <span><i class="legend-line threshold"></i> Speed Threshold</span>
+  </div>
+  <canvas id="behavior-canvas" class="trace-canvas" style="height:360px"></canvas>
+</section>
+
+<section class="panel">
+  <div class="page-head">
+    <div>
+      <h2>Cell Review</h2>
+      <p id="review-summary" class="muted">Loading review state...</p>
+    </div>
+    <div class="toolbar">
+      <label class="check" style="width:auto"><input id="significant-only" type="checkbox"> Significant Only</label>
+      <button class="secondary" id="run-sta-after-review" type="button">Rerun STA Maps</button>
+    </div>
+  </div>
+  <div class="review-console">
+    <select id="neuron-select">
+      <option value="">Select a neuron...</option>
+      {% for n in neurons %}
+      <option value="{{ n.id }}" data-cell-id="{{ n.pipeline_neuron_id }}" data-base-label="Cell {{ n.pipeline_neuron_id }}" data-significant="0" data-reviewed="0" {% if selected_neuron_id|string == n.id|string %}selected{% endif %}>Cell {{ n.pipeline_neuron_id }}</option>
+      {% endfor %}
+    </select>
+    <div class="review-current">
+      <span id="current-cell-chip" class="chip">No Cell Selected</span>
+      <span id="current-review-chip" class="chip">Unreviewed</span>
+      <span id="current-peak-summary" class="muted"></span>
+    </div>
+    <div class="review-actions">
+      <button class="secondary" id="prev-cell" type="button">Previous Cell</button>
+      <button class="secondary" id="next-cell" type="button">Next Cell</button>
+      <button class="secondary" id="next-unreviewed" type="button">Next Unreviewed</button>
+      <button class="secondary" id="mark-reviewed" type="button">Mark Reviewed</button>
+    </div>
+  </div>
+</section>
+
+<section class="panel" id="cell-view" {% if not selected_neuron_id %}style="display:none"{% endif %}>
+  <iframe
+    id="cell-frame"
+    src="{% if selected_neuron_id %}/neurons/{{ selected_neuron_id }}?embedded=1{% endif %}"
+    title="Cell Review"
+    style="width:100%; height: 1500px; max-height: none; border:1px solid var(--line); border-radius:8px; background:#0e1116;"
+  ></iframe>
+</section>
+
+<section class="panel" id="runs">
+  <h2>Runs</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>ID</th><th>Step</th><th>Status</th><th>Progress</th><th>Logs</th><th>Failure Reason</th><th>Output</th><th>Artifacts</th><th>Started</th><th>Ended</th></tr>
+      {% for r in runs %}
+      <tr>
+        <td><a href="/runs/{{ r.id }}">Run {{ r.id }}</a></td>
+        <td>{{ r.label }}</td>
+        <td><span class="chip {{ r.status }}">{{ r.status }}</span></td>
+        <td><div class="progress {{ r.status }}" style="--value: {{ r.progress }}%"><span></span></div></td>
+        <td><a class="button secondary" href="/runs/{{ r.id }}">Open Logs</a></td>
+        <td class="path">{{ r.failure_reason }}</td>
+        <td class="path">{{ r.output_dir }}</td>
+        <td>{{ r.artifact_count }}</td>
+        <td>{{ r.started_at }}</td>
+        <td>{{ r.ended_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+<script>
+  const neuronSelect = document.getElementById("neuron-select");
+  const significantOnly = document.getElementById("significant-only");
+  const cellView = document.getElementById("cell-view");
+  const cellFrame = document.getElementById("cell-frame");
+  const reviewSummary = document.getElementById("review-summary");
+  const currentCellChip = document.getElementById("current-cell-chip");
+  const currentReviewChip = document.getElementById("current-review-chip");
+  const currentPeakSummary = document.getElementById("current-peak-summary");
+  const prevCellButton = document.getElementById("prev-cell");
+  const nextCellButton = document.getElementById("next-cell");
+  const nextUnreviewedButton = document.getElementById("next-unreviewed");
+  const editCurrentSpikesButton = document.getElementById("edit-current-spikes");
+  const markReviewedButton = document.getElementById("mark-reviewed");
+  const runStaAfterReviewButton = document.getElementById("run-sta-after-review");
+  const reviewState = {items: {}};
+  function neuronOptions() {
+    return Array.from(neuronSelect.options).filter(option => option.value);
+  }
+  function visibleNeuronOptions() {
+    return neuronOptions().filter(option => !option.hidden);
+  }
+  function selectedNeuronOption() {
+    return neuronSelect.selectedOptions[0]?.value ? neuronSelect.selectedOptions[0] : null;
+  }
+  function reviewInfoFor(option) {
+    return option ? (reviewState.items[option.value] || null) : null;
+  }
+  function updateReviewSummary() {
+    const total = neuronOptions().length;
+    const reviewed = neuronOptions().filter(option => option.dataset.reviewed === "1").length;
+    reviewSummary.textContent = `${reviewed} / ${total} cells reviewed. Review peaks cell by cell, then rerun STA maps.`;
+  }
+  function updateCellReviewUi() {
+    const option = selectedNeuronOption();
+    const options = visibleNeuronOptions();
+    const index = option ? options.findIndex(item => item.value === option.value) : -1;
+    const info = reviewInfoFor(option);
+    currentCellChip.textContent = option ? option.dataset.baseLabel : "No Cell Selected";
+    currentReviewChip.textContent = option?.dataset.reviewed === "1" ? "Reviewed" : "Unreviewed";
+    currentReviewChip.classList.toggle("completed", option?.dataset.reviewed === "1");
+    currentPeakSummary.textContent = info
+      ? `${info.n_peaks} peaks (${info.n_simple} simple, ${info.n_complex} complex, ${info.n_excluded} excluded)`
+      : "";
+    prevCellButton.disabled = index <= 0;
+    nextCellButton.disabled = index < 0 || index >= options.length - 1;
+    nextUnreviewedButton.disabled = !neuronOptions().some(item => item.dataset.reviewed !== "1");
+    editCurrentSpikesButton.disabled = !option;
+    markReviewedButton.disabled = !option;
+    updateReviewSummary();
+  }
+  function decorateNeuronOption(option) {
+    const sigText = option.dataset.significant === "1" ? " | significant" : "";
+    const reviewedText = option.dataset.reviewed === "1" ? " | reviewed" : "";
+    option.textContent = `${option.dataset.baseLabel}${reviewedText}${sigText}`;
+  }
+  function applyNeuronFilter() {
+    const only = significantOnly.checked;
+    for (const option of neuronSelect.options) {
+      if (!option.value) continue;
+      option.hidden = only && option.dataset.significant !== "1";
+    }
+    if (neuronSelect.selectedOptions[0]?.hidden) {
+      neuronSelect.value = "";
+      cellView.style.display = "none";
+      cellFrame.removeAttribute("src");
+    }
+    updateCellReviewUi();
+  }
+  significantOnly.addEventListener("change", applyNeuronFilter);
+  fetch("/experiments/{{ exp.id }}/sta-significant-cells/data").then(r => r.json()).then(data => {
+    const cells = data.cells || {};
+    for (const option of neuronSelect.options) {
+      if (!option.value) continue;
+      const count = Number(cells[option.dataset.cellId] || 0);
+      option.dataset.significant = count > 0 ? "1" : "0";
+      decorateNeuronOption(option);
+    }
+    applyNeuronFilter();
+  }).catch(() => {});
+  async function refreshCellReviewState() {
+    try {
+      const res = await fetch("/experiments/{{ exp.id }}/cell-review/data");
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      reviewState.items = data.review || {};
+      for (const option of neuronOptions()) {
+        const info = reviewState.items[option.value];
+        option.dataset.reviewed = info?.reviewed ? "1" : "0";
+        decorateNeuronOption(option);
+      }
+      updateCellReviewUi();
+    } catch (error) {
+      reviewSummary.textContent = error.message || "Review state failed to load.";
+    }
+  }
+  function selectNeuron(neuronId, mode = "view") {
+    neuronSelect.value = neuronId || "";
+    if (!neuronSelect.value) {
+      cellView.style.display = "none";
+      cellFrame.removeAttribute("src");
+      updateCellReviewUi();
+      return;
+    }
+    const url = `/experiments/{{ exp.id }}?neuron=${neuronSelect.value}#cell-view`;
+    history.replaceState(null, "", url);
+    cellFrame.src = mode === "spikes" ? `/neurons/${neuronSelect.value}/spikes?embedded=1` : `/neurons/${neuronSelect.value}?embedded=1`;
+    cellView.style.display = "";
+    updateCellReviewUi();
+  }
+  function selectRelativeCell(delta) {
+    const options = visibleNeuronOptions();
+    const current = selectedNeuronOption();
+    const index = current ? options.findIndex(option => option.value === current.value) : -1;
+    const next = options[Math.max(0, Math.min(options.length - 1, index + delta))];
+    if (next) selectNeuron(next.value);
+  }
+  function selectNextUnreviewed() {
+    const options = visibleNeuronOptions();
+    const current = selectedNeuronOption();
+    const start = current ? Math.max(0, options.findIndex(option => option.value === current.value) + 1) : 0;
+    const ordered = options.slice(start).concat(options.slice(0, start));
+    const next = ordered.find(option => option.dataset.reviewed !== "1");
+    if (next) selectNeuron(next.value, "spikes");
+  }
+  neuronSelect.addEventListener("change", () => selectNeuron(neuronSelect.value));
+  prevCellButton.addEventListener("click", () => selectRelativeCell(-1));
+  nextCellButton.addEventListener("click", () => selectRelativeCell(1));
+  nextUnreviewedButton.addEventListener("click", selectNextUnreviewed);
+  editCurrentSpikesButton.addEventListener("click", () => {
+    if (neuronSelect.value) selectNeuron(neuronSelect.value, "spikes");
+  });
+  markReviewedButton.addEventListener("click", async () => {
+    if (!neuronSelect.value) return;
+    markReviewedButton.disabled = true;
+    try {
+      const res = await fetch(`/neurons/${neuronSelect.value}/review/mark`, {method: "POST"});
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      await refreshCellReviewState();
+      selectRelativeCell(1);
+    } catch (error) {
+      reviewSummary.textContent = error.message || "Mark reviewed failed.";
+    } finally {
+      markReviewedButton.disabled = false;
+    }
+  });
+  runStaAfterReviewButton.addEventListener("click", () => {
+    const form = document.querySelector('[data-step-form="sta"]');
+    if (form) form.requestSubmit();
+  });
+  cellFrame.addEventListener("load", () => {
+    const src = cellFrame.getAttribute("src") || "";
+    if (src.includes(`/neurons/${neuronSelect.value}?embedded=1`)) refreshCellReviewState();
+  });
+  refreshCellReviewState();
+  applyNeuronFilter();
+
+  const movieKind = document.getElementById("movie-kind");
+  const movieFrames = [
+    document.getElementById("movie-frame-a"),
+    document.getElementById("movie-frame-b"),
+  ];
+  const movieMessage = document.getElementById("movie-message");
+  const moviePlay = document.getElementById("movie-play");
+  const movieScrub = document.getElementById("movie-scrub");
+  const movieFrameInput = document.getElementById("movie-frame-input");
+  const movieRate = document.getElementById("movie-rate");
+  const movieReadout = document.getElementById("movie-readout");
+  const movieSummary = document.getElementById("movie-summary");
+  const movieLoadState = document.getElementById("movie-load-state");
+  const movieState = {
+    meta: null,
+    frame: 0,
+    playing: false,
+    timer: null,
+    requestId: 0,
+    objectUrl: "",
+    cache: new Map(),
+    pending: new Map(),
+    activeBuffer: 0,
+  };
+  function formatMovieTime(frame) {
+    const fps = movieState.meta?.fps || 1;
+    const seconds = frame / Math.max(1e-9, fps);
+    return seconds >= 60 ? `${(seconds / 60).toFixed(1)} min` : `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+  }
+  function movieFrameUrl(frame) {
+    return `/experiments/{{ exp.id }}/movie/frame?kind=${encodeURIComponent(movieKind.value)}&frame=${frame}&max_size=820`;
+  }
+  function setMovieMessage(text) {
+    movieMessage.textContent = text || "";
+    movieMessage.style.display = text ? "grid" : "none";
+  }
+  function updateMovieReadout() {
+    const total = movieState.meta?.frames || 0;
+    movieReadout.textContent = total
+      ? `Frame ${movieState.frame + 1} / ${total} | ${formatMovieTime(movieState.frame)}`
+      : "Frame 0 / 0";
+    movieScrub.value = movieState.frame;
+    movieFrameInput.value = movieState.frame;
+  }
+  function trimMovieCache() {
+    const keep = new Set();
+    for (let i = -8; i <= 16; i++) {
+      const frame = movieState.frame + i;
+      if (frame >= 0 && frame < (movieState.meta?.frames || 0)) keep.add(frame);
+    }
+    for (const [frame, url] of movieState.cache.entries()) {
+      if (!keep.has(frame)) {
+        URL.revokeObjectURL(url);
+        movieState.cache.delete(frame);
+      }
+    }
+  }
+  async function fetchMovieFrame(frame, requestId) {
+    if (movieState.cache.has(frame)) return movieState.cache.get(frame);
+    if (movieState.pending.has(frame)) return movieState.pending.get(frame);
+    const promise = fetch(movieFrameUrl(frame), {cache: "force-cache"})
+      .then(async res => {
+        if (!res.ok) throw new Error(`Frame ${frame} failed (${res.status})`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        movieState.cache.set(frame, url);
+        trimMovieCache();
+        return url;
+      })
+      .finally(() => movieState.pending.delete(frame));
+    movieState.pending.set(frame, promise);
+    const url = await promise;
+    if (requestId !== movieState.requestId) return "";
+    return url;
+  }
+  async function swapMovieFrame(url, requestId) {
+    const nextBuffer = 1 - movieState.activeBuffer;
+    const nextImage = movieFrames[nextBuffer];
+    const currentImage = movieFrames[movieState.activeBuffer];
+    if (nextImage.src !== url) {
+      nextImage.src = url;
+      if (nextImage.decode) {
+        try { await nextImage.decode(); } catch (_) {}
+      }
+    }
+    if (requestId !== movieState.requestId) return;
+    nextImage.classList.add("active");
+    currentImage.classList.remove("active");
+    movieState.activeBuffer = nextBuffer;
+  }
+  function preloadMovieFrames(center) {
+    const total = movieState.meta?.frames || 0;
+    const requestId = movieState.requestId;
+    const step = Math.max(1, Math.round((movieState.meta?.fps || 10) / 12));
+    for (let i = 1; i <= 2; i++) {
+      const frame = Math.min(total - 1, center + i * step);
+      if (frame > center && !movieState.cache.has(frame)) {
+        fetchMovieFrame(frame, requestId).catch(() => {});
+      }
+    }
+  }
+  async function showMovieFrame(frame) {
+    const total = movieState.meta?.frames || 0;
+    if (!total) return;
+    const requestId = ++movieState.requestId;
+    movieState.frame = Math.max(0, Math.min(total - 1, Math.round(Number(frame) || 0)));
+    updateMovieReadout();
+    movieLoadState.textContent = movieState.cache.has(movieState.frame) ? "" : "Loading frame...";
+    try {
+      const url = await fetchMovieFrame(movieState.frame, requestId);
+      if (requestId !== movieState.requestId || !url) return;
+      await swapMovieFrame(url, requestId);
+      setMovieMessage("");
+      movieLoadState.textContent = "";
+      preloadMovieFrames(movieState.frame);
+    } catch (error) {
+      if (requestId === movieState.requestId) {
+        movieLoadState.textContent = "";
+        setMovieMessage(error.message || "Movie frame failed to load.");
+      }
+    }
+  }
+  function stopMovie() {
+    movieState.playing = false;
+    moviePlay.textContent = "Play";
+    window.clearTimeout(movieState.timer);
+  }
+  function scheduleMovieTick() {
+    window.clearTimeout(movieState.timer);
+    if (!movieState.playing || !movieState.meta) return;
+    const displayFps = Math.min(24, Math.max(4, movieState.meta.fps * Number(movieRate.value || 1)));
+    movieState.timer = window.setTimeout(async () => {
+      const next = movieState.frame + Math.max(1, Math.round(movieState.meta.fps / displayFps));
+      if (next >= movieState.meta.frames) {
+        stopMovie();
+        return;
+      }
+      await showMovieFrame(next);
+      scheduleMovieTick();
+    }, 1000 / displayFps);
+  }
+  function toggleMovie() {
+    if (!movieState.meta?.frames) return;
+    movieState.playing = !movieState.playing;
+    moviePlay.textContent = movieState.playing ? "Pause" : "Play";
+    if (movieState.playing) scheduleMovieTick();
+    else window.clearTimeout(movieState.timer);
+  }
+  async function loadMovieMeta() {
+    stopMovie();
+    movieState.requestId += 1;
+    for (const url of movieState.cache.values()) URL.revokeObjectURL(url);
+    movieState.cache.clear();
+    movieState.pending.clear();
+    movieState.meta = null;
+    movieState.frame = 0;
+    movieState.activeBuffer = 0;
+    movieFrames.forEach((img, index) => {
+      img.removeAttribute("src");
+      img.classList.toggle("active", index === 0);
+    });
+    movieSummary.textContent = "Loading movie metadata...";
+    setMovieMessage("Loading movie...");
+    try {
+      const res = await fetch(`/experiments/{{ exp.id }}/movie/meta?kind=${encodeURIComponent(movieKind.value)}`);
+      const data = await res.json();
+      if (!res.ok || !data.available) throw new Error(data.message || "Movie is unavailable.");
+      movieState.meta = data;
+      movieScrub.max = Math.max(0, data.frames - 1);
+      movieFrameInput.max = Math.max(0, data.frames - 1);
+      movieSummary.textContent = `${data.file_name} | ${data.frames} frames | ${data.width} x ${data.height} | ${Number(data.fps).toFixed(1)} fps${data.gevi_flipped ? " | GEVI sign flipped" : ""}`;
+      updateMovieReadout();
+      await showMovieFrame(0);
+    } catch (error) {
+      movieSummary.textContent = error.message || "Movie is unavailable.";
+      setMovieMessage(error.message || "Movie is unavailable.");
+      updateMovieReadout();
+    }
+  }
+  moviePlay.addEventListener("click", toggleMovie);
+  movieKind.addEventListener("change", loadMovieMeta);
+  movieRate.addEventListener("change", () => {
+    if (movieState.playing) scheduleMovieTick();
+  });
+  movieScrub.addEventListener("input", () => {
+    stopMovie();
+    showMovieFrame(Number(movieScrub.value));
+  });
+  movieFrameInput.addEventListener("change", () => {
+    stopMovie();
+    showMovieFrame(Number(movieFrameInput.value));
+  });
+  loadMovieMeta();
+
+  const behaviorCanvas = document.getElementById("behavior-canvas");
+  const behaviorCtx = behaviorCanvas.getContext("2d");
+  function resizeBehaviorCanvas() {
+    const rect = behaviorCanvas.getBoundingClientRect();
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    behaviorCanvas.width = Math.max(900, Math.round(rect.width * dpr));
+    behaviorCanvas.height = Math.max(320, Math.round(rect.height * dpr));
+  }
+  function finiteRange(values, floor = 0) {
+    const finite = values.filter(Number.isFinite);
+    if (!finite.length) return [0, 1];
+    let lo = Math.min(...finite), hi = Math.max(...finite);
+    lo = Math.min(lo, floor);
+    if (hi <= lo) hi = lo + 1;
+    const pad = Math.max((hi - lo) * 0.12, 0.5);
+    return [lo - pad, hi + pad];
+  }
+  function drawBehavior(data) {
+    resizeBehaviorCanvas();
+    const ctx = behaviorCtx, w = behaviorCanvas.width, h = behaviorCanvas.height;
+    const plot = {left: 72, right: 24, top: 28, bottom: 54};
+    const pw = w - plot.left - plot.right, ph = h - plot.top - plot.bottom;
+    ctx.fillStyle = "#0b0f14";
+    ctx.fillRect(0, 0, w, h);
+    if (!data.available) {
+      ctx.fillStyle = "#9aa8b7";
+      ctx.font = "18px Segoe UI";
+      ctx.textAlign = "center";
+      ctx.fillText(data.message || "No behavior results.", w / 2, h / 2);
+      return;
+    }
+    const t = data.time_s || [];
+    const velocity = ((data.velocity && data.velocity.length) ? data.velocity : data.speed || []).map(v => v === null ? NaN : Number(v));
+    const segments = data.segments || [];
+    const hasVelocity = velocity.some(Number.isFinite);
+    const x0 = t.length ? t[0] : 0, x1 = t.length ? t[t.length - 1] : 1;
+    let [y0, y1] = finiteRange(velocity, 0);
+    const threshold = Math.abs(Number(data.threshold || 0));
+    const maxAbs = Math.max(Math.abs(y0), Math.abs(y1), threshold * 1.15, 1e-6);
+    if (data.behavior_source === "ts" && data.ts_velocity_signed) {
+      y0 = -maxAbs;
+      y1 = maxAbs;
+    }
+    const x = i => plot.left + ((t[i] - x0) / Math.max(1e-9, x1 - x0)) * pw;
+    const xTime = value => plot.left + ((value - x0) / Math.max(1e-9, x1 - x0)) * pw;
+    const y = v => plot.top + (1 - (v - y0) / Math.max(1e-9, y1 - y0)) * ph;
+    const labelColor = {active: "rgba(55,198,166,0.23)", inactive: "rgba(74,163,255,0.20)", unlabeled: "rgba(228,173,69,0.15)"};
+    for (const segment of segments) {
+      const color = labelColor[segment.label];
+      if (color) {
+        const x0s = xTime(Number(segment.t0));
+        const x1s = xTime(Number(segment.t1));
+        ctx.fillStyle = color;
+        ctx.fillRect(x0s, plot.top, Math.max(1, x1s - x0s), ph);
+      }
+    }
+    ctx.strokeStyle = "#26303a";
+    ctx.lineWidth = 1;
+    for (let k = 0; k < 5; k++) {
+      const yy = plot.top + k / 4 * ph;
+      ctx.beginPath(); ctx.moveTo(plot.left, yy); ctx.lineTo(plot.left + pw, yy); ctx.stroke();
+    }
+    const zeroY = y(0);
+    ctx.strokeStyle = "rgba(241,246,251,0.28)";
+    ctx.beginPath(); ctx.moveTo(plot.left, zeroY); ctx.lineTo(plot.left + pw, zeroY); ctx.stroke();
+    const thresholdY = y(threshold);
+    const negThresholdY = y(-threshold);
+    ctx.strokeStyle = "#e4ad45";
+    ctx.setLineDash([8, 8]);
+    ctx.beginPath(); ctx.moveTo(plot.left, thresholdY); ctx.lineTo(plot.left + pw, thresholdY); ctx.stroke();
+    if (data.behavior_source === "ts" && data.ts_velocity_signed) {
+      ctx.beginPath(); ctx.moveTo(plot.left, negThresholdY); ctx.lineTo(plot.left + pw, negThresholdY); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#f1f6fb";
+    ctx.font = "14px Segoe UI";
+    ctx.textAlign = "right";
+    ctx.fillText(`|velocity| threshold ${threshold.toFixed(1)} ${data.velocity_units || ""}`, plot.left + pw - 8, Math.max(plot.top + 16, thresholdY - 8));
+    ctx.strokeStyle = "#f1f6fb";
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    let moved = false;
+    for (let i = 0; i < velocity.length; i++) {
+      if (!Number.isFinite(velocity[i])) continue;
+      if (!moved) { ctx.moveTo(x(i), y(velocity[i])); moved = true; }
+      else ctx.lineTo(x(i), y(velocity[i]));
+    }
+    ctx.stroke();
+    if (!hasVelocity) {
+      ctx.fillStyle = "#e4ad45";
+      ctx.font = "17px Segoe UI";
+      ctx.textAlign = "center";
+      ctx.fillText("Velocity trace is unavailable for this run. Rerun Behavior Split to save it.", plot.left + pw / 2, plot.top + ph / 2);
+    }
+    ctx.strokeStyle = "#43505f";
+    ctx.strokeRect(plot.left, plot.top, pw, ph);
+    ctx.fillStyle = "#aeb9c6";
+    ctx.font = "15px Segoe UI";
+    ctx.textAlign = "right";
+    for (const v of [y0, (y0 + y1) / 2, y1]) ctx.fillText(v.toFixed(1), plot.left - 10, y(v));
+    ctx.textAlign = "center";
+    ctx.fillText("Time (s)", plot.left + pw / 2, h - 16);
+    ctx.save(); ctx.translate(22, plot.top + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(`Velocity (${data.velocity_units || "cm/s"})`, 0, 0); ctx.restore();
+  }
+  function showBehaviorError(message) {
+    document.getElementById("behavior-run").textContent = "Error";
+    document.getElementById("behavior-summary").textContent = message || "Behavior results failed to load.";
+    drawBehavior({available: false, message: message || "Behavior results failed to load."});
+  }
+  fetch("/experiments/{{ exp.id }}/behavior/data").then(r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }).then(data => {
+    document.getElementById("behavior-run").textContent = data.available ? `Run ${data.run_id}` : "No Run";
+    const sourceText = data.behavior_source === "csv_fallback_from_ts"
+      ? `CSV fallback${data.ts_fallback_reason ? " (TS unavailable)" : ""}`
+      : data.behavior_source === "ts"
+      ? `TS ${data.ts_velocity_key || ""}${data.ts_encoder_mode ? " (" + data.ts_encoder_mode + ")" : ""}`.trim()
+      : (data.behavior_source || "behavior");
+    document.getElementById("behavior-summary").textContent = data.available
+      ? `${sourceText} | ${data.active_frames} active, ${data.inactive_frames} inactive, ${data.unlabeled_frames} unlabeled frames | threshold ${Number(data.threshold || 0).toFixed(1)} ${data.velocity_units || "cm/s"}`
+      : (data.message || "No completed behavior run is available.");
+    drawBehavior(data);
+    new ResizeObserver(() => drawBehavior(data)).observe(behaviorCanvas);
+    window.addEventListener("resize", () => drawBehavior(data));
+  }).catch(error => showBehaviorError(error.message));
+</script>
+{% endblock %}

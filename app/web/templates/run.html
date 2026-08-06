@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block head_extra %}{% if active %}<meta http-equiv="refresh" content="30">{% endif %}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>Run {{ run.id }} / {{ run.label }}</h1>
+    <p class="subtitle">{{ run.canonical_id }}</p>
+  </div>
+  <span class="chip {{ run.status }}">{{ run.status }}</span>
+</div>
+
+<div class="grid-3">
+  <section class="panel">
+    <h2>Progress</h2>
+    <div class="progress {{ run.status }}" style="--value: {{ run.progress }}%"><span></span></div>
+    <p class="muted">{{ run.started_at or "Did not start" }} {{ run.ended_at or "running" }}</p>
+  </section>
+  <section class="panel">
+    <h2>Saved To</h2>
+    <p class="path">{{ run.output_dir }}</p>
+    <p class="muted">{{ run.artifact_count }} file(s) recorded.</p>
+  </section>
+  <section class="panel">
+    <h2>Execution</h2>
+    <p>{{ run.backend }} / exit code {{ run.exit_code if run.exit_code is not none else "pending" }}</p>
+    {% if run.failure_reason %}
+    <p class="failed">{{ run.failure_reason }}</p>
+    {% endif %}
+  </section>
+</div>
+
+<div class="grid">
+  <section class="panel">
+    <h2>Stdout</h2>
+    <pre id="stdout-log">{{ stdout or "No stdout yet." }}</pre>
+  </section>
+  <section class="panel">
+    <h2>Stderr</h2>
+    <pre id="stderr-log">{{ stderr or "No stderr yet." }}</pre>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>Parameters</h2>
+  <pre>{{ run.parameters_json }}</pre>
+</section>
+{% if active %}
+<script>
+  async function refreshLogs() {
+    try {
+      const response = await fetch("/runs/{{ run.id }}/logs", {cache: "no-store"});
+      if (!response.ok) return;
+      const data = await response.json();
+      const stdout = document.getElementById("stdout-log");
+      const stderr = document.getElementById("stderr-log");
+      stdout.textContent = data.stdout || "No stdout yet.";
+      stderr.textContent = data.stderr || "No stderr yet.";
+      stdout.scrollTop = stdout.scrollHeight;
+      stderr.scrollTop = stderr.scrollHeight;
+      if (!["pending", "queued", "running"].includes(data.status)) {
+        window.location.reload();
+      }
+    } catch (_) {}
+  }
+  setInterval(refreshLogs, 1500);
+  refreshLogs();
+</script>
+{% endif %}
+{% endblock %}
