@@ -3,9 +3,10 @@ import argparse, json
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
-from utils.movie_utils import get_movie_parameters
+from utils.movie_utils import read_frame_rate
 from utils.suite2p_utils import load_suite2p_context
 from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
+from utils.paths_utils import PathKind, path_for
 
 
 def _save_review_png(path: Path, trace, peaks, labels) -> None:
@@ -35,21 +36,21 @@ def _save_review_png(path: Path, trace, peaks, labels) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(); ap.add_argument("--experiment", required=True); ap.add_argument("--output", required=True); ap.add_argument("--params-json", default="{}")
     args = ap.parse_args(); home = Path(args.experiment); out = Path(args.output); out.mkdir(parents=True, exist_ok=True); params = json.loads(args.params_json or "{}")
-    fps = int(get_movie_parameters(f"{home.as_posix()}/", is_dir=True)["fps"])
-    suite2p = load_suite2p_context(home / "pipeline_results/for_suite2p/suite2p/plane0")
+    fps = int(read_frame_rate(home))
+    suite2p = load_suite2p_context(path_for(PathKind.SUITE2P_PLANE0, home))
     traces = np.asarray(suite2p["F_norm"], dtype=np.float32)
     detection = highpass_traces(traces, fps, 0.07)
     rows = []
     for cell_id, (trace, det) in enumerate(zip(traces, detection)):
         peaks = detect_peaks_mad(trace, det, mad_factor=float(params.get("mad_factor", 3.5)), duplicate_window_frames=30, align_radius_frames=5, min_distance=0)
         labels, features = classify_spikes(trace, peaks, fps, min_amplitude=float(params.get("min_amplitude", 0.30)), min_width=float(params.get("min_width", 18.0)), min_subthreshold=float(params.get("min_subthreshold", 0.10)), min_ratio=float(params.get("min_ratio", 0.30)), subthreshold_window_seconds=0.2, baseline_window_seconds=1.5)
-        cell_dir = out / f"cell_{cell_id}"; cell_dir.mkdir(exist_ok=True)
+        path_for(PathKind.SPIKE_CELL_DIR, out, cell=cell_id).mkdir(exist_ok=True)
         payload = {"cell_id": np.asarray(cell_id, dtype=np.int32), "peaks_all": labels.peaks_all, "labels": labels.labels, "simple_peaks": labels.simple_peaks, "complex_peaks": labels.complex_peaks, "excluded_peaks": labels.excluded_peaks, **features}
-        np.savez_compressed(cell_dir / "simple_complex_peaks_for_analysis.npz", **payload); np.savez_compressed(cell_dir / "simple_complex_spike_labels.npz", **payload)
-        np.savez(cell_dir / "peak_detection_params.npz", threshold_method="mad", mad_threshold_factor=float(params.get("mad_factor", 3.5)), min_distance=0, highpass_cutoff_hz=0.07)
-        _save_review_png(cell_dir / "automatic_spike_classification_review.png", trace, labels.peaks_all, labels.labels)
+        np.savez_compressed(path_for(PathKind.SPIKE_PEAKS, out, cell=cell_id), **payload); np.savez_compressed(path_for(PathKind.SPIKE_LABELS, out, cell=cell_id), **payload)
+        np.savez(path_for(PathKind.SPIKE_PEAK_PARAMS, out, cell=cell_id), threshold_method="mad", mad_threshold_factor=float(params.get("mad_factor", 3.5)), min_distance=0, highpass_cutoff_hz=0.07)
+        _save_review_png(path_for(PathKind.SPIKE_REVIEW_PNG, out, cell=cell_id), trace, labels.peaks_all, labels.labels)
         rows.append({"cell_id": cell_id, "all": int(labels.peaks_all.size), "simple": int(labels.simple_peaks.size), "complex": int(labels.complex_peaks.size)})
-    (out / "metrics.json").write_text(json.dumps({"cells": rows}, indent=2), encoding="utf-8")
+    path_for(PathKind.RUN_METRICS_JSON, out).write_text(json.dumps({"cells": rows}, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__": main()

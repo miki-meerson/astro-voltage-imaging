@@ -7,11 +7,13 @@ import numpy as np
 
 from app.services import caches
 from app.services.runs import run_dir
+from utils.paths_utils import PathKind, path_for
+
 
 def behavior_payload(settings, run_row) -> dict:
     if run_row is None:
         return {"available": False, "message": "No completed behavior run is available."}
-    path = run_dir(settings, int(run_row["id"]), bool(run_row["is_test"])) / "behavioral_segements.npz"
+    path = path_for(PathKind.BEHAVIOR_SEGMENTS, run_dir(settings, int(run_row["id"]), bool(run_row["is_test"])))
     if not path.exists():
         return {"available": False, "message": "Behavior segments file was not found."}
     cache_key = (int(run_row["id"]), int(path.stat().st_mtime_ns))
@@ -25,7 +27,9 @@ def behavior_payload(settings, run_row) -> dict:
         inactive = np.asarray(d["inactive_mask"], dtype=bool) if "inactive_mask" in d else np.zeros(time_s.shape, dtype=bool)
         covered = np.asarray(d["behavior_covered_mask"], dtype=bool) if "behavior_covered_mask" in d else np.ones(time_s.shape, dtype=bool)
         threshold = float(np.asarray(d["speed_threshold"]).item()) if "speed_threshold" in d else 0.0
-        fps = float(np.asarray(d["fps"]).item()) if "fps" in d else 1.0
+        if "fps" not in d:
+            raise ValueError(f"The behavior result {path} has no frame rate (fps): rerun the Behavior Split step.")
+        fps = float(np.asarray(d["fps"]).item())
         chosen = str(np.asarray(d["chosen_alignment"]).item()) if "chosen_alignment" in d else ""
         behavior_source = str(np.asarray(d["behavior_source"]).item()) if "behavior_source" in d else ""
         ts_fallback_reason = str(np.asarray(d["ts_fallback_reason"]).item()) if "ts_fallback_reason" in d else ""

@@ -6,6 +6,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+import paramiko
+
 
 @dataclass(frozen=True)
 class ClusterCredentials:
@@ -64,8 +66,6 @@ def _close_ssh(ssh, timeout_seconds: float = 2.0) -> None:
 
 
 def run_ssh_command(cluster: dict, command: str, command_timeout_seconds: int | None = None) -> tuple[str, str, int]:
-    import paramiko
-
     cred = load_cluster_credentials(cluster)
     timeout = int(cluster.get("paramiko_timeout_seconds") or 600)
     command_timeout = int(command_timeout_seconds or cluster.get("command_timeout_seconds") or timeout)

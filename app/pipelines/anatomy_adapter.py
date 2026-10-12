@@ -9,8 +9,8 @@ from PIL import Image, ImageDraw
 
 from app.services.visualizations import _font, _gray_rgb
 from utils.movie_utils import read_astro_movie, spatial_bin_movie
-from utils.paths_utils import resolve_sta_paths
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
+from utils.paths_utils import PathKind, path_for, resolve_sta_paths
 
 
 def _sampled_mean_binned_movie(movie_path: Path, spatial_bin: int, max_frames: int = 1000) -> np.ndarray:
@@ -100,25 +100,25 @@ def main() -> None:
 
     mean_image = _sampled_mean_binned_movie(paths.astro_movie_path, spatial_bin)
     suite2p_ctx = load_suite2p_context(paths.suite2p_path)
-    sta_dir = out / "sta-analysis"
+    sta_dir = path_for(PathKind.RUN_STA_ANALYSIS, out)
     sta_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
-        sta_dir / "anatomy_crop_params.npz",
+        path_for(PathKind.ANATOMY_CROP_PARAMS, out),
         anatomy_radius_binned=np.asarray(radius, dtype=np.int32),
         spatial_bin=np.asarray(spatial_bin, dtype=np.int32),
         home_dir=str(home),
         source="astro-analysis-pipeline anatomy_adapter",
         n_review_cells=np.asarray(int(suite2p_ctx["n_cells"]), dtype=np.int32),
     )
-    np.save(sta_dir / "mean_astro_binned.npy", mean_image.astype(np.float32))
-    _draw_preview(out / "anatomy_crop_preview.png", mean_image, suite2p_ctx, radius, spatial_bin)
-    (out / "metrics.json").write_text(
+    np.save(path_for(PathKind.MEAN_ASTRO_BINNED, sta_dir), mean_image.astype(np.float32))
+    _draw_preview(path_for(PathKind.ANATOMY_CROP_PREVIEW_PNG, out), mean_image, suite2p_ctx, radius, spatial_bin)
+    path_for(PathKind.RUN_METRICS_JSON, out).write_text(
         json.dumps(
             {
                 "anatomy_radius_binned": radius,
                 "spatial_bin": spatial_bin,
                 "n_cells": int(suite2p_ctx["n_cells"]),
-                "output": "sta-analysis/anatomy_crop_params.npz",
+                "output": path_for(PathKind.ANATOMY_CROP_PARAMS, "").as_posix(),
             },
             indent=2,
         ),

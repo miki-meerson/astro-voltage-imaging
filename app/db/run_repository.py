@@ -44,7 +44,7 @@ def insert_run(settings: Settings, experiment_id: int, step: str, params: dict, 
 
 
 def run_folder_row(settings: Settings, run_id: int):
-    """What run_dir needs to find a run's folder (None when the run is unknown or the database cannot be read)."""
+    """What run_dir needs to find a run's folder (None when the run is unknown)."""
     with tx(settings) as conn:
         return conn.execute(
             """
