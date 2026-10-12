@@ -1,0 +1,116 @@
+.pb-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.movie-shell {
+  display: grid;
+  gap: 10px;
+}
+.movie-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 280px;
+  overflow: hidden;
+  background: #05080c;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.movie-stage img {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+}
+.movie-stage .movie-buffer {
+  grid-area: 1 / 1;
+  opacity: 0;
+  visibility: hidden;
+}
+.movie-stage .movie-buffer.active {
+  opacity: 1;
+  visibility: visible;
+}
+.movie-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  color: var(--muted);
+  text-align: center;
+  background: rgba(5, 8, 12, 0.86);
+}
+.movie-controls {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) 96px;
+  gap: 8px;
+  align-items: center;
+}
+.movie-controls input[type="range"] {
+  padding: 0;
+}
+.qc-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.pb-plot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.pb-plot {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.pb-plot img {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  object-fit: contain;
+  background: #0b0f14;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.intensity-wrap {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.intensity-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.legend-line {
+  display: inline-block;
+  width: 28px;
+  height: 0;
+  border-top: 3px solid var(--accent);
+  vertical-align: middle;
+  margin-right: 6px;
+}
+.legend-line.astro { border-color: #37c6a6; }
+.legend-line.neuron { border-color: #4aa3ff; }
+.trace-canvas {
+  width: 100%;
+  min-height: 320px;
+  background: #0b0f14;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+@media (max-width: 1000px) {
+  .pb-review-grid { grid-template-columns: 1fr; }
+  .pb-plot-grid { grid-template-columns: 1fr; }
+  .movie-controls { grid-template-columns: 1fr; }
+}

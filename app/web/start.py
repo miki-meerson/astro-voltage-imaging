@@ -2,7 +2,7 @@ from __future__ import annotations
 import threading, time, webbrowser
 from waitress import serve
 from app.db.core import migrate
-from app.services.runs import prune_to_latest_runs, resume_pending_runs
+from app.services.runs import resume_pending_runs
 from app.services.slurm_monitor import start_slurm_monitor
 from app.settings import load_settings
 from app.web.server import create_app
@@ -13,7 +13,6 @@ def main() -> None:
     try:
         if not settings.source_data_root.exists(): raise FileNotFoundError(f"Source data root is inaccessible: {settings.source_data_root}")
         migrate(settings)
-        prune_to_latest_runs(settings)
         resumed = resume_pending_runs(settings)
         if resumed:
             print(f"[startup] resumed {resumed} pending run(s)")

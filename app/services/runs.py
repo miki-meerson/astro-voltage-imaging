@@ -3,13 +3,12 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-import json, os, shlex, subprocess, sys, threading
+import json, os, subprocess, sys, threading
 
 from app.db.core import tx
-from app.services.cluster_ssh import load_cluster_credentials, run_ssh_command
 from app.settings import Settings
 
-STEPS = ("spike", "behavior", "anatomy", "sta")
+STEPS = ("preprocessing", "spike", "behavior", "anatomy", "sta")
 _EXECUTOR_LOCK = threading.Lock()
 _EXECUTOR: ThreadPoolExecutor | None = None
 _EXECUTOR_SIZE = 0
@@ -84,13 +83,27 @@ def run_dir(settings: Settings, run_id: int, is_test: bool = False) -> Path:
         candidates.append(Path(row["output_dir"]))
     if row["stdout_path"]:
         candidates.append(Path(row["stdout_path"]).parent)
-    candidates.extend([formatted, legacy])
+    candidates.append(formatted)
     for candidate in candidates:
         if candidate.exists():
             return candidate
     if row["output_dir"]:
         return Path(row["output_dir"])
     return formatted
+
+
+def output_manifest(out: Path) -> list[dict]:
+    """Every file under a run folder as {path (relative to the outputs root), type, size}; [] when the folder is missing."""
+    if not out.exists():
+        return []
+    return [{"path": str(p.relative_to(out.parent)), "type": p.suffix.lower().lstrip(".") or "file", "size": p.stat().st_size} for p in out.rglob("*") if p.is_file()]
+
+
+def replace_artifacts(conn, run_id: int, manifest: list[dict]) -> None:
+    """Make the artifacts table of a run match its manifest."""
+    conn.execute("DELETE FROM artifacts WHERE run_id=?", (run_id,))
+    for item in manifest:
+        conn.execute("INSERT INTO artifacts(run_id,artifact_type,relative_path,size_bytes) VALUES(?,?,?,?)", (run_id, item["type"], item["path"], item["size"]))
 
 
 def _allocate_run_dir(settings: Settings, run) -> Path:
@@ -105,10 +118,6 @@ def _allocate_run_dir(settings: Settings, run) -> Path:
         candidate = root / f"{base.name}__attempt_{attempt}"
         attempt += 1
     return candidate
-
-
-def prune_to_latest_runs(settings: Settings) -> None:
-    return None
 
 
 def resume_pending_runs(settings: Settings) -> int:
@@ -215,8 +224,16 @@ def _execute_run(settings: Settings, run_id: int) -> None:
             return
     out = _allocate_run_dir(settings, run); out.mkdir(parents=True, exist_ok=False)
     stdout, stderr = out / "stdout.log", out / "stderr.log"
-    adapter = {"spike": "spike_adapter", "behavior": "behavior_adapter", "anatomy": "anatomy_adapter", "sta": "sta_adapter"}[run["step"]]
+    adapter = {
+        "preprocessing": "preprocessing_adapter",
+        "spike": "spike_adapter",
+        "behavior": "behavior_adapter",
+        "anatomy": "anatomy_adapter",
+        "sta": "sta_adapter",
+    }[run["step"]]
     cmd = [sys.executable, "-u", "-m", f"app.pipelines.{adapter}", "--experiment", run["source_path"], "--output", str(out), "--params-json", run["parameters_json"]]
+    if run["step"] == "preprocessing":
+        cmd.extend(["--run-id", str(run_id)])
     if run["backend"] == "cluster" and run["step"] == "sta":
         raw_params = json.loads(run["parameters_json"] or "{}")
         spike_run = _latest_completed_output(settings, int(run["experiment_id"]), "spike")
@@ -245,28 +262,14 @@ def _execute_run(settings: Settings, run_id: int) -> None:
             raw_params["behavior_run"] = str(behavior_run)
         if anatomy_run is not None:
             raw_params["anatomy_run"] = str(anatomy_run)
-        raw_params["cluster_submit_command"] = settings.raw.get("cluster", {}).get("submit_command", "sbatch")
-        raw_params["cluster_script"] = settings.raw.get("cluster", {}).get("sta_script", "cluster-code/run_sta_maps.sh")
-        raw_params["cluster_submission_method"] = settings.raw.get("cluster", {}).get("submission_method", "paramiko")
-        raw_params["cluster_paramiko_timeout_seconds"] = settings.raw.get("cluster", {}).get("paramiko_timeout_seconds", 600)
-        raw_params["cluster_paramiko_attempts"] = settings.raw.get("cluster", {}).get("paramiko_attempts", 5)
-        raw_params["cluster_path_map"] = settings.raw.get("cluster", {}).get("path_map", {})
-        raw_params["cluster_poll_interval_seconds"] = settings.raw.get("cluster", {}).get("poll_interval_seconds", 30)
-        raw_params["cluster_squeue_command"] = settings.raw.get("cluster", {}).get("squeue_command", "squeue")
-        raw_params["cluster_sacct_command"] = settings.raw.get("cluster", {}).get("sacct_command", "sacct")
-        cmd = [
-            sys.executable,
-            "-u",
-            "-m",
-            "app.pipelines.sta_adapter",
-            "--experiment",
-            run["source_path"],
-            "--output",
-            str(out),
-            "--params-json",
-            json.dumps(raw_params),
-            "--submit-cluster",
-        ]
+        cluster = settings.raw.get("cluster", {})
+        raw_params["cluster_submit_command"] = cluster.get("submit_command", "sbatch")
+        raw_params["cluster_script"] = cluster.get("sta_script", "cluster-code/run_sta_maps.sh")
+        raw_params["cluster_submission_method"] = cluster.get("submission_method", "paramiko")
+        raw_params["cluster_paramiko_timeout_seconds"] = cluster.get("paramiko_timeout_seconds", 600)
+        raw_params["cluster_paramiko_attempts"] = cluster.get("paramiko_attempts", 5)
+        raw_params["cluster_path_map"] = cluster.get("path_map", {})
+        cmd = [sys.executable, "-u", "-m", "app.pipelines.sta_adapter", "--experiment", run["source_path"], "--output", str(out), "--params-json", json.dumps(raw_params)]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(settings.project_root) + os.pathsep + env.get("PYTHONPATH", "")
@@ -293,16 +296,20 @@ def _execute_run(settings: Settings, run_id: int) -> None:
             code = subprocess.run(cmd, cwd=settings.project_root, env=env, text=True, stdout=so, stderr=se).returncode
     except Exception as exc:
         stderr.write_text(str(exc), encoding="utf-8")
-    manifest = [{"path": str(p.relative_to(out.parent)), "type": p.suffix.lower().lstrip(".") or "file", "size": p.stat().st_size} for p in out.rglob("*") if p.is_file()]
-    cluster_submitted = run["backend"] == "cluster" and run["step"] == "sta" and code == 0 and (out / "cluster_job_id.txt").exists()
+    manifest = output_manifest(out)
+    cluster_submitted = run["backend"] == "cluster" and code == 0 and (out / "cluster_job_id.txt").exists()
     final_status = "queued" if cluster_submitted else ("completed" if code == 0 else "failed")
     final_exit_code = None if cluster_submitted else code
     ended_at = None if cluster_submitted else datetime.now().isoformat(timespec="seconds")
     with tx(settings) as conn:
-        conn.execute("UPDATE analysis_runs SET status=?,ended_at=?,exit_code=?,stdout_path=?,stderr_path=?,log_path=?,command_json=?,output_manifest_json=?,code_provenance=? WHERE id=?",
-                     (final_status, ended_at, final_exit_code, str(stdout), str(stderr), str(stdout), json.dumps(cmd), json.dumps(manifest), "docs/provenance.md", run_id))
-        for item in manifest:
-            conn.execute("INSERT INTO artifacts(run_id,artifact_type,relative_path,size_bytes) VALUES(?,?,?,?)", (run_id, item["type"], item["path"], item["size"]))
+        conn.execute("UPDATE analysis_runs SET status=?,ended_at=?,exit_code=?,stdout_path=?,stderr_path=?,log_path=?,command_json=?,output_manifest_json=? WHERE id=?",
+                     (final_status, ended_at, final_exit_code, str(stdout), str(stderr), str(stdout), json.dumps(cmd), json.dumps(manifest), run_id))
+        replace_artifacts(conn, run_id, manifest)
+        if cluster_submitted and run["step"] == "preprocessing":
+            conn.execute(
+                "UPDATE experiments SET workflow_stage='preprocessing_running',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (run["experiment_id"],),
+            )
     if code == 0 and run["step"] in {"spike", "behavior", "anatomy"} and not run["is_test"]:
         _launch_sta_if_ready(settings, int(run["experiment_id"]))
 
@@ -316,8 +323,7 @@ def _launch_sta_if_ready(settings: Settings, experiment_id: int) -> None:
                 (experiment_id,),
             )
         }
-        exp = conn.execute("SELECT source_path FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-        params = _sta_params_for_experiment(settings, exp["source_path"] if exp else "")
+        params = _sta_params(settings)
         required = {"spike", "behavior"}
         if "anatomy" in params.get("result_types", []):
             required.add("anatomy")
@@ -330,12 +336,6 @@ def _launch_sta_if_ready(settings: Settings, experiment_id: int) -> None:
         if existing_sta is not None:
             return
         sta_run_id = _next_run_id(conn)
-        existing_sta = conn.execute(
-            "SELECT id FROM analysis_runs WHERE experiment_id=? AND is_test=0 AND step='sta' AND status IN ('pending','queued','running','completed') LIMIT 1",
-            (experiment_id,),
-        ).fetchone()
-        if existing_sta is not None:
-            return
         conn.execute(
             "INSERT INTO analysis_runs(id,experiment_id,step,backend,status,is_test,parameters_json) VALUES(?,?,?,?,?,0,?)",
             (sta_run_id, experiment_id, "sta", "cluster", "pending", json.dumps(params)),
@@ -359,25 +359,7 @@ def _latest_completed_output(settings: Settings, experiment_id: int, step: str) 
     return run_dir(settings, int(row["id"]), bool(row["is_test"]))
 
 
-def _sta_params_for_experiment(settings: Settings, source_path: str | Path) -> dict:
-    return dict(settings.raw.get("defaults", {}).get("sta", {}))
-
-
-def _cluster_ready_error(settings: Settings) -> str | None:
-    cluster = settings.raw.get("cluster", {})
-    submit = str(cluster.get("submit_command") or "sbatch")
-    method = str(cluster.get("submission_method") or "paramiko").strip().lower()
-    if method != "paramiko":
-        return "Cluster submission blocked: STA cluster submission supports only Paramiko remote sbatch."
-    try:
-        import paramiko  # noqa: F401
-    except ImportError as exc:
-        return f"Cluster submission blocked: paramiko is not available in this environment. {exc}"
-    try:
-        load_cluster_credentials(cluster)
-        out, err, code = run_ssh_command(cluster, f"command -v {shlex.quote(submit)}")
-        if code != 0:
-            return f"Cluster submission blocked: submit command is not reachable through Paramiko: {submit}. {(err or out).strip()}"
-    except Exception as exc:
-        return f"Cluster submission blocked: Paramiko could not connect to the cluster. {type(exc).__name__}: {exc}"
-    return None
+def _sta_params(settings: Settings) -> dict:
+    params = dict(settings.raw.get("defaults", {}).get("sta", {}))
+    params.setdefault("anatomy_spatial_bin", 1)
+    return params

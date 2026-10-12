@@ -1,38 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-
-def visualize_suite2p_anatomy(suite2p_path, n_cells):
-    stat = np.load(suite2p_path + 'stat.npy', allow_pickle=True)
-    ops = np.load(suite2p_path + 'ops.npy', allow_pickle=True)
-    ops = ops.item()
-
-    im = np.zeros((ops['Ly'], ops['Lx']))
-
-    for n in range(0, n_cells):
-        ypix = stat[n]['ypix'][~stat[n]['overlap']]
-        xpix = stat[n]['xpix'][~stat[n]['overlap']]
-        im[ypix, xpix] = n + 1
-
-    plt.figure(figsize=(6, 6))
-    plt.imshow(im)
-    plt.show(block=True)
-
-
-def get_roi_image(cell_id, suite2p_path):
-    iscell = np.load(suite2p_path + 'iscell.npy', allow_pickle=True)
-    stat = np.load(suite2p_path + 'stat.npy', allow_pickle=True)
-    ops = np.load(suite2p_path + 'ops.npy', allow_pickle=True).item()
-    cell_mask = iscell[:, 0].astype(bool)
-    stat_cells = stat[cell_mask]
-
-    roi = stat_cells[cell_id]
-    im = np.zeros((ops['Ly'], ops['Lx']))
-    ypix = roi['ypix'][~roi['overlap']]
-    xpix = roi['xpix'][~roi['overlap']]
-    im[ypix, xpix] = cell_id + 1
-
-    return im
 
 
 def read_suite2p_traces(suite2p_path, cell_mask, neuropil_correction=False):
@@ -82,15 +49,36 @@ def neuron_centroid_binned(cell_id, spatial_bin, map_shape, suite2p_ctx):
 
 def get_neuron_outline(neuron_id, suite2p_path, image_shape, spatial_bin):
     suite2p_ctx = load_suite2p_context(suite2p_path)
-    s = suite2p_ctx["stat_cells"][neuron_id]
+    return suite2p_roi_mask(neuron_id, suite2p_ctx["stat_cells"], image_shape, spatial_bin=spatial_bin)
+
+
+def suite2p_roi_mask(neuron_id, stat_cells, image_shape, spatial_bin=1, exclude_overlap=False):
+    s = stat_cells[int(neuron_id)]
     ypix = np.asarray(s["ypix"], dtype=int)
     xpix = np.asarray(s["xpix"], dtype=int)
+    if exclude_overlap and "overlap" in s:
+        keep = ~np.asarray(s["overlap"], dtype=bool)
+        ypix = ypix[keep]
+        xpix = xpix[keep]
 
     map_h, map_w = image_shape
-    yb = np.clip(np.floor_divide(ypix, spatial_bin), 0, map_h - 1)
-    xb = np.clip(np.floor_divide(xpix, spatial_bin), 0, map_w - 1)
+    yb = np.clip(np.floor_divide(ypix, int(spatial_bin)), 0, map_h - 1)
+    xb = np.clip(np.floor_divide(xpix, int(spatial_bin)), 0, map_w - 1)
 
     neuron_mask2d = np.zeros((map_h, map_w), dtype=bool)
     neuron_mask2d[yb, xb] = True
 
     return neuron_mask2d
+
+
+def add_neuron_outlines(ax, cell_ids, stat_cells, image_shape, color="yellow", linewidth=1.0, spatial_bin=1, alpha=1.0):
+    for cell_id in cell_ids:
+        mask = suite2p_roi_mask(
+            int(cell_id),
+            stat_cells,
+            image_shape,
+            spatial_bin=spatial_bin,
+            exclude_overlap=True,
+        )
+        if mask.any():
+            ax.contour(mask.astype(float), levels=[0.5], colors=color, linewidths=linewidth, alpha=alpha)

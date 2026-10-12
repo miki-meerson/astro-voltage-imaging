@@ -27,15 +27,26 @@ def _resolve(root: Path, value: str) -> Path:
     return p if p.is_absolute() else root / p
 
 
+def load_secrets() -> dict:
+    """The cluster credentials, from the one git-ignored secrets.yml (or ASTRO_SECRETS_FILE). Empty dict when the file is absent;
+    the ASTRO_CLUSTER_* environment variables are still honoured by app.services.cluster_ssh."""
+    path = Path(os.environ.get("ASTRO_SECRETS_FILE") or PROJECT_ROOT / "secrets.yml")
+    if not path.exists():
+        return {}
+    return (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("cluster", {}) or {}
+
+
 def load_settings() -> Settings:
     cfg_path = Path(
         os.environ.get("ASTRO_PIPELINE_CONFIG")
-        or os.environ.get("ASTRO_DB_CONFIG")
         or PROJECT_ROOT / "config.example.yml"
     )
     if not cfg_path.exists():
         raise FileNotFoundError(f"Missing application configuration: {cfg_path}")
     data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    secrets = load_secrets()
+    if secrets:
+        data["cluster"] = {**(data.get("cluster") or {}), **{k: v for k, v in secrets.items() if v not in (None, "")}}
     root = _resolve(PROJECT_ROOT, data.get("project_root", str(PROJECT_ROOT)))
     return Settings(
         raw=data,

@@ -1,0 +1,150 @@
+"""Preprocessing page and its actions, data and movie endpoints."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from flask import jsonify, redirect, render_template, request, send_file, url_for
+
+from app.db.core import connect, rows
+from app.services import caches
+from app.services.experiments import confirm_preprocessing, confirm_suite2p, launch_analysis_defaults
+from app.services.movies import (
+    latest_preprocessing_params,
+    mean_intensity_payload,
+    experiment_fps,
+    pb_movie_path,
+    pb_qc_plot_path,
+)
+from app.services.preprocessing import PREPROCESSING_STEPS, rerun_preprocessing_step
+from app.services.run_views import STEP_LABELS, experiment_notes, run_view
+from app.services.runs import create_run, launch_run
+from app.web.common import FlatBlueprint, get_settings
+
+bp = FlatBlueprint("preprocessing", __name__)
+
+
+@bp.get("/experiments/<int:experiment_id>/preprocessing")
+def experiment_preprocessing(experiment_id):
+    settings = get_settings()
+    with connect(settings) as conn:
+        exp = conn.execute("SELECT * FROM experiments WHERE id=?", (experiment_id,)).fetchone()
+        if exp is None:
+            return render_template("error.html", title="Missing Experiment", message="Experiment not found"), 404
+        runs = [run_view(r, settings) for r in conn.execute("SELECT * FROM analysis_runs WHERE experiment_id=? ORDER BY created_at DESC, id ASC", (experiment_id,))]
+        pre_steps = rows(
+            conn,
+            """
+            SELECT ps.*
+            FROM preprocessing_steps ps
+            JOIN analysis_runs r ON r.id=ps.run_id
+            WHERE r.experiment_id=?
+            ORDER BY ps.run_id DESC, ps.step_order ASC
+            """,
+            (experiment_id,),
+        )
+        preprocessing_params = latest_preprocessing_params(conn, experiment_id)
+        notes = experiment_notes(conn, experiment_id)
+    active = any(r["status"] in {"pending", "queued", "running"} for r in runs)
+    pb_available = any(
+        path is not None and path.exists()
+        for path in (pb_movie_path(exp["source_path"], "astro"), pb_movie_path(exp["source_path"], "neuron"))
+    )
+    pb_qc_plots = [
+        {"kind": kind, "label": kind.title(), "available": bool((path := pb_qc_plot_path(exp["source_path"], kind)) and path.exists())}
+        for kind in ("astro", "neuron")
+    ]
+    pb_review_available = pb_available or any(plot["available"] for plot in pb_qc_plots)
+    return render_template(
+        "preprocessing.html",
+        exp=dict(exp),
+        runs=runs,
+        pre_steps=pre_steps,
+        active=active,
+        pb_available=pb_available,
+        pb_review_available=pb_review_available,
+        pb_qc_plots=pb_qc_plots,
+        preprocessing_params=preprocessing_params,
+        notes=notes,
+        step_labels=STEP_LABELS,
+        known_steps=PREPROCESSING_STEPS,
+        notice=request.args.get("notice"),
+    )
+
+
+@bp.post("/experiments/<int:experiment_id>/preprocessing/run")
+def run_preprocessing(experiment_id):
+    settings = get_settings()
+    try:
+        rid = create_run(settings, experiment_id, "preprocessing", settings.raw.get("defaults", {}).get("preprocessing", {}), backend="cluster")
+        launch_run(settings, rid)
+        return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, new_run=rid))
+    except Exception as exc:
+        return render_template("error.html", title="Preprocessing Failed", message=str(exc)), 400
+
+
+@bp.post("/experiments/<int:experiment_id>/preprocessing/steps/<step_name>/rerun")
+def rerun_preprocessing_step_route(experiment_id, step_name):
+    settings = get_settings()
+    try:
+        extra_params = {}
+        if step_name == "photobleaching_correction" and request.form.get("trimmed") not in {None, ""}:
+            extra_params["trimmed"] = int(request.form["trimmed"])
+        rerun_preprocessing_step(settings, experiment_id, step_name, extra_params=extra_params)
+        return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, notice=f"rerun_{step_name}"))
+    except Exception as exc:
+        return render_template("error.html", title="Step Rerun Failed", message=str(exc)), 400
+
+
+@bp.post("/experiments/<int:experiment_id>/preprocessing/confirm")
+def confirm_preprocessing_route(experiment_id):
+    settings = get_settings()
+    try:
+        confirm_preprocessing(settings, experiment_id)
+        return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, notice="preprocessing_confirmed"))
+    except Exception as exc:
+        return render_template("error.html", title="Confirm Failed", message=str(exc)), 400
+
+
+@bp.post("/experiments/<int:experiment_id>/suite2p/confirm")
+def confirm_suite2p_route(experiment_id):
+    settings = get_settings()
+    try:
+        n = confirm_suite2p(settings, experiment_id)
+        caches.clear_experiment_result_caches()
+        launch_analysis_defaults(settings, experiment_id)
+        return redirect(url_for("experiment_analysis", experiment_id=experiment_id, notice=f"suite2p_confirmed_{n}"))
+    except Exception as exc:
+        return render_template("error.html", title="Suite2p Confirm Failed", message=str(exc)), 400
+
+
+@bp.get("/experiments/<int:experiment_id>/preprocessing/mean-intensity/data")
+def preprocessing_mean_intensity_data(experiment_id):
+    settings = get_settings()
+    with connect(settings) as conn:
+        exp = conn.execute("SELECT source_path FROM experiments WHERE id=?", (experiment_id,)).fetchone()
+    if exp is None:
+        return jsonify({"available": False, "message": "Experiment not found."}), 404
+    try:
+        max_points = min(1600, max(200, int(request.args.get("max_points", "350"))))
+        return jsonify(mean_intensity_payload(exp["source_path"], experiment_fps(exp["source_path"]), max_points=max_points))
+    except Exception as exc:
+        return jsonify({"available": False, "message": str(exc)}), 500
+
+
+@bp.get("/experiments/<int:experiment_id>/preprocessing/photobleaching-qc/<kind>.png")
+def preprocessing_photobleaching_qc_plot(experiment_id, kind):
+    settings = get_settings()
+    path = None
+    with connect(settings) as conn:
+        exp = conn.execute("SELECT source_path FROM experiments WHERE id=?", (experiment_id,)).fetchone()
+    if exp is not None:
+        path = pb_qc_plot_path(exp["source_path"], kind)
+    if exp is None or path is None:
+        return render_template("error.html", title="Missing Experiment", message="Experiment not found."), 404
+    source_root = Path(exp["source_path"]).resolve()
+    target = path.resolve()
+    if source_root not in target.parents and target != source_root:
+        return render_template("error.html", title="Unsafe Path", message="QC plot path is outside the experiment folder."), 400
+    if not target.exists() or not target.is_file():
+        return render_template("error.html", title="Missing QC Plot", message=str(target)), 404
+    return send_file(target, mimetype="image/png", max_age=30)

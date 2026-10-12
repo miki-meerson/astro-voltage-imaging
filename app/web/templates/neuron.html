@@ -3,6 +3,7 @@
 {% if embedded %}<style>header{display:none} main{min-height:100vh; padding:16px}</style>{% endif %}
 {% endblock %}
 {% block body %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/cell_panels.css') }}">
 {% if not embedded %}
 <div class="page-head">
   <div>
@@ -67,29 +68,24 @@
   </div>
 
   {% if r %}
-  <div class="grid-3">
-    <div>
-      <span class="chip {{ r.status }}">{{ r.status }}</span>
-      <div class="progress {{ r.status }}" style="--value: {{ r.progress }}%; margin-top: 10px"><span></span></div>
-    </div>
-    <div>
-      <p class="muted">Saved Temporarily</p>
-      <strong>{{ r.output_name }}</strong>
-    </div>
-    <div>
-      {% if r.failure_reason %}
-      <p class="failed">{{ r.failure_reason }}</p>
-      {% endif %}
-    </div>
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:2px">
+    <span class="chip {{ r.status }}">{{ r.status }}</span>
+    {% if r.status != "completed" %}<div class="progress {{ r.status }}" style="--value: {{ r.progress }}%; width:160px"><span></span></div>{% endif %}
+    <span class="muted" style="font-size:12px">{{ r.output_name }}</span>
+    {% if r.failure_reason %}<span class="failed">{{ r.failure_reason }}</span>{% endif %}
   </div>
+  {% if step == "sta" and sta_stale %}<div style="margin-top:6px; padding:6px 10px; border:1px solid #b8860b; border-radius:6px; color:#f0c040; font-size:13px">&#9888; {{ sta_stale }}</div>{% endif %}
 
   {% if step == "spike" %}
-  <canvas
-    id="spike-preview-{{ neuron.id }}"
-    class="trace-canvas"
-    data-neuron-id="{{ neuron.id }}"
-    style="height:{% if embedded %}360px{% else %}560px{% endif %}; margin-top:14px;"
-  ></canvas>
+  <div class="spk-wrap">
+    <button type="button" class="secondary spk-full" title="Full screen" onclick="var w=this.parentNode; document.fullscreenElement===w ? document.exitFullscreen() : w.requestFullscreen()">&#x26F6; Full screen</button>
+    <canvas
+      id="spike-preview-{{ neuron.id }}"
+      class="trace-canvas"
+      data-neuron-id="{{ neuron.id }}"
+      style="height:{% if embedded %}230px{% else %}300px{% endif %};"
+    ></canvas>
+  </div>
   {% elif r.preview_artifacts %}
   <div class="grid" style="margin-top: 14px">
     {% for a in r.preview_artifacts %}
@@ -101,132 +97,47 @@
   {% endif %}
 
   {% if step == "sta" %}
-  <div style="margin-top:14px">
-    <img class="analysis-image" src="/neurons/{{ neuron.id }}/sta-summary.png?run={{ r.id }}" alt="STA maps summary for cell {{ neuron.pipeline_neuron_id }}">
+  <div class="sta-tabs" data-neuron="{{ neuron.id }}" data-run="{{ r.id }}">
+    <div class="tabbar" role="tablist">
+      <button type="button" class="tab active" data-tab="maps">STA maps + movie</button>
+      <button type="button" class="tab" data-tab="motion">Motion</button>
+    </div>
+    <div class="tabpane active" data-pane="maps">
+      <div class="maps-grid">
+        <div class="zv" style="--h:400px"><img class="analysis-image" src="/neurons/{{ neuron.id }}/sta-summary.png?run={{ r.id }}" alt="STA maps summary for cell {{ neuron.pipeline_neuron_id }}"></div>
+        <div id="smv">
+          <div class="movie-head"><b>Cropped STA movie</b><span id="smv-info" class="muted">Loading...</span></div>
+          <div class="muted" style="font-size:12px">Sign-corrected: brighter / red = <span style="color:#ff5d6c">depolarization</span>, darker / blue = <span style="color:#4fa3ff">hyperpolarization</span> (the raw GEVI fluorescence goes the other way).</div>
+          <div class="zv" data-cap="0.6" style="--h:340px"><div class="smv-stage" id="smv-stage"><canvas id="smv-base"></canvas><canvas id="smv-ovl"></canvas></div></div>
+          <canvas id="smv-trace" title="The neuron's own dF/F (neuron movie, Suite2p; shown as recorded, up = brighter) averaged around the same spikes. Click or drag to move through time."></canvas>
+          <div class="smv-controls">
+            <button type="button" id="smv-play" class="secondary">Play</button>
+            <input type="range" id="smv-scrub" min="0" max="0" value="0" step="1">
+            <button type="button" id="smv-spike" class="secondary" title="Frame 0: the detected spike time that every frame of this average is aligned to">Spike</button>
+            <select id="smv-mode" title="The movie is the spike-triggered average as relative change (dF/F). The clusters were found on the change from the pre-spike baseline (frames -58..-11 subtracted), which is easier to see. Both modes show the biological sign: brighter = depolarization"><option value="change">Change from baseline</option><option value="raw">Relative change (dF/F, as saved)</option></select>
+            <select id="smv-contrast"><option value="global">Global contrast</option><option value="frame">Per-frame contrast</option></select>
+            <label title="Display only: blur by about 1 pixel, like the smoothing the cluster test applies" style="display:inline-flex; align-items:center; gap:4px"><input type="checkbox" id="smv-smooth" checked style="width:auto"> smooth</label>
+            <select id="smv-marks" title="Cluster markers sit on top of the voltage signal; arrows are the least intrusive"><option value="arrows">Arrows only</option><option value="full">Arrows + outlines + ROI</option><option value="none">No markers</option></select>
+          </div>
+          <div id="smv-readout" class="muted" style="font-size:12px; margin-top:3px"></div>
+          <canvas id="smv-groups" title="Change from baseline (frames -58..-11), averaged over the pixels of the significant anatomy clusters (red = depolarizing, blue = hyperpolarizing) and over all other pixels of the crop (grey). Shaded: 5th-95th percentile of random patches of other pixels with the same pixel count as the cluster group. Click or drag to move through time."></canvas>
+          <div id="smv-groups-note" class="muted" style="font-size:12px; margin-top:2px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="tabpane" data-pane="motion">
+      <details><summary>What am I looking at?</summary><p>Spike-triggered average of the applied registration shifts and per-frame registration quality (colored) against the same circular-shift null used for the maps (grey band, &plusmn;2 sd). A red curve means this cell's spikes are time-locked to motion, so its STA clusters may be motion artifacts.</p></details>
+      <div class="zv" style="--h:300px"><img class="analysis-image lazy" data-src="/neurons/{{ neuron.id }}/motion-sta.png?run={{ r.id }}" alt="Spike-triggered motion diagnostics for cell {{ neuron.pipeline_neuron_id }}"></div>
+    </div>
   </div>
   {% endif %}
   {% endif %}
 </section>
 {% endfor %}
-<script>
-(() => {
-  const canvas = document.getElementById("spike-preview-{{ neuron.id }}");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  const plot = {left: 76, right: 22, top: 28, bottom: 62};
-  const colors = {simple: "#4fa3ff", complex: "#f0a33a", exclude: "#e05260"};
-  let trace = [], peaks = [], labels = [], fps = 1, start = 0, stop = 0;
-
-  function resize() {
-    const rect = canvas.getBoundingClientRect();
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    canvas.width = Math.max(900, Math.round(rect.width * dpr));
-    canvas.height = Math.max(420, Math.round(rect.height * dpr));
-  }
-  function plotWidth() { return canvas.width - plot.left - plot.right; }
-  function plotHeight() { return canvas.height - plot.top - plot.bottom; }
-  function frameToX(f) { return plot.left + (f - start) / Math.max(1, stop - start) * plotWidth(); }
-  function valToY(v, lo, hi) { return plot.top + (1 - (v - lo) / Math.max(1e-9, hi - lo)) * plotHeight(); }
-  function fmtTime(frame) {
-    const seconds = frame / Math.max(1e-9, fps);
-    return seconds >= 60 ? `${(seconds / 60).toFixed(1)} min` : `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
-  }
-  function fmtDff(v) { return Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2); }
-  function niceTicks(lo, hi, n = 5) {
-    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return [lo, hi];
-    const raw = (hi - lo) / Math.max(1, n - 1);
-    const pow = Math.pow(10, Math.floor(Math.log10(raw)));
-    const step = [1, 2, 5, 10].map(x => x * pow).find(x => x >= raw) || raw;
-    const ticks = [];
-    for (let v = Math.ceil(lo / step) * step; v <= hi + step * 0.5; v += step) ticks.push(v);
-    return ticks;
-  }
-  function range() {
-    const values = trace.slice(start, stop).filter(Number.isFinite);
-    let lo = Math.min(...values), hi = Math.max(...values);
-    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return [0, 1];
-    const pad = Math.max((hi - lo) * 0.14, 0.02);
-    return [lo - pad, hi + pad];
-  }
-  function drawMessage(message) {
-    resize();
-    ctx.fillStyle = "#0b0f14";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#9aa8b7";
-    ctx.font = "18px Segoe UI";
-    ctx.textAlign = "center";
-    ctx.fillText(message, canvas.width / 2, canvas.height / 2);
-  }
-  function draw() {
-    resize();
-    if (!trace.length) return drawMessage("No spike trace available.");
-    const [lo, hi] = range();
-    ctx.fillStyle = "#0b0f14";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#43505f";
-    ctx.fillStyle = "#aeb9c6";
-    ctx.lineWidth = 1;
-    ctx.font = "16px Segoe UI";
-    ctx.beginPath();
-    ctx.moveTo(plot.left, plot.top);
-    ctx.lineTo(plot.left, plot.top + plotHeight());
-    ctx.lineTo(plot.left + plotWidth(), plot.top + plotHeight());
-    ctx.stroke();
-    for (const v of niceTicks(lo, hi, 5)) {
-      const y = valToY(v, lo, hi);
-      ctx.strokeStyle = "#222c36";
-      ctx.beginPath(); ctx.moveTo(plot.left, y); ctx.lineTo(plot.left + plotWidth(), y); ctx.stroke();
-      ctx.fillStyle = "#aeb9c6";
-      ctx.textAlign = "right";
-      ctx.fillText(fmtDff(v), plot.left - 10, y);
-    }
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    for (let i = 0; i < 5; i++) {
-      const f = Math.round(start + i / 4 * (stop - start));
-      ctx.fillText(fmtTime(f), frameToX(f), plot.top + plotHeight() + 12);
-    }
-    ctx.fillStyle = "#d6dde6";
-    ctx.fillText("Time", plot.left + plotWidth() / 2, canvas.height - 18);
-    ctx.save(); ctx.translate(22, plot.top + plotHeight() / 2); ctx.rotate(-Math.PI / 2); ctx.fillText("dF/F", 0, 0); ctx.restore();
-    ctx.save();
-    ctx.beginPath(); ctx.rect(plot.left, plot.top, plotWidth(), plotHeight()); ctx.clip();
-    const grad = ctx.createLinearGradient(plot.left, 0, plot.left + plotWidth(), 0);
-    grad.addColorStop(0, "#8cc7ff"); grad.addColorStop(0.55, "#d6dde6"); grad.addColorStop(1, "#37c6a6");
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    let moved = false;
-    const step = Math.max(1, Math.ceil((stop - start) / Math.max(1, plotWidth() * 1.5)));
-    for (let f = start; f < stop && f < trace.length; f += step) {
-      if (!Number.isFinite(trace[f])) continue;
-      const x = frameToX(f), y = valToY(trace[f], lo, hi);
-      if (!moved) { ctx.moveTo(x, y); moved = true; } else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-    for (let i = 0; i < peaks.length; i++) {
-      const f = Number(peaks[i]);
-      if (f < start || f >= stop || !Number.isFinite(trace[f])) continue;
-      ctx.fillStyle = colors[labels[i]] || "#d6dde6";
-      ctx.beginPath(); ctx.arc(frameToX(f), valToY(trace[f], lo, hi), 5, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
-  }
-  fetch("/neurons/{{ neuron.id }}/spikes/data")
-    .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-    .then(data => {
-      if (data.error) throw new Error(data.error);
-      trace = data.trace || [];
-      peaks = data.peaks || [];
-      labels = data.labels || [];
-      fps = Number(data.fps || 1);
-      start = 0;
-      stop = trace.length;
-      draw();
-      new ResizeObserver(draw).observe(canvas);
-      window.addEventListener("resize", draw);
-    })
-    .catch(error => drawMessage(error.message || "Spike plot failed to load."));
-})();
-</script>
+<script type="application/json" id="page-data">{{ {"neuronId": neuron.id}|tojson }}</script>
+<script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
+<script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
+<script src="{{ url_for('static', filename='js/cell_tabs.js') }}"></script>
+<script src="{{ url_for('static', filename='js/sta_movie.js') }}"></script>
+<script src="{{ url_for('static', filename='js/spike_preview.js') }}"></script>
 {% endblock %}

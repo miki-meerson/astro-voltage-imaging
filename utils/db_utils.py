@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -9,9 +8,6 @@ import re
 
 
 DEFAULT_NEURON_DATASET_NAME = "neuron_dataset.pkl"
-DEFAULT_CLUSTER_DATASET_NAME = "cluster_dataset.pkl"
-DEFAULT_PARAMS_DATASET_NAME = "params_dataset.pkl"
-DEFAULT_BEST_DATASET_NAME = "best_neurons_dataset.pkl"
 
 NEURON_INDEX_COLUMNS = [
     "cage",
@@ -52,13 +48,31 @@ CLUSTER_RESULT_ALGORITHM_KEYS = [
     "voxel_alpha",
     "cluster_alpha",
     "spatial_bin",
+    "anatomy_spatial_bin",
     "anatomy_radius_binned",
+    "anatomy_source_radius_binned",
+    "anatomy_source_spatial_bin",
+    "anatomy_fullres_radius_px",
+    "min_spikes_for_cluster",
+    "rng_seed",
+    "pre_seconds",
+    "post_seconds",
+    "baseline_seconds",
+    "analysis_half_window_seconds",
+    "analysis_half_window_frames",
     "cluster_connectivity",
     "min_cluster_size",
     "min_cluster_mass",
     "merge_similar_clusters",
     "merge_max_distance_px",
     "merge_min_trace_corr",
+    "null_standardization",
+    "per_sign_null",
+    "smooth_sigma_px",
+    "smooth_sigma_fullres_px",
+    "min_cluster_footprint_px",
+    "min_cluster_frames",
+    "significance_statistic",
 ]
 
 CLUSTER_RESULT_HPARAM_KEYS = [
@@ -66,50 +80,6 @@ CLUSTER_RESULT_HPARAM_KEYS = [
     *CLUSTER_RESULT_WINDOW_KEYS,
 ]
 
-PARAMS_VALUE_COLUMNS = [
-    "analysis_window",
-    "pre_frames",
-    "post_frames",
-    "n_permutations",
-    "rng_seed",
-    *CLUSTER_RESULT_ALGORITHM_KEYS,
-]
-
-@dataclass(frozen=True)
-class RecordingContext:
-    cage: str
-    mouse_name: str
-    recording_date: str
-    behavior: str
-    recording_name: str
-
-
-@dataclass
-class NeuronRecord:
-    recording_context: RecordingContext
-    neuron_id: int
-    all_peak_frames: np.ndarray
-    simple_peak_frames: np.ndarray
-    complex_peak_frames: np.ndarray
-
-
-@dataclass(frozen=True)
-class DatasetsPaths:
-    neuron_dataset_path: Path
-    cluster_dataset_path: Path
-    params_dataset_path: Path
-    best_dataset_path: Path
-
-
-def resolve_datasets_paths(home_dir: str | Path) -> DatasetsPaths:
-    home_dir = Path(home_dir)
-    sta_dir = home_dir / "sta-analysis"
-    return DatasetsPaths(
-        neuron_dataset_path=sta_dir / DEFAULT_NEURON_DATASET_NAME,
-        cluster_dataset_path=sta_dir / DEFAULT_CLUSTER_DATASET_NAME,
-        params_dataset_path=sta_dir / DEFAULT_PARAMS_DATASET_NAME,
-        best_dataset_path=sta_dir / DEFAULT_BEST_DATASET_NAME,
-    )
 
 def _missing_required_columns(df: pd.DataFrame, required: list[str]) -> list[str]:
     return [c for c in required if c not in df.columns]
@@ -173,27 +143,6 @@ def load_neuron_dataset(path: Path) -> pd.DataFrame:
 def load_cluster_dataset(path: Path) -> pd.DataFrame:
     df = pd.read_pickle(Path(path))
     return ensure_cluster_multiindex(df)
-
-
-def pick_latest_cluster_npz(neuron_dir: Path, verbal: bool = True) -> Path | None:
-    # Versioning:
-    # - astro_sta_cluster_permutation.npz      -> v0
-    # - astro_sta_cluster_permutation_v1.npz   -> v1
-    # - astro_sta_cluster_permutation_v2.npz   -> v2
-    pat = re.compile(r"^astro_sta_cluster_permutation(?:_v(\d+))?\.npz$")
-    best_path: Path | None = None
-    best_ver = -1
-    for p in neuron_dir.glob("astro_sta_cluster_permutation*.npz"):
-        m = pat.match(p.name)
-        if m is None:
-            continue
-        ver = int(m.group(1)) if m.group(1) is not None else 0
-        if ver > best_ver:
-            best_ver = ver
-            best_path = p
-    if verbal:
-        print(f"Chose {best_path.name if best_path is not None else None} for analysis")
-    return best_path
 
 
 def parse_cluster_result_filename(path: str | Path) -> dict[str, int | str] | None:
@@ -284,43 +233,6 @@ def collect_cluster_result_metadata(
     return pd.DataFrame(rows)
 
 
-def summarize_cluster_result_metadata(
-    result_df: pd.DataFrame,
-    cell_ids: list[int] | None = None,
-) -> tuple[pd.DataFrame, dict[tuple[str, int], pd.DataFrame]]:
-    if result_df.empty:
-        return pd.DataFrame(), {}
-
-    expected_cells = sorted(set(cell_ids if cell_ids is not None else result_df["cell_id"]))
-    hparam_cols = [
-        key for key in [*CLUSTER_RESULT_HPARAM_KEYS, "n_permutations"] if key in result_df.columns
-    ]
-    summary_rows = []
-    mismatch_details = {}
-
-    for (result_type, version), group in result_df.groupby(["result_type", "version"], sort=True):
-        unique_hparams = group[hparam_cols].drop_duplicates()
-        missing = sorted(set(expected_cells) - set(group["cell_id"]))
-        summary_rows.append(
-            {
-                "result_type": result_type,
-                "version": version,
-                "n_files": len(group),
-                "n_cells_present": group["cell_id"].nunique(),
-                "n_cells_missing": len(missing),
-                "missing_cells": missing,
-                "matching_hparams": len(unique_hparams) == 1,
-                **(unique_hparams.iloc[0].to_dict() if len(unique_hparams) else {}),
-            }
-        )
-        if len(unique_hparams) != 1:
-            mismatch_details[(str(result_type), int(version))] = group[
-                ["cell_id", "file_name", *hparam_cols]
-            ].sort_values("cell_id")
-
-    return pd.DataFrame(summary_rows), mismatch_details
-
-
 def _infer_neuron_dataset_path_from_cluster_path(cluster_dataset_path: Path) -> Path:
     return Path(cluster_dataset_path).with_name(DEFAULT_NEURON_DATASET_NAME)
 
@@ -336,15 +248,6 @@ def load_sta_metadata(cell_dir: str | Path) -> dict:
         "threshold_factor": float(np.asarray(peak_params["threshold_factor"]).item()),
         "min_distance": int(np.asarray(peak_params["min_distance"]).item()),
     }
-
-
-def get_rel_frames(neuron_id, sta_dir):
-    neuron_dir = sta_dir / f"cell_{neuron_id}"
-    meta = load_sta_metadata(neuron_dir)
-    pre = int(meta["pre_frames"])
-    post = int(meta["post_frames"])
-    rel = np.arange(-pre, post + 1, dtype=np.int32)
-    return rel
 
 
 def load_normalized_dataset(
@@ -366,50 +269,6 @@ def load_normalized_dataset(
     neuron_df = load_neuron_dataset(neuron_path)
     cluster_df = load_cluster_dataset(cluster_path)
     return neuron_df, cluster_df
-
-
-def combine_neuron_cluster_tables(
-    neuron_df: pd.DataFrame, cluster_df: pd.DataFrame
-) -> pd.DataFrame:
-    neuron_cols = ensure_neuron_multiindex(neuron_df).reset_index()
-    cluster_cols = ensure_cluster_multiindex(cluster_df).reset_index()
-    return cluster_cols.merge(
-        neuron_cols,
-        how="left",
-        on=NEURON_INDEX_COLUMNS,
-        validate="many_to_one",
-    )
-
-
-def infer_context_from_sta_dir(sta_dir: Path) -> RecordingContext:
-    # Expected shape: .../<cage>/<mouse>/<date-behavior>/<FOV>/<recording_name>/sta_analysis
-    home_dir = sta_dir.parent if sta_dir.name in {"sta_analysis", "sta-analysis"} else sta_dir
-    parts = home_dir.parts
-
-    cage = "unknown_cage"
-    mouse_name = "unknown_mouse"
-    recording_date = "unknown_date"
-    behavior = "unknown_behavior"
-    recording_name = home_dir.name
-
-    if len(parts) >= 5:
-        cage = parts[-5]
-        mouse_name = parts[-4]
-        date_behavior = parts[-3]
-        m = re.match(r"^(\d{2}-\d{2}-\d{4})-(.+)$", date_behavior)
-        if m:
-            recording_date = m.group(1)
-            behavior = m.group(2)
-        else:
-            recording_date = date_behavior
-
-    return RecordingContext(
-        cage=cage,
-        mouse_name=mouse_name,
-        recording_date=recording_date,
-        behavior=behavior,
-        recording_name=recording_name,
-    )
 
 
 def load_saved_npz(npz_path):
@@ -440,16 +299,16 @@ def load_saved_npz(npz_path):
             "merge_max_distance_px": float(np.asarray(d["merge_max_distance_px"]).item()) if "merge_max_distance_px" in d else 0.0,
             "merge_min_trace_corr": float(np.asarray(d["merge_min_trace_corr"]).item()) if "merge_min_trace_corr" in d else 1.0,
             "spatial_bin": int(np.asarray(d["spatial_bin"]).item()),
+            # dF/F-like effect for traces; observed_effect_movie is the TESTED statistic (z in per_pixel_z mode)
+            "trace_effect": np.asarray(d["observed_effect_raw_movie"] if "observed_effect_raw_movie" in d else d["observed_effect_movie"], dtype=float),
+            "min_footprint_px": int(np.asarray(d["min_cluster_footprint_px"]).item()) if "min_cluster_footprint_px" in d else 0,
+            "min_frames": int(np.asarray(d["min_cluster_frames"]).item()) if "min_cluster_frames" in d else 0,
+            "significance_statistic": str(np.asarray(d["significance_statistic"]).item()) if "significance_statistic" in d else "effect",
+            # opt-in per-sign rule (see docs/statistics.md); for such files "threshold" / "null_max" above are the
+            # positive-sign values and the negative-sign ones are here
+            "per_sign_null": bool(np.asarray(d["per_sign_null"]).item()) if "per_sign_null" in d else False,
+            "threshold_neg": float(np.asarray(d["cluster_threshold_neg"]).item()) if "cluster_threshold_neg" in d else None,
+            "null_max_pos": np.asarray(d["null_max_cluster_mass_pos"], dtype=float) if "null_max_cluster_mass_pos" in d else None,
+            "null_max_neg": np.asarray(d["null_max_cluster_mass_neg"], dtype=float) if "null_max_cluster_mass_neg" in d else None,
             "t_rel": t_rel,
         }
-    
-
-def get_peak_array_for_neuron(neuron_df, neuron_id: int, peak_col: str = "all_peak_frames") -> np.ndarray:
-    rows = neuron_df.reset_index()
-    if "neuron_id" in rows.columns and "cell_id" not in rows.columns:
-        rows = rows.rename(columns={"neuron_id": "cell_id"})
-    rows = rows[rows["cell_id"].astype(int) == int(neuron_id)]
-    if rows.empty or peak_col not in rows.columns:
-        return np.empty(0, dtype=np.int32)
-    peaks = np.asarray(rows.iloc[0][peak_col], dtype=np.int32).ravel()
-    return peaks[(peaks >= 0)].astype(np.int32)

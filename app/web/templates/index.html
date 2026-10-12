@@ -4,18 +4,19 @@
 <div class="page-head">
   <div>
     <h1>Experiments</h1>
-    <p class="subtitle">Successful experiment registry and latest analysis results.</p>
+    <p class="subtitle">Uploaded experiment registry, preprocessing status, and analysis readiness.</p>
   </div>
 </div>
 
 <div class="grid">
   <section class="panel">
-    <h2>Add Experiment</h2>
+    <h2>Upload Experiment</h2>
     <form method="post" action="/experiments/add" class="form-row">
       <input name="path" placeholder="Z:\...\z18-x2" required>
       <a class="button secondary" href="/browse">Browse</a>
       <button>Add and Run</button>
     </form>
+    <p class="muted">Raw experiments enter preprocessing. Processed experiments with Suite2p outputs enter analysis.</p>
   </section>
 
   <section class="panel">
@@ -24,7 +25,7 @@
       <input name="parent" value="{{ settings.scan_parent }}">
       <button>Run Scan</button>
     </form>
-    <p class="muted">Manual scan. Newly added experiments automatically start spike detection, behavior split, and anatomy crop.</p>
+    <p class="muted">Manual scan. Newly added raw experiments automatically start preprocessing on the cluster.</p>
   </section>
 
   <section class="panel">
@@ -64,9 +65,11 @@
       <th>Date Desc</th>
       <th>Metadata</th>
       <th>Validation</th>
+      <th>Stage</th>
       <th>Neurons</th>
       <th>Jobs</th>
       <th>Source</th>
+      <th>Views</th>
       <th></th>
     </tr>
     {% for e in experiments %}
@@ -84,6 +87,7 @@
       <td>{{ e.recording_date }}</td>
       <td>{{ e.cage }} / {{ e.mouse_name }} / {{ e.behavior }} / {{ e.fov }} / z{{ e.z_plane }} x{{ e.zoom }}</td>
       <td><span class="chip {{ e.validation_state }}">{{ e.validation_state }}</span></td>
+      <td><span class="chip">{{ e.workflow_stage }}</span></td>
       <td>{{ e.neuron_count }}</td>
       <td>
         {% if e.job_status == "running" %}
@@ -100,9 +104,20 @@
       </td>
       <td class="path">{{ e.source_path }}</td>
       <td>
-        <form method="post" action="/experiments/{{ e.id }}/remove">
-          <button class="danger">Remove</button>
-        </form>
+        <div class="toolbar">
+          <a class="button secondary" href="/experiments/{{ e.id }}/preprocessing">Preprocessing</a>
+          <a class="button secondary" href="/experiments/{{ e.id }}/analysis">Analysis</a>
+        </div>
+      </td>
+      <td>
+        <div class="toolbar">
+          <form method="post" action="/experiments/{{ e.id }}/reset-data" onsubmit="return confirm('Delete app data, DB run records, cells, and runtime outputs for this experiment, but keep it in the app?');">
+            <button class="danger">Reset Data</button>
+          </form>
+          <form method="post" action="/experiments/{{ e.id }}/remove" onsubmit="return confirm('Remove this experiment from the app and block future scans from re-adding it?');">
+            <button class="danger">Remove</button>
+          </form>
+        </div>
       </td>
     </tr>
     {% endfor %}

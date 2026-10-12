@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
-import shutil
 import shlex
-import subprocess
 import sys
 import time
 
 from app.services.cluster_ssh import load_cluster_credentials, run_ssh_command
+from utils.suite2p_utils import load_suite2p_context
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +28,12 @@ def _cluster_path(path: Path | str, params: dict) -> str:
         if to_root and value.lower().startswith(from_root.lower()):
             suffix = value[len(from_root):].lstrip("\\/")
             return to_root + ("/" + suffix.replace("\\", "/") if suffix else "")
-    return value.replace("\\", "/")
+    normalized = value.replace("\\", "/")
+    marker = "Adam-Lab-Shared"
+    if to_root and marker in normalized:
+        suffix = normalized.split(marker, 1)[1].lstrip("/")
+        return to_root + ("/" + suffix if suffix else "")
+    return normalized
 
 
 def _command_parts(command: str | list[str]) -> list[str]:
@@ -52,25 +55,18 @@ def _submit_command_available(command: list[str], params: dict) -> None:
         import paramiko  # noqa: F401
     except ImportError as exc:
         raise FileNotFoundError("paramiko is required for cluster submission but is not installed.") from exc
-    _load_cluster_credentials(params)
+    load_cluster_credentials(_ssh_settings(params))
 
 
-def _run_slurm_command(command: list[str], params: dict, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    stdout, stderr, code = _run_paramiko_command(shlex.join(command), params)
-    return subprocess.CompletedProcess(command, code, stdout, stderr)
-
-
-def _load_cluster_credentials(params: dict):
-    return load_cluster_credentials(
-        {
-            "ssh_host": params.get("cluster_ssh_host"),
-            "ssh_port": params.get("cluster_ssh_port"),
-            "ssh_username": params.get("cluster_ssh_username"),
-            "ssh_password": params.get("cluster_ssh_password"),
-            "ssh_key_filename": params.get("cluster_ssh_key_filename"),
-            "paramiko_timeout_seconds": params.get("cluster_paramiko_timeout_seconds"),
-        }
-    )
+def _ssh_settings(params: dict) -> dict:
+    return {
+        "ssh_host": params.get("cluster_ssh_host"),
+        "ssh_port": params.get("cluster_ssh_port"),
+        "ssh_username": params.get("cluster_ssh_username"),
+        "ssh_password": params.get("cluster_ssh_password"),
+        "ssh_key_filename": params.get("cluster_ssh_key_filename"),
+        "paramiko_timeout_seconds": params.get("cluster_paramiko_timeout_seconds"),
+    }
 
 
 def _run_paramiko_command(command: str, params: dict) -> tuple[str, str, int]:
@@ -78,17 +74,7 @@ def _run_paramiko_command(command: str, params: dict) -> tuple[str, str, int]:
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return run_ssh_command(
-                {
-                    "ssh_host": params.get("cluster_ssh_host"),
-                    "ssh_port": params.get("cluster_ssh_port"),
-                    "ssh_username": params.get("cluster_ssh_username"),
-                    "ssh_password": params.get("cluster_ssh_password"),
-                    "ssh_key_filename": params.get("cluster_ssh_key_filename"),
-                    "paramiko_timeout_seconds": params.get("cluster_paramiko_timeout_seconds"),
-                },
-                command,
-            )
+            return run_ssh_command(_ssh_settings(params), command)
         except Exception as exc:
             last_exc = exc
             if attempt == attempts:
@@ -104,47 +90,6 @@ def _run_paramiko_command(command: str, params: dict) -> tuple[str, str, int]:
     raise RuntimeError(f"Paramiko command failed: {last_exc}")
 
 
-def _link_or_copy_file(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        return
-    try:
-        os.symlink(src, dst)
-    except OSError:
-        try:
-            os.link(src, dst)
-        except OSError:
-            shutil.copy2(src, dst)
-
-
-def _link_or_copy_dir(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        return
-    try:
-        os.symlink(src, dst, target_is_directory=True)
-    except OSError:
-        shutil.copytree(src, dst, dirs_exist_ok=True)
-
-
-def _copy_spike_labels(spike_run: Path, mirror_home: Path) -> None:
-    dest_root = mirror_home / "automated-spike-analysis"
-    dest_root.mkdir(parents=True, exist_ok=True)
-    for src_cell in sorted(spike_run.glob("cell_*")):
-        if not src_cell.is_dir():
-            continue
-        dst_cell = dest_root / src_cell.name
-        dst_cell.mkdir(exist_ok=True)
-        for name in (
-            "simple_complex_spike_labels.npz",
-            "simple_complex_peaks_for_analysis.npz",
-            "peak_detection_params.npz",
-        ):
-            src = src_cell / name
-            if src.exists():
-                shutil.copy2(src, dst_cell / name)
-
-
 def _result_types(params: dict) -> list[str]:
     result_types = params.get("result_types", ["all", "simple", "complex", "behavioral"])
     if isinstance(result_types, str):
@@ -152,50 +97,31 @@ def _result_types(params: dict) -> list[str]:
     return [str(item) for item in result_types]
 
 
-def _prepare_mirror(source_home: Path, out: Path, params: dict) -> tuple[Path, Path]:
-    mirror_home = out / "sta_algorithm_home"
-    if mirror_home.exists():
-        attempt = 2
-        while (out / f"sta_algorithm_home_attempt_{attempt}").exists():
-            attempt += 1
-        mirror_home = out / f"sta_algorithm_home_attempt_{attempt}"
-    mirror_home.mkdir(parents=True)
+def _spike_cell_ids(spike_run: Path) -> list[int]:
+    cell_ids = []
+    for path in spike_run.glob("cell_*"):
+        if not path.is_dir():
+            continue
+        try:
+            cell_ids.append(int(path.name.split("_", 1)[1]))
+        except ValueError:
+            continue
+    return sorted(cell_ids)
 
-    _link_or_copy_file(source_home / "Experiment.xml", mirror_home / "Experiment.xml")
-    _link_or_copy_file(
-        source_home / "pipeline_results" / "pb_corrected" / "astro_photobleaching_corrected.tif",
-        mirror_home / "pipeline_results" / "pb_corrected" / "astro_photobleaching_corrected.tif",
-    )
-    suite_src = source_home / "pipeline_results" / "for_suite2p" / "suite2p" / "plane0"
-    _link_or_copy_dir(suite_src, mirror_home / "pipeline_results" / "for_suite2p" / "suite2p" / "plane0")
 
-    spike_run = Path(params.get("spike_run") or "") if params.get("spike_run") else None
-    if spike_run is None or not spike_run.exists():
-        raise FileNotFoundError("STA requires spike_run for the same experiment. Run spike analysis first.")
-    _copy_spike_labels(spike_run, mirror_home)
-
-    behavior_run = Path(params.get("behavior_run") or "") if params.get("behavior_run") else None
-    result_types = _result_types(params)
-    anatomy_run = Path(params.get("anatomy_run") or "") if params.get("anatomy_run") else None
-    src_crop = anatomy_run / "sta-analysis" / "anatomy_crop_params.npz" if anatomy_run else None
-    if "behavioral" in result_types:
-        if behavior_run is None or not (behavior_run / BEHAVIOR_SEGMENTS).exists():
-            raise FileNotFoundError("STA behavioral result_type requires a project-owned behavioral run output.")
-        sta_dir = mirror_home / "sta-analysis"
-        sta_dir.mkdir(exist_ok=True)
-        shutil.copy2(behavior_run / BEHAVIOR_SEGMENTS, sta_dir / BEHAVIOR_SEGMENTS)
-
-    if "anatomy" in result_types:
-        if src_crop is None or not src_crop.exists():
-            raise FileNotFoundError(
-                "STA anatomy result_type was requested, but no completed app Anatomy Crop output was supplied. "
-                "Run the Anatomy Crop step first, or rerun STA Maps without the Anatomy checkbox."
-            )
-        sta_dir = mirror_home / "sta-analysis"
-        sta_dir.mkdir(exist_ok=True)
-        shutil.copy2(src_crop, sta_dir / "anatomy_crop_params.npz")
-
-    return mirror_home, spike_run
+def _validate_spike_suite2p_alignment(source_home: Path, spike_run: Path) -> None:
+    suite_path = source_home / "pipeline_results" / "for_suite2p" / "suite2p" / "plane0"
+    suite2p = load_suite2p_context(suite_path)
+    n_cells = int(suite2p["n_cells"])
+    spike_cells = _spike_cell_ids(spike_run)
+    invalid = [cell_id for cell_id in spike_cells if cell_id < 0 or cell_id >= n_cells]
+    if invalid:
+        raise ValueError(
+            "STA requires spike labels that match the current Suite2p accepted-cell list. "
+            f"Current Suite2p has {n_cells} cells (valid ids 0..{max(0, n_cells - 1)}), "
+            f"but spike run {spike_run.name} contains invalid cell folder(s): {invalid[:12]}. "
+            "Refresh Suite2p Cells, rerun Spike Detection, and then rerun STA Maps."
+        )
 
 
 def _prepare_cluster_mirror(source_home: Path, out: Path, params: dict) -> tuple[Path, Path, Path | None]:
@@ -206,6 +132,7 @@ def _prepare_cluster_mirror(source_home: Path, out: Path, params: dict) -> tuple
     spike_run = Path(params.get("spike_run") or "") if params.get("spike_run") else None
     if spike_run is None or not spike_run.exists():
         raise FileNotFoundError("STA requires spike_run for the same experiment. Run spike analysis first.")
+    _validate_spike_suite2p_alignment(source_home, spike_run)
 
     behavior_run = Path(params.get("behavior_run") or "") if params.get("behavior_run") else None
     if "behavioral" in _result_types(params):
@@ -277,13 +204,15 @@ fi
 """
 
 
-def _write_config(mirror_home: Path, out: Path, params: dict, cluster_paths: bool = False) -> Path:
+def _write_config(mirror_home: Path, out: Path, params: dict, source_home: Path) -> Path:
     cfg = dict(params)
-    cfg["home_dir"] = _cluster_path(mirror_home, params) if cluster_paths else str(mirror_home)
+    cfg["home_dir"] = _cluster_path(mirror_home, params)
+    cfg["source_home_dir"] = _cluster_path(source_home, params)
     cfg.setdefault("cell_ids", "all")
     cfg.setdefault("result_types", ["all", "simple", "complex", "behavioral"])
     cfg.setdefault("n_permutations", 200)
-    cfg.setdefault("spatial_bin", 8)
+    cfg.setdefault("spatial_bin", 1)
+    cfg.setdefault("anatomy_spatial_bin", 1)
     cfg.setdefault("voxel_alpha", 0.01)
     cfg.setdefault("cluster_alpha", 0.1)
     cfg.setdefault("rng_seed", 0)
@@ -342,22 +271,20 @@ def _run_cluster_job(config_path: Path, out: Path, params: dict, preflight: str 
     print(" ".join(cmd))
     print(f"Cluster stdout: {_cluster_path(cluster_stdout, params)}")
     print(f"Cluster stderr: {_cluster_path(cluster_stderr, params)}")
-    completed = _run_slurm_command(cmd, params, cwd=STA_SCRIPT.parent)
-    if completed.stdout:
-        print(completed.stdout.strip())
-    if completed.stderr:
-        print(completed.stderr.strip(), file=sys.stderr)
-    if completed.returncode != 0:
-        print(f"Cluster submit command exited with code {completed.returncode}")
-        return int(completed.returncode)
-    job_id = _parse_sbatch_job_id(completed.stdout)
+    stdout, stderr, code = _run_paramiko_command(shlex.join(cmd), params)
+    if stdout:
+        print(stdout.strip())
+    if stderr:
+        print(stderr.strip(), file=sys.stderr)
+    if code != 0:
+        print(f"Cluster submit command exited with code {code}")
+        return int(code)
+    job_id = _parse_sbatch_job_id(stdout)
     if not job_id:
         print("Could not parse a Slurm job id from sbatch output; treating submission as failed.", file=sys.stderr)
         return 1
     (out / "cluster_job_id.txt").write_text(job_id + "\n", encoding="utf-8")
     print(f"Submitted Slurm job {job_id}")
-    if params.get("cluster_wait_for_completion"):
-        return _wait_for_slurm_job(job_id, params)
     print("Slurm job submitted; the web app will monitor completion.")
     return 0
 
@@ -369,39 +296,11 @@ def _parse_sbatch_job_id(text: str) -> str | None:
     return None
 
 
-def _wait_for_slurm_job(job_id: str, params: dict) -> int:
-    interval = max(5, int(params.get("cluster_poll_interval_seconds") or 30))
-    squeue = _command_parts(params.get("cluster_squeue_command") or "squeue")
-    sacct = _command_parts(params.get("cluster_sacct_command") or "sacct")
-    print(f"Polling Slurm job {job_id} every {interval} seconds.")
-    while True:
-        sq = _run_slurm_command(squeue + ["-h", "-j", job_id, "-o", "%T"], params)
-        if sq.returncode == 0 and sq.stdout.strip():
-            state = sq.stdout.strip().splitlines()[0].strip()
-            print(f"Slurm job {job_id}: {state}", flush=True)
-            time.sleep(interval)
-            continue
-        acct = _run_slurm_command(sacct + ["-n", "-j", job_id, "--format=State,ExitCode", "-P"], params)
-        if acct.returncode != 0:
-            if acct.stderr:
-                print(acct.stderr.strip(), file=sys.stderr)
-            print(f"Job {job_id} is no longer in squeue, but sacct status is unavailable.")
-            return 0
-        states = [line.split("|", 1)[0].strip() for line in acct.stdout.splitlines() if line.strip()]
-        print(f"Slurm accounting for {job_id}: {', '.join(states) or 'no rows'}")
-        if any(state.startswith(("FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL")) for state in states):
-            return 1
-        if any(state.startswith("COMPLETED") for state in states):
-            return 0
-        time.sleep(interval)
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--experiment", required=True)
     ap.add_argument("--output", required=True)
     ap.add_argument("--params-json", default="{}")
-    ap.add_argument("--submit-cluster", action="store_true")
     args = ap.parse_args()
 
     source_home = Path(args.experiment)
@@ -412,21 +311,10 @@ def main() -> None:
     if not STA_SCRIPT.exists():
         raise FileNotFoundError(f"Missing STA script: {STA_SCRIPT}")
 
-    if args.submit_cluster:
-        mirror_home, spike_run, behavior_run = _prepare_cluster_mirror(source_home, out, params)
-        config_path = _write_config(mirror_home, out, params, cluster_paths=True)
-        preflight = _cluster_preflight(source_home, mirror_home, spike_run, behavior_run, params)
-        return_code = _run_cluster_job(config_path, out, params, preflight)
-    else:
-        mirror_home, spike_run = _prepare_mirror(source_home, out, params)
-        config_path = _write_config(mirror_home, out, params)
-        cmd = [sys.executable, "-u", str(STA_SCRIPT), str(config_path)]
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
-        print("Running real STA algorithm:")
-        print(" ".join(cmd))
-        completed = subprocess.run(cmd, cwd=STA_SCRIPT.parent, env=env, text=True)
-        return_code = int(completed.returncode)
+    mirror_home, spike_run, behavior_run = _prepare_cluster_mirror(source_home, out, params)
+    config_path = _write_config(mirror_home, out, params, source_home)
+    preflight = _cluster_preflight(source_home, mirror_home, spike_run, behavior_run, params)
+    return_code = _run_cluster_job(config_path, out, params, preflight)
     if return_code != 0:
         raise SystemExit(return_code)
     _write_metrics(out, mirror_home, config_path, spike_run)

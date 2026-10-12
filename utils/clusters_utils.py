@@ -1,9 +1,6 @@
-from pathlib import Path
 import numpy as np
-from operator import itemgetter
 from scipy.ndimage import generate_binary_structure, label
-from utils.db_utils import *
-from utils.suite2p_utils import *
+from utils.sta_stats_utils import passes_extent, per_sign_p_values
 
 
 def cluster_mask2d_from_cluster(
@@ -151,20 +148,27 @@ def cluster_list_from_effect(
     merge_similar: bool = True,
     merge_max_distance_px: float = 3.0,
     merge_min_trace_corr: float = 0.9,
+    min_footprint_px: int = 0,
+    min_frames: int = 0,
+    neg_threshold: float | None = None,
 ) -> tuple[list[dict], np.ndarray]:
+    # neg_threshold (a positive magnitude) is only given by the opt-in per_sign_null rule; None = one symmetric threshold.
     structure = generate_binary_structure(3, connectivity)
     cluster_records: list[dict] = []
     significant = np.zeros_like(effect_movie, dtype=bool)
+    neg_thr = threshold if neg_threshold is None else neg_threshold
 
     for sign_name, mask in (
         ("positive", effect_movie >= threshold),
-        ("negative", effect_movie <= -threshold),
+        ("negative", effect_movie <= -neg_thr),
     ):
         labels, n_labels = label(mask, structure=structure)
         for label_id in range(1, n_labels + 1):
             cluster_mask = labels == label_id
             cluster_size = int(cluster_mask.sum())
             if cluster_size < int(min_cluster_size):
+                continue
+            if (min_footprint_px or min_frames) and not passes_extent(cluster_mask, min_footprint_px, min_frames):
                 continue
             cluster_values = effect_movie[cluster_mask]
             cluster_mass = float(np.abs(cluster_values).sum())
@@ -206,7 +210,19 @@ def extract_clusters(
     merge_min_trace_corr: float = 0.9,
     null_max: np.ndarray | None = None,
     cluster_alpha: float | None = None,
+    min_footprint_px: int = 0,
+    min_frames: int = 0,
+    per_sign_null: bool = False,
+    neg_threshold: float | None = None,
+    null_max_neg: np.ndarray | None = None,
 ) -> list[dict]:
+    """Clusters of an effect movie, with permutation p-values when a null is given.
+
+    Legacy (per_sign_null False): one threshold, one pooled `null_max`.
+    per_sign_null True: `threshold` is the positive threshold, `neg_threshold` the negative one, `null_max` the
+    positive-cluster max-mass null and `null_max_neg` the negative one; p_value is the Bonferroni-corrected
+    min(1, 2 * p_value_sign) (see utils.sta_stats_utils.per_sign_p_values) and p_value_sign is the uncorrected one.
+    """
     clusters, _ = cluster_list_from_effect(
         effect_movie=effect_movie,
         threshold=threshold,
@@ -216,80 +232,64 @@ def extract_clusters(
         merge_similar=merge_similar,
         merge_max_distance_px=merge_max_distance_px,
         merge_min_trace_corr=merge_min_trace_corr,
+        min_footprint_px=min_footprint_px,
+        min_frames=min_frames,
+        neg_threshold=neg_threshold if per_sign_null else None,
     )
     clusters = sorted(clusters, key=lambda c: c["mass"], reverse=True)
 
     for i, c in enumerate(clusters, start=1):
         c["cluster_id"] = i
         c["mask3d"] = c.pop("mask")
-        if null_max is not None and cluster_alpha is not None:
+        if per_sign_null:
+            if null_max is not None and null_max_neg is not None and cluster_alpha is not None:
+                p_sign, p = per_sign_p_values(c["mass"], c["sign"], null_max, null_max_neg)
+                c["p_value_sign"] = p_sign
+                c["p_value"] = p
+                c["is_significant"] = bool(p <= cluster_alpha)
+        elif null_max is not None and cluster_alpha is not None:
             p = (1 + np.sum(null_max >= c["mass"])) / (len(null_max) + 1)
             c["p_value"] = float(p)
             c["is_significant"] = bool(p <= cluster_alpha)
     return clusters
 
 
-def extract_clusters_from_npz(cluster_npz_path: Path | str) -> list[dict]:
-    saved = load_saved_npz(cluster_npz_path)
-    return extract_clusters(
-        effect_movie=saved["effect"],
-        threshold=saved["threshold"],
-        connectivity=saved["cluster_connectivity"],
-        min_cluster_size=saved["min_cluster_size"],
-        min_cluster_mass=saved["min_cluster_mass"],
-        merge_similar=saved["merge_similar_clusters"],
-        merge_max_distance_px=saved["merge_max_distance_px"],
-        merge_min_trace_corr=saved["merge_min_trace_corr"],
-        null_max=saved["null_max"],
-        cluster_alpha=saved["cluster_alpha"],
+def saved_cluster_args(d) -> dict:
+    """Keyword arguments for `extract_clusters` (all but effect_movie) from an opened STA result npz.
+
+    Applies the same rule the result was produced with: when the file says `per_sign_null`, the per-sign thresholds
+    and the two per-sign nulls are passed; otherwise the legacy single threshold / pooled null (also for old files
+    without the flag). Callers that need a different null (leave-one-out) override the null_max* entries.
+    """
+    def scalar(key, cast, default):
+        return cast(np.asarray(d[key]).item()) if key in d else default
+
+    args = dict(
+        threshold=float(np.asarray(d["cluster_threshold"]).item()),
+        connectivity=int(np.asarray(d["cluster_connectivity"]).item()),
+        min_cluster_size=int(np.asarray(d["min_cluster_size"]).item()),
+        min_cluster_mass=float(np.asarray(d["min_cluster_mass"]).item()),
+        merge_similar=bool(np.asarray(d["merge_similar_clusters"]).item()),
+        merge_max_distance_px=float(np.asarray(d["merge_max_distance_px"]).item()),
+        merge_min_trace_corr=float(np.asarray(d["merge_min_trace_corr"]).item()),
+        null_max=np.asarray(d["null_max_cluster_mass"], dtype=np.float32),
+        cluster_alpha=float(np.asarray(d["cluster_alpha"]).item()),
+        min_footprint_px=scalar("min_cluster_footprint_px", int, 0),
+        min_frames=scalar("min_cluster_frames", int, 0),
     )
+    if scalar("per_sign_null", bool, False):
+        args.update(
+            per_sign_null=True,
+            threshold=float(np.asarray(d["cluster_threshold_pos"]).item()),
+            neg_threshold=float(np.asarray(d["cluster_threshold_neg"]).item()),
+            null_max=np.asarray(d["null_max_cluster_mass_pos"], dtype=np.float32),
+            null_max_neg=np.asarray(d["null_max_cluster_mass_neg"], dtype=np.float32),
+        )
+    return args
 
 
-def build_regions_from_sig_mask(sig_mask3d, effect, t_rel, neuron_yx):
-    regions = []
-    labels2d, n_regions = label(sig_mask3d.any(axis=0))
-    for rid in range(1, n_regions + 1):
-        mask2d = labels2d == rid
-        if mask2d.sum() < 2:
-            continue
-        trace = effect[:, mask2d].mean(axis=1)
-        pre_mask = t_rel < 0
-        post_mask = t_rel >= 0
-        pre_mean = float(np.nanmean(trace[pre_mask])) if pre_mask.any() else np.nan
-        post_mean = float(np.nanmean(trace[post_mask])) if post_mask.any() else np.nan
-        delta = post_mean - pre_mean
-        yy, xx = np.argwhere(mask2d).mean(axis=0)
-        dist = float(np.hypot(yy - neuron_yx[0], xx - neuron_yx[1]))
-        regions.append({
-            "region_id": int(rid),
-            "mask2d": mask2d,
-            "trace": trace,
-            "area_px": int(mask2d.sum()),
-            "pre_mean": pre_mean,
-            "post_mean": post_mean,
-            "delta_post_minus_pre": delta,
-            "centroid_y": float(yy),
-            "centroid_x": float(xx),
-            "distance_px": dist,
-        })
-    return regions
-
-
-def pick_cluster_npz_by_mode(
-    neuron_dir: Path,
-    *,
-    selection_mode: str = "latest",
-    selected_version: int | None = None,
-) -> Path | None:
-    mode = str(selection_mode).lower().strip()
-    if mode == "latest":
-        return pick_latest_cluster_npz(neuron_dir, verbal=False)
-    if mode == "version":
-        if selected_version is None:
-            raise ValueError("selected_version must be provided when selection_mode='version'.")
-        if int(selected_version) == 0:
-            candidate = neuron_dir / "astro_sta_cluster_permutation.npz"
-        else:
-            candidate = neuron_dir / f"astro_sta_cluster_permutation_v{int(selected_version)}.npz"
-        return candidate if candidate.exists() else None
-    raise ValueError(f"Unknown selection_mode='{selection_mode}'. Use 'latest' or 'version'.")
+def per_sign_overrides(saved: dict) -> dict:
+    """extract_clusters keyword overrides for a `load_saved_npz` dict: {} for legacy results, the per-sign rule otherwise."""
+    if not saved.get("per_sign_null"):
+        return {}
+    return dict(per_sign_null=True, neg_threshold=saved["threshold_neg"], null_max=saved["null_max_pos"], null_max_neg=saved["null_max_neg"])

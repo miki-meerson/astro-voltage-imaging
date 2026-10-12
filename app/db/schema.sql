@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS experiments(
   cage TEXT NOT NULL, mouse_name TEXT NOT NULL, recording_date TEXT NOT NULL, behavior TEXT NOT NULL,
   fov TEXT NOT NULL, z_plane TEXT NOT NULL, zoom TEXT NOT NULL,
   validation_state TEXT NOT NULL DEFAULT 'valid', validation_report TEXT NOT NULL DEFAULT '{}',
+  workflow_stage TEXT NOT NULL DEFAULT 'analysis_ready',
+  preprocessing_review_state TEXT NOT NULL DEFAULT 'unreviewed',
+  suite2p_review_state TEXT NOT NULL DEFAULT 'unreviewed',
   is_favorite INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -21,6 +24,13 @@ CREATE TABLE IF NOT EXISTS metadata_overrides(
   id INTEGER PRIMARY KEY, experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
   field_name TEXT NOT NULL, original_value TEXT NOT NULL, corrected_value TEXT NOT NULL, correction_note TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(experiment_id, field_name)
+);
+CREATE TABLE IF NOT EXISTS experiment_notes(
+  id INTEGER PRIMARY KEY,
+  experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+  note_text TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS neurons(
   id INTEGER PRIMARY KEY, experiment_id INTEGER NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
@@ -43,6 +53,21 @@ CREATE TABLE IF NOT EXISTS artifacts(
   id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
   artifact_type TEXT NOT NULL, relative_path TEXT NOT NULL, checksum TEXT, size_bytes INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS preprocessing_steps(
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER NOT NULL REFERENCES analysis_runs(id) ON DELETE CASCADE,
+  step_name TEXT NOT NULL,
+  step_order INTEGER NOT NULL,
+  slurm_job_id TEXT NOT NULL DEFAULT '',
+  slurm_log_path TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  submitted_at TEXT,
+  started_at TEXT,
+  ended_at TEXT,
+  exit_code INTEGER,
+  message TEXT NOT NULL DEFAULT '',
+  UNIQUE(run_id, step_name)
 );
 CREATE TABLE IF NOT EXISTS confirmed_neurons(
   id INTEGER PRIMARY KEY,
@@ -131,3 +156,11 @@ CREATE TABLE IF NOT EXISTS confirmed_cell_metrics(
 CREATE TABLE IF NOT EXISTS scan_history(id INTEGER PRIMARY KEY, parent_path TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, summary_json TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO schema_migrations(version) VALUES(1);
+-- Indexes for the WHERE / JOIN columns used by the pages and the run monitor (CS-09). All idempotent.
+CREATE INDEX IF NOT EXISTS idx_analysis_runs_exp_step_status ON analysis_runs(experiment_id, step, status);
+CREATE INDEX IF NOT EXISTS idx_analysis_runs_exp_test_step ON analysis_runs(experiment_id, is_test, step, id);
+CREATE INDEX IF NOT EXISTS idx_analysis_runs_status ON analysis_runs(status);
+CREATE INDEX IF NOT EXISTS idx_analysis_runs_neuron ON analysis_runs(neuron_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
+CREATE INDEX IF NOT EXISTS idx_confirmed_neurons_neuron_row ON confirmed_neurons(neuron_row_id);
+CREATE INDEX IF NOT EXISTS idx_confirmed_neurons_exp ON confirmed_neurons(experiment_id);

@@ -37,7 +37,19 @@ def _save_speed_png(path: Path, speed, fps: float, threshold: float) -> None:
     img.save(path)
 
 
-def _kept_frames(home: Path, fps: float) -> tuple[int, int, np.ndarray, np.ndarray]:
+def _pb_frame_indices(home: Path) -> np.ndarray | None:
+    trace_path = home / "pipeline_results/qc/photobleaching_qc_trace_astro.npz"
+    if not trace_path.exists():
+        trace_path = home / "pipeline_results/qc/photobleaching_qc_trace.npz"
+    if not trace_path.exists():
+        return None
+    with np.load(trace_path, allow_pickle=False) as d:
+        if "frame_idx" not in d:
+            return None
+        return np.asarray(d["frame_idx"], dtype=int)
+
+
+def _kept_frames(home: Path, fps: float) -> tuple[int, int, np.ndarray, np.ndarray, dict]:
     with tifffile.TiffFile(home / "Image_scan_1_region_0_0.tif") as tif:
         raw_frames = tif.series[0].shape[0] // 2
     with tifffile.TiffFile(home / "pipeline_results/pb_corrected/astro_photobleaching_corrected.tif") as tif:
@@ -45,10 +57,40 @@ def _kept_frames(home: Path, fps: float) -> tuple[int, int, np.ndarray, np.ndarr
     bad_path = home / "pipeline_results/qc/bad_segments.json"
     bad = json.loads(bad_path.read_text()) if bad_path.exists() else []
     removed = np.array(sorted({f for s, e in bad for f in range(int(s), int(e))}), dtype=int)
-    kept = np.setdiff1d(np.arange(raw_frames), removed)
+    kept_untrimmed = np.setdiff1d(np.arange(raw_frames), removed)
+    pb_idx = _pb_frame_indices(home)
+    trim_meta = {
+        "pb_trimmed_frames": 0,
+        "pb_trimmed_seconds": 0.0,
+        "pb_frame_index_source": "",
+    }
+    if pb_idx is not None and pb_idx.size == pb_frames:
+        if pb_idx.size and (pb_idx.min() < 0 or pb_idx.max() >= kept_untrimmed.size):
+            raise ValueError(
+                f"Photobleaching frame indices span {int(pb_idx.min())}-{int(pb_idx.max())}, "
+                f"but original minus bad segments has {len(kept_untrimmed)} frames."
+            )
+        kept = kept_untrimmed[pb_idx]
+        trimmed_frames = int(pb_idx[0]) if pb_idx.size else 0
+        trim_meta = {
+            "pb_trimmed_frames": trimmed_frames,
+            "pb_trimmed_seconds": float(trimmed_frames / max(fps, 1e-9)),
+            "pb_frame_index_source": str(home / "pipeline_results/qc/photobleaching_qc_trace_astro.npz"),
+        }
+    else:
+        trimmed_frames = len(kept_untrimmed) - pb_frames
+        if trimmed_frames >= 0:
+            kept = kept_untrimmed[trimmed_frames:]
+            trim_meta = {
+                "pb_trimmed_frames": int(trimmed_frames),
+                "pb_trimmed_seconds": float(trimmed_frames / max(fps, 1e-9)),
+                "pb_frame_index_source": "inferred_from_pb_frame_count",
+            }
+        else:
+            kept = kept_untrimmed
     if len(kept) != pb_frames:
         raise ValueError(f"PB movie has {pb_frames} frames, original minus bad segments has {len(kept)}.")
-    return raw_frames, pb_frames, kept, kept / fps
+    return raw_frames, pb_frames, kept, kept / fps, trim_meta
 
 
 def _load_csv_speed(home: Path, raw_frames: int, frame_times: np.ndarray, params: dict) -> tuple[np.ndarray, np.ndarray, str, dict]:
@@ -166,6 +208,9 @@ def _split_and_save(home: Path, out: Path, params: dict, speed_trace: np.ndarray
         ts_encoder_pulses_per_revolution=np.asarray(float(source_meta.get("ts_encoder_pulses_per_revolution", 0.0)), dtype=np.float32),
         ts_counts_per_revolution=np.asarray(float(source_meta.get("ts_counts_per_revolution", 0.0)), dtype=np.float32),
         ts_direction_inverted=np.asarray(bool(source_meta.get("ts_direction_inverted", False))),
+        pb_trimmed_frames=np.asarray(int(source_meta.get("pb_trimmed_frames", 0)), dtype=np.int32),
+        pb_trimmed_seconds=np.asarray(float(source_meta.get("pb_trimmed_seconds", 0.0)), dtype=np.float32),
+        pb_frame_index_source=np.asarray(source_meta.get("pb_frame_index_source", "")),
     )
     _save_speed_png(out / "behavior_speed_summary.png", speed_trace, fps, threshold)
     metrics = {"active_frames": int(active.sum()), "inactive_frames": int(inactive.sum()), **source_meta}
@@ -177,7 +222,7 @@ def main() -> None:
     args = ap.parse_args(); home = Path(args.experiment); out = Path(args.output); out.mkdir(parents=True, exist_ok=True); params = json.loads(args.params_json or "{}")
     fps = float(get_movie_parameters(f"{home.as_posix()}/", is_dir=True)["fps"])
     params["_fps"] = fps
-    raw_frames, _, kept, frame_times = _kept_frames(home, fps)
+    raw_frames, _, kept, frame_times, trim_meta = _kept_frames(home, fps)
     if find_ts_h5_files(home):
         try:
             speed_trace, covered, chosen, source_meta = _load_ts_speed(home, raw_frames, kept, params)
@@ -189,6 +234,7 @@ def main() -> None:
             source_meta["ts_fallback_reason"] = f"{type(exc).__name__}: {exc}"
     else:
         speed_trace, covered, chosen, source_meta = _load_csv_speed(home, raw_frames, frame_times, params)
+    source_meta = {**source_meta, **trim_meta}
     _split_and_save(home, out, params, speed_trace, covered, chosen, kept, fps, source_meta)
 
 

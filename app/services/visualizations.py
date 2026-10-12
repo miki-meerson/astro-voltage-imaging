@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
-import threading
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from app.services import caches, polarity
+from app.services.run_views import latest_completed_run
 from app.services.runs import run_dir
+from app.services.spikes import suite2p_plane0, suite2p_stat_cells
 from app.settings import Settings
 
 RESULT_ORDER = {
@@ -20,21 +21,16 @@ RESULT_ORDER = {
     "behavioral_inactive": 5,
 }
 NEURON_COLOR = "#f7d154"
-DEP_COLOR = "#ff5d6c"
-HYPER_COLOR = "#4fa3ff"
-OTHER_NEURON_COLOR = "#8a7661"
+DEP_COLOR = polarity.COLORS[polarity.DEPOLARIZING]
+HYPER_COLOR = polarity.COLORS[polarity.HYPERPOLARIZING]
 BG = "#10151c"
 PANEL = "#0b0f14"
 TEXT = "#edf3fa"
 MUTED = "#9aa8b7"
-TRACE_BG = "#111821"
 TRACE_TEXT = "#d7e1ec"
-_STA_SUMMARY_CACHE: OrderedDict[tuple, bytes] = OrderedDict()
-_STA_SUMMARY_CACHE_LOCK = threading.Lock()
-_STA_SUMMARY_CACHE_MAX = 80
-_CLUSTER_RESULT_CACHE: OrderedDict[tuple[str, int], tuple] = OrderedDict()
-_CLUSTER_RESULT_CACHE_LOCK = threading.Lock()
-_CLUSTER_RESULT_CACHE_MAX = 240
+# Cluster traces on the Cell Detail summary are DISPLAYED over -N..+N frames around the spike (clipped to the saved STA
+# window). Only the analysis window (default -10..+10) is tested; the rest is descriptive and shaded differently.
+TRACE_HALF_WINDOW_FRAMES = 50
 
 
 def _font(size: int):
@@ -44,10 +40,6 @@ def _font(size: int):
         except OSError:
             continue
     return ImageFont.load_default()
-
-
-def _prepare_imports(settings: Settings) -> None:
-    return None
 
 
 def _gray_rgb(image: np.ndarray) -> Image.Image:
@@ -73,38 +65,6 @@ def _bytes_response(data: bytes) -> BytesIO:
     return bio
 
 
-def _cache_get(key: tuple) -> bytes | None:
-    with _STA_SUMMARY_CACHE_LOCK:
-        value = _STA_SUMMARY_CACHE.get(key)
-        if value is not None:
-            _STA_SUMMARY_CACHE.move_to_end(key)
-        return value
-
-
-def _cache_put(key: tuple, value: bytes) -> None:
-    with _STA_SUMMARY_CACHE_LOCK:
-        _STA_SUMMARY_CACHE[key] = value
-        _STA_SUMMARY_CACHE.move_to_end(key)
-        while len(_STA_SUMMARY_CACHE) > _STA_SUMMARY_CACHE_MAX:
-            _STA_SUMMARY_CACHE.popitem(last=False)
-
-
-def _cluster_cache_get(key: tuple[str, int]):
-    with _CLUSTER_RESULT_CACHE_LOCK:
-        value = _CLUSTER_RESULT_CACHE.get(key)
-        if value is not None:
-            _CLUSTER_RESULT_CACHE.move_to_end(key)
-        return value
-
-
-def _cluster_cache_put(key: tuple[str, int], value) -> None:
-    with _CLUSTER_RESULT_CACHE_LOCK:
-        _CLUSTER_RESULT_CACHE[key] = value
-        _CLUSTER_RESULT_CACHE.move_to_end(key)
-        while len(_CLUSTER_RESULT_CACHE) > _CLUSTER_RESULT_CACHE_MAX:
-            _CLUSTER_RESULT_CACHE.popitem(last=False)
-
-
 def _mask_outline(mask: np.ndarray) -> np.ndarray:
     mask = np.asarray(mask, dtype=bool)
     if not mask.any():
@@ -116,6 +76,8 @@ def _mask_outline(mask: np.ndarray) -> np.ndarray:
         return outline if outline.any() else mask
     except Exception:
         return mask
+
+
 def _hex_rgb(color: str) -> tuple[int, int, int]:
     color = color.lstrip("#")
     return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
@@ -136,11 +98,8 @@ def _overlay_mask_pixels(base: Image.Image, mask: np.ndarray, color: str, alpha:
 def _fit_tile(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     tile = Image.new("RGBA", size, PANEL)
     scale = min(size[0] / max(image.width, 1), size[1] / max(image.height, 1))
-    new_size = (max(1, int(round(image.width * scale))), max(1, int(round(image.height * scale))))
-    work = image.resize(new_size, Image.Resampling.BICUBIC)
-    x = (size[0] - work.width) // 2
-    y = (size[1] - work.height) // 2
-    tile.alpha_composite(work.convert("RGBA"), (x, y))
+    work = image.resize((max(1, int(round(image.width * scale))), max(1, int(round(image.height * scale)))), Image.Resampling.BICUBIC)
+    tile.alpha_composite(work.convert("RGBA"), ((size[0] - work.width) // 2, (size[1] - work.height) // 2))
     return tile
 
 
@@ -166,7 +125,12 @@ def _fmt_dff(value: float) -> str:
     return f"{pct:.1f}%"
 
 
-def _draw_trace_tile(t_rel: np.ndarray, traces: list[tuple[np.ndarray, str]], size: tuple[int, int]) -> Image.Image:
+def _draw_trace_tile(
+    t_rel: np.ndarray,
+    traces: list[tuple[np.ndarray, str]],
+    size: tuple[int, int],
+    tested_window: tuple[float, float] | None = None,
+) -> Image.Image:
     tile = Image.new("RGB", size, "#0b0f14")
     draw = ImageDraw.Draw(tile)
     pad_l, pad_r, pad_t, pad_b = 70, 20, 22, 48
@@ -189,6 +153,11 @@ def _draw_trace_tile(t_rel: np.ndarray, traces: list[tuple[np.ndarray, str]], si
         py = plot[3] - (float(y) - y0) / max(y1 - y0, 1e-6) * (plot[3] - plot[1])
         return int(round(px)), int(round(py))
 
+    if tested_window is not None and (tested_window[0] > x0 or tested_window[1] < x1):
+        # displayed window is wider than the tested one: shade the frames that were actually tested
+        sx0, sx1 = xy(max(tested_window[0], x0), y0)[0], xy(min(tested_window[1], x1), y0)[0]
+        draw.rectangle((sx0, plot[1], sx1, plot[3]), fill="#16212c")
+        draw.text((sx0 + 4, plot[1] + 3), "tested", fill="#6f8296", font=_font(11), anchor="la")
     draw.rectangle(plot, outline="#33404e", width=1)
     for value in _nice_ticks(y0, y1, 5):
         _, py = xy(x0, value)
@@ -219,14 +188,7 @@ def _draw_trace_tile(t_rel: np.ndarray, traces: list[tuple[np.ndarray, str]], si
             draw.line(pts, fill=color, width=3)
 
     draw.text((w // 2, h - 10), "Frames From Spike", fill=TRACE_TEXT, font=_font(14), anchor="mm")
-    draw.text((16, h // 2), "dF/F", fill=TRACE_TEXT, font=_font(14), anchor="lm")
-    return tile
-
-
-def _placeholder_tile(message: str, size: tuple[int, int], bg: str = PANEL) -> Image.Image:
-    tile = Image.new("RGBA", size, bg)
-    draw = ImageDraw.Draw(tile)
-    draw.text((size[0] // 2, size[1] // 2), message, fill=MUTED, font=_font(17), anchor="mm")
+    draw.text((12, 6), f"dF/F, {polarity.AXIS_NOTE}", fill=TRACE_TEXT, font=_font(13), anchor="la")
     return tile
 
 
@@ -244,17 +206,6 @@ def _message(title: str, message: str) -> BytesIO:
     return _image_response(img)
 
 
-def _latest_completed_run(conn, experiment_id: int, step: str):
-    return conn.execute(
-        """
-        SELECT * FROM analysis_runs
-        WHERE experiment_id=? AND step=? AND is_test=0 AND status='completed'
-        ORDER BY id DESC LIMIT 1
-        """,
-        (experiment_id, step),
-    ).fetchone()
-
-
 def _sta_dir(settings: Settings, run_row) -> Path:
     return run_dir(settings, int(run_row["id"]), bool(run_row["is_test"])) / "sta_algorithm_home" / "sta-analysis"
 
@@ -263,42 +214,39 @@ def _mirror_home(settings: Settings, run_row) -> Path:
     return run_dir(settings, int(run_row["id"]), bool(run_row["is_test"])) / "sta_algorithm_home"
 
 
-def _cluster_polarity(cluster: dict) -> str:
-    sign = str(cluster.get("sign", "")).lower()
-    return "depolarizing" if sign == "positive" else "hyperpolarizing"
-
-
 def _cluster_color(cluster: dict) -> str:
-    return HYPER_COLOR if _cluster_polarity(cluster) == "hyperpolarizing" else DEP_COLOR
+    return polarity.polarity_color(polarity.polarity_from_sign(str(cluster.get("sign", ""))))
 
 
 def _load_cluster_result(path: Path):
-    from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters
+    from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
+    from utils.sta_stats_utils import cluster_trace_wide
 
     cache_key = (str(path), int(path.stat().st_mtime_ns))
-    cached = _cluster_cache_get(cache_key)
+    cached = caches.CLUSTER_RESULT.get(cache_key)
     if cached is not None:
         return cached
 
     with np.load(path, allow_pickle=True) as d:
         effect = np.asarray(d["observed_effect_movie"], dtype=np.float32)
+        # traces are drawn on a dF/F axis: use the raw effect, not the z-statistic that was tested
+        trace_effect = np.asarray(d["observed_effect_raw_movie"], dtype=np.float32) if "observed_effect_raw_movie" in d else effect
         aw = np.asarray(d["analysis_window"], dtype=int)
-        clusters = extract_clusters(
-            effect_movie=effect,
-            threshold=float(np.asarray(d["cluster_threshold"]).item()),
-            connectivity=int(np.asarray(d["cluster_connectivity"]).item()),
-            min_cluster_size=int(np.asarray(d["min_cluster_size"]).item()),
-            min_cluster_mass=float(np.asarray(d["min_cluster_mass"]).item()),
-            merge_similar=bool(np.asarray(d["merge_similar_clusters"]).item()),
-            merge_max_distance_px=float(np.asarray(d["merge_max_distance_px"]).item()),
-            merge_min_trace_corr=float(np.asarray(d["merge_min_trace_corr"]).item()),
-            null_max=np.asarray(d["null_max_cluster_mass"], dtype=np.float32),
-            cluster_alpha=float(np.asarray(d["cluster_alpha"]).item()),
-        )
+        wide = None
+        if "observed_sta_movie" in d.files:  # kept only for this call, never cached (can be large at bin 1)
+            wide = dict(
+                sta=np.asarray(d["observed_sta_movie"], dtype=np.float32),
+                pre=int(np.asarray(d["pre_frames"]).item()),
+                post=int(np.asarray(d["post_frames"]).item()),
+                baseline_window=tuple(int(v) for v in np.asarray(d["baseline_window"]).ravel()),
+            )
+        clusters = extract_clusters(effect_movie=effect, **saved_cluster_args(d))  # honours per_sign_null when the file says so
         metadata = {
             "spatial_bin": int(np.asarray(d["spatial_bin"]).item()) if "spatial_bin" in d else 1,
             "behavioral_group": str(np.asarray(d["behavioral_group"]).item()) if "behavioral_group" in d else None,
             "anatomy_crop_bounds": tuple(np.asarray(d["anatomy_crop_bounds"], dtype=int).tolist()) if "anatomy_crop_bounds" in d else None,
+            "trace_effect": trace_effect,
+            "tested_window": (int(aw[0]), int(aw[1])),
         }
     t_rel = np.arange(int(aw[0]), int(aw[1]) + 1)
     sig = []
@@ -307,16 +255,15 @@ def _load_cluster_result(path: Path):
             continue
         mask = cluster_mask2d_from_cluster(cluster)
         if mask is not None and mask.any():
+            if wide is not None and mask.shape == wide["sta"].shape[1:]:
+                cluster["wide_trace"] = cluster_trace_wide(
+                    wide["sta"], wide["pre"], wide["post"], wide["baseline_window"], mask, TRACE_HALF_WINDOW_FRAMES
+                )
             sig.append((cluster, mask))
+    del wide
     result = (effect, t_rel, sig, metadata)
-    _cluster_cache_put(cache_key, result)
+    caches.CLUSTER_RESULT.put(cache_key, result)
     return result
-
-
-def _load_suite2p_stat_cells(suite2p_path: Path) -> np.ndarray:
-    iscell = np.load(suite2p_path / "iscell.npy", allow_pickle=True)[:, 0].astype(bool)
-    stat = np.load(suite2p_path / "stat.npy", allow_pickle=True)
-    return stat[iscell]
 
 
 def _neuron_mask(cell_id: int, shape: tuple[int, int], spatial_bin: int, stat_cells) -> np.ndarray:
@@ -350,21 +297,39 @@ def _mean_binned_image(paths, spatial_bin: int, cache: dict, behavioral_group: s
     key = (int(spatial_bin), behavioral_group)
     if key in cache:
         return cache[key]
-    path = paths.sta_dir / f"astro_photobleaching_corrected_gevi_flipped_behavioral_{behavioral_group}_bin{spatial_bin}.npy" if behavioral_group else paths.pb_dir / f"astro_photobleaching_corrected_gevi_flipped_bin{spatial_bin}.npy"
-    if not path.exists():
+    path = (
+        paths.home_dir / "sta-analysis" / f"astro_photobleaching_corrected_gevi_flipped_behavioral_{behavioral_group}_bin{spatial_bin}.npy"
+        if behavioral_group
+        else paths.pb_dir / f"astro_photobleaching_corrected_gevi_flipped_bin{spatial_bin}.npy"
+    )
+    if path.exists():
+        movie = np.load(path, mmap_mode="r")
+        step = max(1, int(np.ceil(movie.shape[0] / 1000)))
+        cache[key] = np.asarray(movie[::step], dtype=np.float32).mean(axis=0)
+        return cache[key]
+    return None
+
+
+def _astro_mean_image(paths, spatial_bin: int, cache: dict) -> np.ndarray | None:
+    key = ("astro_mean", int(spatial_bin))
+    if key in cache:
+        return cache[key]
+    try:
+        from utils.movie_utils import get_mean_images
+
+        astro_mean, _ = get_mean_images(paths.mc_dir, spatial_bin=int(spatial_bin))
+        # astro_mean_image.npy is raw; the binned caches above are already flipped, so flip this one to match
+        cache[key] = polarity.to_biological(astro_mean)
+        return cache[key]
+    except Exception:
         return None
-    movie = np.load(path, mmap_mode="r")
-    step = max(1, int(np.ceil(movie.shape[0] / 1000)))
-    cache[key] = np.asarray(movie[::step], dtype=np.float32).mean(axis=0)
-    return cache[key]
 
 
 def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
-    _prepare_imports(settings)
     from utils.db_utils import collect_cluster_result_metadata
     from utils.paths_utils import resolve_sta_paths
 
-    sta_run = _latest_completed_run(conn, int(neuron_row["experiment_id"]), "sta")
+    sta_run = latest_completed_run(conn, int(neuron_row["experiment_id"]), "sta")
     if sta_run is None:
         return _message("STA Maps", "No completed STA maps run is available for this experiment.")
     sta_dir = _sta_dir(settings, sta_run)
@@ -377,10 +342,9 @@ def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
         return _message("STA Maps", f"No STA result files were found for cell {cell_id}.")
     rows = result_df.sort_values("version").groupby("result_type", as_index=False).tail(1)
     rows = rows.assign(_order=rows["result_type"].map(lambda x: RESULT_ORDER.get(str(x), 100))).sort_values(["_order", "result_type"])
-    has_anatomy_row = "anatomy" in set(rows["result_type"].astype(str))
     result_paths = [Path(row.path) for row in rows.itertuples()]
     source_path = neuron_row["source_path"]
-    suite2p_path = Path(source_path) / "pipeline_results" / "for_suite2p" / "suite2p" / "plane0"
+    suite2p_path = suite2p_plane0(source_path)
     source_mtimes = []
     for path in result_paths + [suite2p_path / "iscell.npy", suite2p_path / "stat.npy"]:
         source_mtimes.append((str(path), int(path.stat().st_mtime_ns) if path.exists() else 0))
@@ -389,20 +353,20 @@ def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
         int(cell_id),
         tuple((str(row.result_type), int(row.version)) for row in rows.itertuples()),
         tuple(source_mtimes),
-        4,
+        9,
+        polarity.RAW_TO_BIOLOGICAL,
     )
-    cached = _cache_get(cache_key)
+    cached = caches.STA_SUMMARY_PNG.get(cache_key)
     if cached is not None:
         return _bytes_response(cached)
 
-    paths = resolve_sta_paths(_mirror_home(settings, sta_run))
+    paths = resolve_sta_paths(source_path, _mirror_home(settings, sta_run))
     try:
-        stat_cells = _load_suite2p_stat_cells(suite2p_path)
+        stat_cells = suite2p_stat_cells(source_path)
     except Exception as exc:
         return _message("STA Maps", f"Could not read Suite2p outlines: {exc}")
 
-    show_missing_anatomy = False
-    n = max(1, len(rows) + (1 if show_missing_anatomy else 0))
+    n = max(1, len(rows))
     tile_w, image_h, trace_h = 430, 320, 200
     gap, top_h, title_h, margin = 22, 78, 56, 22
     width = margin * 2 + n * tile_w + (n - 1) * gap
@@ -425,6 +389,8 @@ def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
         mean_img = _mean_binned_image(paths, int(meta["spatial_bin"]), cache, behavioral_group)
         if mean_img is None and behavioral_group is not None:
             mean_img = _mean_binned_image(paths, int(meta["spatial_bin"]), cache)
+        if mean_img is None and behavioral_group is None:
+            mean_img = _astro_mean_image(paths, int(meta["spatial_bin"]), cache)
         title = str(row.result_type).replace("_", " ").title()
         if mean_img is None:
             image_tile = Image.new("RGBA", (tile_w, image_h), PANEL)
@@ -457,25 +423,19 @@ def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
             image = _overlay_mask_pixels(image, shown_neuron, NEURON_COLOR, 0.95)
             image_tile = _fit_tile(image, (tile_w, image_h))
             traces = []
+        t_plot = t_rel
         if mean_img is not None:
             for cluster, mask in clusters:
                 if np.asarray(mask).shape != effect.shape[1:]:
                     continue
-                trace = effect[:, mask].mean(axis=1)
+                wide_trace = cluster.get("wide_trace")
+                if wide_trace is not None:
+                    t_plot, trace = wide_trace  # displayed over a wider window than the tested one
+                else:
+                    trace = meta["trace_effect"][:, mask].mean(axis=1)
                 traces.append((trace, _cluster_color(cluster)))
-        trace_tile = _draw_trace_tile(t_rel, traces, (tile_w, trace_h))
+        trace_tile = _draw_trace_tile(t_plot, traces, (tile_w, trace_h), tested_window=meta["tested_window"])
         prepared.append((title, int(row.n_peaks), int(row.n_significant_clusters), image_tile, trace_tile))
-
-    if show_missing_anatomy:
-        prepared.append(
-            (
-                "Anatomy",
-                0,
-                0,
-                _placeholder_tile("Anatomy crop params exist,\nbut this STA run did not include anatomy.\nRerun STA Maps.", (tile_w, image_h)),
-                _placeholder_tile("Waiting for anatomy result", (tile_w, trace_h), TRACE_BG),
-            )
-        )
 
     for col, (title, n_peaks, n_sig, image_tile, trace_tile) in enumerate(prepared):
         x = margin + col * (tile_w + gap)
@@ -485,6 +445,109 @@ def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
         canvas.paste(trace_tile, (x, top_h + title_h + image_h + 34))
 
     response = _image_response(canvas)
-    _cache_put(cache_key, response.getvalue())
+    caches.STA_SUMMARY_PNG.put(cache_key, response.getvalue())
     response.seek(0)
     return response
+
+
+MOTION_SERIES_LABELS = {
+    "dy": "Registration shift dy (px)",
+    "dx": "Registration shift dx (px)",
+    "shift_mag": "Shift magnitude (px)",
+    "jerk": "Frame-to-frame jerk (px)",
+    "reg_corr": "Registration quality (corr. to mean)",
+}
+
+
+def _draw_motion_tile(rels, observed, null_mean, null_sd, title: str, p: float, z: float, size: tuple[int, int]) -> Image.Image:
+    """Spike-triggered average of one motion series (colored) over its circular-shift null (grey band, +-2 sd)."""
+    tile = Image.new("RGB", size, "#0b0f14")
+    draw = ImageDraw.Draw(tile)
+    w, h = size
+    pad_l, pad_r, pad_t, pad_b = 62, 14, 30, 34
+    plot = (pad_l, pad_t, w - pad_r, h - pad_b)
+    draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=8, fill="#0b0f14", outline="#26303a", width=1)
+    significant = bool(np.isfinite(p) and p <= 0.01)
+    draw.text((12, 9), title, fill=TEXT, font=_font(14), anchor="lm")
+    stat = "no spikes" if not np.isfinite(p) else f"p={p:.3f}  z={z:.1f}"
+    draw.text((w - 12, 9), stat, fill=DEP_COLOR if significant else MUTED, font=_font(14), anchor="rm")
+    rels = np.asarray(rels, dtype=float)
+    obs = np.asarray(observed, dtype=float)
+    mu = np.asarray(null_mean, dtype=float)
+    sd = np.asarray(null_sd, dtype=float)
+    if not np.isfinite(obs).any():
+        draw.text((w // 2, h // 2), "no data", fill=MUTED, font=_font(15), anchor="mm")
+        return tile
+    lo = np.nanmin(np.r_[obs, mu - 2 * sd])
+    hi = np.nanmax(np.r_[obs, mu + 2 * sd])
+    pad = max((hi - lo) * 0.08, 1e-9)
+    y0, y1 = lo - pad, hi + pad
+    x0, x1 = float(rels.min()), float(rels.max())
+
+    def xy(t, v):
+        return (
+            int(round(plot[0] + (float(t) - x0) / max(x1 - x0, 1e-9) * (plot[2] - plot[0]))),
+            int(round(plot[3] - (float(v) - y0) / max(y1 - y0, 1e-12) * (plot[3] - plot[1]))),
+        )
+
+    draw.rectangle(plot, outline="#33404e", width=1)
+    for value in _nice_ticks(y0, y1, 4):
+        if not (y0 <= value <= y1):
+            continue
+        _, py = xy(x0, value)
+        draw.line([(plot[0], py), (plot[2], py)], fill="#1d2630", width=1)
+        draw.text((plot[0] - 6, py), f"{value:.3g}", fill="#aeb9c6", font=_font(12), anchor="rm")
+    for value in _nice_ticks(x0, x1, 5):
+        px, _ = xy(value, y0)
+        draw.text((px, plot[3] + 8), f"{value:g}", fill="#aeb9c6", font=_font(12), anchor="ma")
+    band = [xy(t, m + 2 * s) for t, m, s in zip(rels, mu, sd)] + [xy(t, m - 2 * s) for t, m, s in zip(rels[::-1], mu[::-1], sd[::-1])]
+    if len(band) > 3:
+        draw.polygon(band, fill="#222c37")
+    if x0 <= 0 <= x1:
+        zx = xy(0, y0)[0]
+        draw.line([(zx, plot[1]), (zx, plot[3])], fill="#5d6a78", width=1)
+    pts = [xy(t, v) for t, v in zip(rels, obs)]
+    if len(pts) > 1:
+        draw.line(pts, fill="#071015", width=5)
+        draw.line(pts, fill=DEP_COLOR if significant else NEURON_COLOR, width=3)
+    return tile
+
+
+def render_motion_sta(settings: Settings, conn, neuron_row) -> BytesIO:
+    """Cell Detail: is this cell's spiking time-locked to motion / registration quality? (diagnostic only)"""
+    sta_run = latest_completed_run(conn, int(neuron_row["experiment_id"]), "sta")
+    if sta_run is None:
+        return _message("Motion diagnostics", "No completed STA maps run is available for this experiment.")
+    cell_id = int(neuron_row["pipeline_neuron_id"])
+    path = _sta_dir(settings, sta_run) / f"cell_{cell_id}" / "motion_sta.npz"
+    if not path.exists():
+        return _message("Motion diagnostics", "Not computed for this cell. Re-run STA Maps (motion diagnostics need shifts that match the analysed frames).")
+    with np.load(path, allow_pickle=True) as d:
+        names = [str(n) for n in d["series_names"]]
+        rels = np.asarray(d["rels_analysis"])
+        observed, null_mean, null_sd = d["observed"], d["null_mean"], d["null_sd"]
+        p, z = np.asarray(d["p"], dtype=float), np.asarray(d["z"], dtype=float)
+        flag, min_p, alpha = bool(d["flag"]), float(d["min_p"]), float(d["flag_alpha"])
+        p_floor = float(d["p_floor"]) if "p_floor" in d.files else 0.0
+        n_peaks = int(d["n_peaks_used"])
+    tile_w, tile_h, gap, margin, head = 430, 210, 18, 22, 84
+    cols, nrows = 3, int(np.ceil(len(names) / 3))
+    width = margin * 2 + cols * tile_w + (cols - 1) * gap
+    height = head + nrows * tile_h + (nrows - 1) * gap + margin
+    canvas = Image.new("RGB", (width, height), BG)
+    draw = ImageDraw.Draw(canvas)
+    draw.text((margin, 24), f"{neuron_row['canonical_id']} | Cell {cell_id} | Spike-triggered motion ({n_peaks} spikes)", fill=TEXT, font=_font(22), anchor="la")
+    verdict = (
+        f"MOTION-LOCKED: spikes are time-locked to motion (min p={min_p:.3f} <= {alpha:g}); treat this cell's STA clusters with caution"
+        if flag else
+        f"Cannot resolve p <= {alpha:g}: only {int(round(1 / p_floor)) - 1} permutations (smallest possible p = {p_floor:.3f}). Read the curves vs the grey band, or re-run with more permutations"
+        if p_floor > alpha else
+        f"No spike-locked motion detected (min p={min_p:.3f} > {alpha:g}); shifts shown are the corrected motion, residual motion is only visible via registration quality"
+        if np.isfinite(min_p) else "Not enough spikes for the motion test"
+    )
+    draw.text((margin, 58), verdict, fill=DEP_COLOR if flag else MUTED, font=_font(15), anchor="la")
+    for i, name in enumerate(names):
+        r, c = divmod(i, cols)
+        tile = _draw_motion_tile(rels, observed[i], null_mean[i], null_sd[i], MOTION_SERIES_LABELS.get(name, name), float(p[i]), float(z[i]), (tile_w, tile_h))
+        canvas.paste(tile, (margin + c * (tile_w + gap), head + r * (tile_h + gap)))
+    return _image_response(canvas)

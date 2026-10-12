@@ -1,0 +1,42 @@
+.detector-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.detector-control {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  background: #0f141a;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.detector-control label {
+  color: #cbd6e2;
+  font-size: 12px;
+  font-weight: 650;
+}
+.detector-control output {
+  min-width: 54px;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.detector-control input[type="range"] {
+  grid-column: 1 / -1;
+  padding: 0;
+}
+.detector-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .detector-grid { grid-template-columns: 1fr; }
+}

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import socket
+import threading
+import time
 from dataclasses import dataclass
 
 
@@ -46,11 +49,27 @@ def load_cluster_credentials(cluster: dict) -> ClusterCredentials:
     )
 
 
-def run_ssh_command(cluster: dict, command: str) -> tuple[str, str, int]:
+def _close_ssh(ssh, timeout_seconds: float = 2.0) -> None:
+    done = threading.Event()
+
+    def close() -> None:
+        try:
+            ssh.close()
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=close, daemon=True, name="astro-ssh-close")
+    thread.start()
+    done.wait(timeout_seconds)
+
+
+def run_ssh_command(cluster: dict, command: str, command_timeout_seconds: int | None = None) -> tuple[str, str, int]:
     import paramiko
 
     cred = load_cluster_credentials(cluster)
     timeout = int(cluster.get("paramiko_timeout_seconds") or 600)
+    command_timeout = int(command_timeout_seconds or cluster.get("command_timeout_seconds") or timeout)
+    connect_timeout = int(cluster.get("connect_timeout_seconds") or command_timeout_seconds or timeout)
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
@@ -60,14 +79,38 @@ def run_ssh_command(cluster: dict, command: str) -> tuple[str, str, int]:
             username=cred.username,
             password=cred.password,
             key_filename=cred.key_filename,
-            timeout=timeout,
-            banner_timeout=timeout,
-            auth_timeout=timeout,
+            timeout=connect_timeout,
+            banner_timeout=connect_timeout,
+            auth_timeout=connect_timeout,
         )
-        _, stdout, stderr = ssh.exec_command(command)
-        out_text = stdout.read().decode("utf-8", errors="replace")
-        err_text = stderr.read().decode("utf-8", errors="replace")
-        code = int(stdout.channel.recv_exit_status())
-        return out_text, err_text, code
+        _, stdout, stderr = ssh.exec_command(command, timeout=command_timeout)
+        channel = stdout.channel
+        channel.settimeout(1.0)
+        out_chunks: list[bytes] = []
+        err_chunks: list[bytes] = []
+        deadline = time.monotonic() + command_timeout
+        while True:
+            if channel.recv_ready():
+                out_chunks.append(channel.recv(65536))
+            if channel.recv_stderr_ready():
+                err_chunks.append(channel.recv_stderr(65536))
+            if channel.exit_status_ready():
+                while channel.recv_ready():
+                    out_chunks.append(channel.recv(65536))
+                while channel.recv_stderr_ready():
+                    err_chunks.append(channel.recv_stderr(65536))
+                out_text = b"".join(out_chunks).decode("utf-8", errors="replace")
+                err_text = b"".join(err_chunks).decode("utf-8", errors="replace")
+                code = int(channel.recv_exit_status())
+                return out_text, err_text, code
+            if time.monotonic() >= deadline:
+                channel.close()
+                out_text = b"".join(out_chunks).decode("utf-8", errors="replace")
+                err_text = b"".join(err_chunks).decode("utf-8", errors="replace")
+                message = f"SSH command timed out after {command_timeout} seconds: {command}"
+                return out_text, (err_text + "\n" + message).strip(), 124
+            time.sleep(0.1)
+    except socket.timeout as exc:
+        return "", f"SSH command timed out after {command_timeout} seconds: {command}. {exc}", 124
     finally:
-        ssh.close()
+        _close_ssh(ssh)

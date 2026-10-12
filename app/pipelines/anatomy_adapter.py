@@ -5,20 +5,12 @@ import json
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
+from app.services.visualizations import _font, _gray_rgb
 from utils.movie_utils import read_astro_movie, spatial_bin_movie
 from utils.paths_utils import resolve_sta_paths
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
-
-
-def _font(size: int):
-    for name in ("arial.ttf", "segoeui.ttf"):
-        try:
-            return ImageFont.truetype(name, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
 
 
 def _sampled_mean_binned_movie(movie_path: Path, spatial_bin: int, max_frames: int = 1000) -> np.ndarray:
@@ -36,14 +28,6 @@ def _sampled_mean_binned_movie(movie_path: Path, spatial_bin: int, max_frames: i
         acc += np.asarray(chunk, dtype=np.float64).sum(axis=0)
         count += int(chunk.shape[0])
     return (acc / max(count, 1)).astype(np.float32)
-
-
-def _gray(image: np.ndarray) -> Image.Image:
-    lo, hi = np.nanpercentile(image, [1, 99])
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        lo, hi = float(np.nanmin(image)), float(np.nanmax(image))
-    scaled = np.clip((image - lo) / max(hi - lo, 1e-6), 0, 1)
-    return Image.fromarray((scaled * 255).astype(np.uint8), mode="L").convert("RGB")
 
 
 def _crop_bounds(center_yx: tuple[int, int], radius: int, image_shape: tuple[int, int]) -> tuple[int, int, int, int]:
@@ -69,7 +53,7 @@ def _draw_preview(path: Path, mean_image: np.ndarray, suite2p_ctx: dict, radius:
     draw = ImageDraw.Draw(canvas)
     draw.text((margin, 18), f"Anatomy Crop Preview | radius {radius} binned px", fill="#e7edf4", font=_font(22))
 
-    base = _gray(mean_image)
+    base = _gray_rgb(mean_image).convert("RGB")
     scale = min(tile_w / max(base.width, 1), tile_h / max(base.height, 1))
     shown = base.resize((max(1, int(base.width * scale)), max(1, int(base.height * scale))), Image.Resampling.NEAREST)
 

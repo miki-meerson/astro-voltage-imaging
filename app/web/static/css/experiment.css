@@ -1,0 +1,82 @@
+.movie-shell {
+  display: grid;
+  gap: 12px;
+}
+.movie-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  overflow: hidden;
+  background: #05080c;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.movie-stage img {
+  display: block;
+  width: 100%;
+  max-height: 620px;
+  object-fit: contain;
+  image-rendering: auto;
+}
+.movie-stage .movie-buffer {
+  grid-area: 1 / 1;
+  opacity: 0;
+  visibility: hidden;
+}
+.movie-stage .movie-buffer.active {
+  opacity: 1;
+  visibility: visible;
+}
+.movie-stage .movie-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  color: var(--muted);
+  text-align: center;
+  background: rgba(5, 8, 12, 0.86);
+}
+.movie-controls {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) 116px 130px;
+  gap: 10px;
+  align-items: center;
+}
+.movie-controls input[type="range"] {
+  padding: 0;
+}
+.movie-readout {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.review-console {
+  display: grid;
+  gap: 12px;
+}
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.review-actions button,
+.review-actions .button {
+  min-width: 0;
+}
+.review-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+@media (max-width: 900px) {
+  .movie-controls { grid-template-columns: 1fr; }
+}
+
+#anatomy-clusters-panel .ac-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:12px; align-items:start; }
+@media (max-width: 1000px) { #anatomy-clusters-panel .ac-grid { grid-template-columns:minmax(0,1fr); } }
+#anatomy-clusters-panel canvas { display:block; width:100%; height:340px; background:#0b0f14; border:1px solid var(--line-soft); border-radius:8px; }
+#anatomy-clusters-panel .ac-controls { display:flex; gap:14px; flex-wrap:wrap; align-items:center; font-size:12px; margin:6px 0; }
+#ac-tip { position:fixed; z-index:50; pointer-events:none; background:#17202a; border:1px solid var(--line); border-radius:6px; padding:4px 8px; font-size:12px; display:none; }

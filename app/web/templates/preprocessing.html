@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block head_extra %}{% if active %}<meta http-equiv="refresh" content="15">{% endif %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/preprocessing.css') }}">
+{% endblock %}
+{% block body %}
+<script type="application/json" id="page-data">{{ {"expId": exp.id}|tojson }}</script>
+<div class="page-head">
+  <div>
+    <h1>{{ exp.canonical_id }}</h1>
+    <p class="subtitle">{{ exp.source_path }}</p>
+    <p class="muted">Preprocessing runs on the cluster step by step: split channels, motion correction, photobleaching correction. Suite2p is a manual outside-app stage after preprocessing confirmation.</p>
+  </div>
+  <div class="toolbar">
+    <a class="button secondary" href="/">Home</a>
+    <a class="button secondary" href="/experiments/{{ exp.id }}/analysis">Analysis</a>
+    <form method="post" action="/experiments/{{ exp.id }}/reset-data" onsubmit="return confirm('Delete app data, DB run records, cells, and runtime outputs for this experiment, but keep it in the app?');">
+      <button class="danger">Reset Data</button>
+    </form>
+  </div>
+</div>
+
+{% if notice and notice.startswith("data_reset_") %}
+<section class="panel">
+  <span class="chip completed">Data Reset</span>
+  <p class="muted">App data for this experiment was cleared. The experiment is still registered and future scans will not ignore it.</p>
+</section>
+{% elif notice and notice.startswith("rerun_") %}
+<section class="panel">
+  <span class="chip completed">Preprocessing Rerun Queued</span>
+  <p class="muted">{{ notice.replace("rerun_", "").replace("_", " ").title() }} was queued and downstream preprocessing steps will follow.</p>
+</section>
+{% endif %}
+
+{% include "_experiment_notes.html" %}
+
+<section class="panel">
+  <div class="page-head">
+    <div>
+      <h2>Workflow</h2>
+      <p class="muted">Current stage: <span class="chip">{{ exp.workflow_stage }}</span></p>
+    </div>
+    {% if exp.workflow_stage in ["preprocessing_pending", "preprocessing_running"] %}
+    <form method="post" action="/experiments/{{ exp.id }}/preprocessing/run">
+      <button>Run Preprocessing</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="grid-3">
+    <div>
+      <h3>Preprocessing</h3>
+      <p><span class="chip {{ exp.preprocessing_review_state }}">{{ exp.preprocessing_review_state }}</span></p>
+      {% if exp.workflow_stage == "preprocessing_review" %}
+      <form method="post" action="/experiments/{{ exp.id }}/preprocessing/confirm">
+        <button>Confirm Preprocessing</button>
+      </form>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Manual Suite2p</h3>
+      <p><span class="chip {{ exp.suite2p_review_state }}">{{ exp.suite2p_review_state }}</span></p>
+      {% if exp.workflow_stage == "awaiting_suite2p" %}
+      <form method="post" action="/experiments/{{ exp.id }}/suite2p/confirm">
+        <button>Confirm Suite2p Complete</button>
+      </form>
+      {% else %}
+      <p class="muted">Available after preprocessing confirmation.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Analysis</h3>
+      {% if exp.workflow_stage == "analysis_ready" %}
+      <a class="button" href="/experiments/{{ exp.id }}/analysis">Open Analysis</a>
+      {% else %}
+      <p class="muted">Starts after Suite2p confirmation.</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Preprocessing Steps</h2>
+  {% if pre_steps %}
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Step</th>
+        <th>Status</th>
+        <th>Slurm Job</th>
+        <th>Submitted</th>
+        <th>Ended</th>
+        <th>Log</th>
+        <th></th>
+      </tr>
+      {% for step in pre_steps %}
+      <tr>
+        <td>{{ step.step_name.replace("_", " ").title() }}</td>
+        <td><span class="chip {{ step.status }}">{{ step.status }}</span></td>
+        <td>{{ step.slurm_job_id or "" }}</td>
+        <td>{{ step.submitted_at or "" }}</td>
+        <td>{{ step.ended_at or "" }}</td>
+        <td>
+          {% if step.slurm_log_path %}
+          <span class="path">{{ step.slurm_log_path }}</span>
+          {% else %}
+          <span class="muted">not submitted</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if step.step_name in known_steps and step.status in ["completed", "failed", "cancelled", "blocked"] and not active %}
+          <form method="post" action="/experiments/{{ exp.id }}/preprocessing/steps/{{ step.step_name }}/rerun" class="form-row">
+            {% if step.step_name == "photobleaching_correction" %}
+            <input type="number" name="trimmed" min="0" step="1" value="{{ preprocessing_params.get('trimmed', 0) }}" style="max-width:120px" aria-label="Trimmed frames">
+            {% endif %}
+            <button title="Rerun this step and every preprocessing step after it">Rerun From Here</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No preprocessing steps were submitted yet.</p>
+  {% endif %}
+</section>
+
+{% if pb_review_available %}
+<section class="panel" id="preprocessing-review">
+  <div class="page-head">
+    <div>
+      <h2>Corrected Movie Review</h2>
+      <p id="pb-review-summary" class="muted">Photobleaching corrected outputs from preprocessing.</p>
+    </div>
+  </div>
+  {% if pb_available %}
+  <div class="pb-review-grid">
+    {% for kind in ["astro", "neuron"] %}
+    <div class="movie-shell" data-movie-viewer="{{ kind }}">
+      <div class="page-head" style="margin-bottom:0">
+        <div>
+          <h3>{{ kind.title() }} Movie</h3>
+          <p class="muted" data-movie-summary>Loading metadata...</p>
+        </div>
+        <span class="chip">{{ "GEVI sign flipped: bright = depolarization" if kind == "astro" else "Neuron" }}</span>
+      </div>
+      <div class="movie-stage">
+        <img class="movie-buffer active" data-frame-a alt="{{ kind.title() }} photobleaching corrected movie frame" decoding="async">
+        <img class="movie-buffer" data-frame-b alt="" decoding="async" aria-hidden="true">
+        <div class="movie-message" data-movie-message>Loading movie...</div>
+      </div>
+      <div class="movie-controls">
+        <button class="secondary" type="button" data-movie-play>Play</button>
+        <input type="range" min="0" max="0" value="0" step="1" data-movie-scrub>
+        <input type="number" min="0" value="0" data-movie-frame-input>
+      </div>
+      <div class="toolbar">
+        <span class="chip" data-movie-readout>Frame 0 / 0</span>
+        <span class="muted" data-movie-load-state></span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="intensity-wrap">
+    <div class="page-head" style="margin-bottom:0">
+      <div>
+        <h3>Mean Intensity</h3>
+        <p id="intensity-summary" class="muted">Loading corrected movie mean intensities...</p>
+      </div>
+    </div>
+    <div class="intensity-legend">
+      <span><i class="legend-line astro"></i>Astro</span>
+      <span><i class="legend-line neuron"></i>Neuron</span>
+    </div>
+    <canvas id="intensity-canvas" class="trace-canvas" style="height:360px"></canvas>
+    <div id="qc-metrics" class="qc-metrics"></div>
+  </div>
+  {% endif %}
+  <div class="intensity-wrap">
+    <div class="page-head" style="margin-bottom:0">
+      <div>
+        <h3>Photobleaching Correction Plots</h3>
+        <p class="muted">Saved QC plots from the completed photobleaching correction step.</p>
+      </div>
+    </div>
+    <div class="pb-plot-grid">
+      {% for plot in pb_qc_plots %}
+      <div class="pb-plot">
+        <div class="page-head" style="margin-bottom:0">
+          <h3>{{ plot.label }}</h3>
+          {% if plot.available %}
+          <a class="button secondary" href="/experiments/{{ exp.id }}/preprocessing/photobleaching-qc/{{ plot.kind }}.png">Open Full Size</a>
+          {% endif %}
+        </div>
+        {% if plot.available %}
+        <img src="/experiments/{{ exp.id }}/preprocessing/photobleaching-qc/{{ plot.kind }}.png" alt="{{ plot.label }} photobleaching correction QC plot" loading="lazy">
+        {% else %}
+        <p class="muted">QC plot is not available yet.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel" id="runs">
+  <h2>Runs</h2>
+  <div class="run-list">
+    {% for run in runs %}
+    <a class="run-row" href="/runs/{{ run.id }}">
+      <span>{{ run.label }}</span>
+      <span class="chip {{ run.status }}">{{ run.status }}</span>
+      <span class="muted">{{ run.output_name }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% if pb_available %}
+<script src="{{ url_for('static', filename='js/preprocessing_pb.js') }}"></script>
+{% endif %}
+{% endblock %}

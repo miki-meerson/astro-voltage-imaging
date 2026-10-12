@@ -7,12 +7,9 @@ import shutil
 import numpy as np
 
 from app.db.core import tx
+from app.services.run_views import latest_completed_run
 from app.services.runs import run_dir
 from app.settings import Settings
-
-
-def _prepare_imports(settings: Settings) -> None:
-    return None
 
 
 def _as_json_array(value) -> str:
@@ -74,17 +71,6 @@ def _row_float(row, name: str):
     return float(value)
 
 
-def _latest_completed(conn, experiment_id: int, step: str):
-    return conn.execute(
-        """
-        SELECT * FROM analysis_runs
-        WHERE experiment_id=? AND step=? AND is_test=0 AND status='completed'
-        ORDER BY id DESC LIMIT 1
-        """,
-        (experiment_id, step),
-    ).fetchone()
-
-
 def _load_npz_arrays(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -134,8 +120,7 @@ def unconfirm_neuron(settings: Settings, neuron_id: int) -> bool:
 
 
 def confirm_neuron(settings: Settings, neuron_id: int, reviewer_note: str = "") -> int:
-    _prepare_imports(settings)
-    from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters
+    from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
     from utils.db_utils import collect_cluster_result_metadata
 
     with tx(settings) as conn:
@@ -151,9 +136,9 @@ def confirm_neuron(settings: Settings, neuron_id: int, reviewer_note: str = "") 
         if n is None:
             raise ValueError("Neuron not found.")
 
-        spike_run = _latest_completed(conn, int(n["experiment_id"]), "spike")
-        behavior_run = _latest_completed(conn, int(n["experiment_id"]), "behavior")
-        sta_run = _latest_completed(conn, int(n["experiment_id"]), "sta")
+        spike_run = latest_completed_run(conn, int(n["experiment_id"]), "spike")
+        behavior_run = latest_completed_run(conn, int(n["experiment_id"]), "behavior")
+        sta_run = latest_completed_run(conn, int(n["experiment_id"]), "sta")
         if sta_run is None:
             raise ValueError("Confirming a neuron requires a completed STA Maps run.")
 
@@ -256,6 +241,8 @@ def confirm_neuron(settings: Settings, neuron_id: int, reviewer_note: str = "") 
             copied_npz = _copy_source_artifact(source_npz, permanent_root / "sta")
             with np.load(source_npz, allow_pickle=True) as d:
                 effect = np.asarray(d["observed_effect_movie"], dtype=np.float32)
+                # stored traces are dF/F-like: use the raw effect, not the tested z-statistic
+                trace_effect = np.asarray(d["observed_effect_raw_movie"], dtype=np.float32) if "observed_effect_raw_movie" in d else effect
                 aw = np.asarray(d["analysis_window"], dtype=int)
                 params = {
                     key: _jsonable(np.asarray(d[key]).item() if np.asarray(d[key]).shape == () else np.asarray(d[key]))
@@ -269,27 +256,40 @@ def confirm_neuron(settings: Settings, neuron_id: int, reviewer_note: str = "") 
                         "voxel_alpha",
                         "cluster_alpha",
                         "spatial_bin",
+                        "anatomy_spatial_bin",
+                        "anatomy_radius_binned",
+                        "anatomy_source_radius_binned",
+                        "anatomy_source_spatial_bin",
+                        "anatomy_fullres_radius_px",
                         "cluster_connectivity",
                         "min_cluster_size",
                         "min_cluster_mass",
+                        "min_spikes_for_cluster",
                         "merge_similar_clusters",
                         "merge_max_distance_px",
                         "merge_min_trace_corr",
+                        "null_standardization",
+                        "per_sign_null",
+                        "cluster_threshold_pos",
+                        "cluster_threshold_neg",
+                        "smooth_sigma_px",
+                        "smooth_sigma_fullres_px",
+                        "min_cluster_footprint_px",
+                        "min_cluster_frames",
+                        "significance_statistic",
                         "n_permutations",
+                        "rng_seed",
+                        "pre_seconds",
+                        "post_seconds",
+                        "baseline_seconds",
+                        "analysis_half_window_seconds",
+                        "analysis_half_window_frames",
+                        "result_types",
+                        "movie_shape",
+                        "n_valid_centers",
                     }
                 }
-                clusters = extract_clusters(
-                    effect_movie=effect,
-                    threshold=float(np.asarray(d["cluster_threshold"]).item()),
-                    connectivity=int(np.asarray(d["cluster_connectivity"]).item()),
-                    min_cluster_size=int(np.asarray(d["min_cluster_size"]).item()),
-                    min_cluster_mass=float(np.asarray(d["min_cluster_mass"]).item()),
-                    merge_similar=bool(np.asarray(d["merge_similar_clusters"]).item()),
-                    merge_max_distance_px=float(np.asarray(d["merge_max_distance_px"]).item()),
-                    merge_min_trace_corr=float(np.asarray(d["merge_min_trace_corr"]).item()),
-                    null_max=np.asarray(d["null_max_cluster_mass"], dtype=np.float32),
-                    cluster_alpha=float(np.asarray(d["cluster_alpha"]).item()),
-                )
+                clusters = extract_clusters(effect_movie=effect, **saved_cluster_args(d))  # honours per_sign_null when the file says so
             t_rel = np.arange(int(aw[0]), int(aw[1]) + 1)
             cur = conn.execute(
                 """
@@ -326,7 +326,7 @@ def confirm_neuron(settings: Settings, neuron_id: int, reviewer_note: str = "") 
                     continue
                 cluster_id = int(cluster.get("cluster_id", len(masks) + 1))
                 masks[f"cluster_{cluster_id}_mask2d"] = np.asarray(mask, dtype=bool)
-                trace = np.asarray(effect[:, mask].mean(axis=1), dtype=np.float32)
+                trace = np.asarray(trace_effect[:, mask].mean(axis=1), dtype=np.float32)
                 yyxx = np.argwhere(mask)
                 centroid_y = float(np.mean(yyxx[:, 0])) if yyxx.size else None
                 centroid_x = float(np.mean(yyxx[:, 1])) if yyxx.size else None

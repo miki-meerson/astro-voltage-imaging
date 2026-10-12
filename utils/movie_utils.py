@@ -3,10 +3,6 @@ import numpy as np
 import tifffile
 import xml.etree.ElementTree as ET
 
-from matplotlib import pyplot as plt
-import matplotlib.animation as animation
-from IPython.display import HTML
-
 
 def _get_xml_camera_shape(xml_path):
     tree = ET.parse(xml_path)
@@ -44,8 +40,7 @@ def _reorder_tiff_to_thw(movie, axes):
 
 
 def get_movie_parameters(path, is_dir=False, verbal=False):
-    if is_dir: tree = ET.parse(os.path.join(os.path.split(path)[0], 'Experiment.xml'))
-    else: tree = ET.parse(os.path.join(os.path.split(path)[0], 'Experiment.xml'))
+    tree = ET.parse(os.path.join(os.path.split(path)[0], 'Experiment.xml'))  # is_dir is accepted but has no effect
     root = tree.getroot()
     # Find the LSM tag and get the frameRate attribute
     lsm = root.find("LSM")
@@ -123,26 +118,6 @@ def read_astro_movie(path, dtype=np.uint16, as_memmap=False):
     this helper.
     """
     return read_movie(path, dtype=dtype, as_memmap=as_memmap, is_negative_gevi=True)
-
-
-def play_movie(movie, interval=30, cmap="gray", env="nb"):
-    n_frames = movie.shape[0]
-
-    fig, ax = plt.subplots()
-    im = ax.imshow(movie[0], cmap=cmap, animated=True)
-    ax.set_axis_off()
-
-    def update(frame):
-        im.set_array(movie[frame])
-        return [im]
-
-    ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=interval, blit=True)
-
-    if env == "nb":
-        plt.close(fig)  # prevent double display in Jupyter
-        return HTML(ani.to_jshtml())
-    else:
-        plt.show()
 
 
 def spatial_bin_movie(movie: np.ndarray, bin_factor: int) -> np.ndarray:

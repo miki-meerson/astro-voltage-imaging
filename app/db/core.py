@@ -20,19 +20,15 @@ def connect(settings: Settings) -> sqlite3.Connection:
     conn = sqlite3.connect(settings.sqlite_path, check_same_thread=False, factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")  # wait up to 5 s for a lock instead of failing with "database is locked"
+    # WAL is a property of the database file: it is set once in migrate() (schema.sql), not on every connection
     return conn
 
 
 def migrate(settings: Settings) -> None:
     with connect(settings) as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(Path(__file__).with_name("schema.sql").read_text(encoding="utf-8"))
-        existing = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_runs)")}
-        if "output_dir" not in existing:
-            conn.execute("ALTER TABLE analysis_runs ADD COLUMN output_dir TEXT")
-        experiment_columns = {row["name"] for row in conn.execute("PRAGMA table_info(experiments)")}
-        if "is_favorite" not in experiment_columns:
-            conn.execute("ALTER TABLE experiments ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
         max_run_id = conn.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM analysis_runs").fetchone()["max_id"]
         conn.execute(
             "UPDATE run_id_sequence SET next_id=MAX(next_id, ?) WHERE id=1",

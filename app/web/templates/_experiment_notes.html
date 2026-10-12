@@ -1,0 +1,33 @@
+<section class="panel" id="experiment-notes">
+  <div class="page-head">
+    <div>
+      <h2>Experiment Notes</h2>
+      <p class="muted">{{ notes|length }} saved note(s).</p>
+    </div>
+  </div>
+  <form method="post" action="/experiments/{{ exp.id }}/notes" class="note-form">
+    <input type="hidden" name="next" value="{{ request.path }}#experiment-notes">
+    <textarea name="note_text" placeholder="Write a note about this experiment..." maxlength="10000" required></textarea>
+    <div class="toolbar">
+      <button type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>&nbsp;Save Note</button>
+    </div>
+  </form>
+  {% if notes %}
+  <div class="note-stack">
+    {% for note in notes %}
+    <article class="note-card">
+      <div class="note-meta">
+        <span class="chip">{{ note.created_at }}</span>
+        <form method="post" action="/experiments/{{ exp.id }}/notes/{{ note.id }}/delete" onsubmit="return confirm('Delete this note?');">
+          <input type="hidden" name="next" value="{{ request.path }}#experiment-notes">
+          <button class="icon-button" type="submit" title="Delete note" aria-label="Delete note"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+        </form>
+      </div>
+      <p>{{ note.note_text }}</p>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No notes saved yet.</p>
+  {% endif %}
+</section>

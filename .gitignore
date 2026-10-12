@@ -6,4 +6,13 @@ __pycache__/
 
 *.sqlite3
 runtime/
+docs/
+notebooks/.cache/
 *.yml
+
+# credentials live only in secrets.yml; the template secrets.example.yml is the one allowed yml
+secrets.yml
+!secrets.example.yml
+
+# tests are kept local
+tests/
