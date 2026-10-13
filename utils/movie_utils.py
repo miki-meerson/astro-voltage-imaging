@@ -3,20 +3,19 @@ import numpy as np
 import tifffile
 import xml.etree.ElementTree as ET
 
+from utils import globals_utils as g
+from utils.paths_utils import PathKind, path_for
+
 
 def _get_xml_camera_shape(xml_path):
     tree = ET.parse(xml_path)
     root = tree.getroot()
 
     camera = root.find("Camera")
-    if camera is not None and "width" in camera.attrib and "height" in camera.attrib:
-        width = int(float(camera.attrib["width"].replace(",", "")))
-        height = int(float(camera.attrib["height"].replace(",", "")))
-        return width, height
-
-    # Fallback for older XML layouts.
-    width = int(root[5].attrib["width"])
-    height = int(root[5].attrib["height"])
+    if camera is None or "width" not in camera.attrib or "height" not in camera.attrib:
+        raise ValueError(f"{xml_path} has no Camera element with width and height.")
+    width = int(float(camera.attrib["width"].replace(",", "")))
+    height = int(float(camera.attrib["height"].replace(",", "")))
     return width, height
 
 
@@ -40,7 +39,7 @@ def _reorder_tiff_to_thw(movie, axes):
 
 
 def get_movie_parameters(path, is_dir=False, verbal=False):
-    tree = ET.parse(os.path.join(os.path.split(path)[0], 'Experiment.xml'))  # is_dir is accepted but has no effect
+    tree = ET.parse(path_for(PathKind.EXPERIMENT_XML, os.path.split(path)[0]))  # is_dir is accepted but has no effect
     root = tree.getroot()
     # Find the LSM tag and get the frameRate attribute
     lsm = root.find("LSM")
@@ -55,13 +54,25 @@ def get_movie_parameters(path, is_dir=False, verbal=False):
     return {'fps': fps, 'width': width, 'height': height}
 
 
+def read_frame_rate(source_dir) -> float:
+    """Frame rate (fps) of an experiment from its Experiment.xml. There is no default: when it cannot be read this raises a ValueError that names the file."""
+    xml_path = path_for(PathKind.EXPERIMENT_XML, source_dir)
+    try:
+        fps = float(get_movie_parameters(xml_path)['fps'])
+        if not fps > 0:
+            raise ValueError(f"frameRate is {fps}")
+        return fps
+    except (OSError, ET.ParseError, AttributeError, KeyError, ValueError) as exc:
+        raise ValueError(f"The frame rate (fps) could not be read from {xml_path} ({type(exc).__name__}: {exc}). Check that {g.EXPERIMENT_XML} is there and has the LSM frameRate.") from exc
+
+
 def _read_raw_movie(path, dtype=np.uint16):
     """ Read movie from a .raw path
         First get size from the Experiment.xml file (assumed to be in the same folder)
         Then use it to retrieve the movie
     """
     raw_movie_1d = np.fromfile(path, dtype)
-    xml_path = os.path.join(os.path.split(path)[0], 'Experiment.xml')
+    xml_path = path_for(PathKind.EXPERIMENT_XML, os.path.split(path)[0])
     tree = ET.parse(xml_path)
     root = tree.getroot()
 
@@ -160,8 +171,8 @@ def _bin_image(img2d: np.ndarray, spatial_bin: int) -> np.ndarray:
 
 
 def get_mean_images(mc_dir, spatial_bin=1):
-    astro_mean_img = np.asarray(np.load(mc_dir / "astro_mean_image.npy"), dtype=np.float32)
-    neuron_mean_img = np.asarray(np.load(mc_dir / "neuron_mean_image.npy"), dtype=np.float32)
+    astro_mean_img = np.asarray(np.load(path_for(PathKind.MC_ASTRO_MEAN_IMAGE, mc_dir)), dtype=np.float32)
+    neuron_mean_img = np.asarray(np.load(path_for(PathKind.MC_NEURON_MEAN_IMAGE, mc_dir)), dtype=np.float32)
 
     astro_mean_img_b = _bin_image(astro_mean_img, spatial_bin)
     neuron_mean_img_b = _bin_image(neuron_mean_img, spatial_bin)

@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 import shlex
 
-from app.db.core import connect, tx
+from app.db import preprocessing_repository as repo
 from app.services.cluster_ssh import run_ssh_command
 from app.settings import Settings
+from utils import globals_utils as g
+from utils.paths_utils import PathKind, path_for
 
 
 PREPROCESSING_STEPS = ("split_2ch", "motion_correction", "photobleaching_correction")
@@ -16,8 +18,6 @@ STEP_LABELS = {
     "motion_correction": "Motion Correction",
     "photobleaching_correction": "Photobleaching Correction",
 }
-PREPROCESSING_SOURCE_DIR = Path("preprocessing") / "source" / "pipeline_steps"
-RUNNER_DIR = PREPROCESSING_SOURCE_DIR / "cluster_runners_scripts"
 RUNNER_SCRIPTS = {
     "split_2ch": "run_split_2ch.sh",
     "motion_correction": "run_motion_correction.sh",
@@ -41,22 +41,6 @@ def cluster_path(path: Path | str, settings_or_params) -> str:
     return value.replace("\\", "/")
 
 
-def raw_movie_path(experiment_path: str | Path) -> Path:
-    home = Path(experiment_path)
-    candidates = [
-        home / "Image_scan_1_region_0_0.tif",
-        home / "Image_scan_1_region_0_0.raw",
-        home / "raw_video.tif",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    raw_files = sorted(home.glob("*.raw")) + sorted(home.glob("*.tif")) + sorted(home.glob("*.tiff"))
-    if raw_files:
-        return raw_files[0]
-    raise FileNotFoundError(f"No raw movie file found in {home}")
-
-
 def default_preprocessing_params(settings: Settings, source_path: str | Path) -> dict:
     defaults = dict(settings.raw.get("defaults", {}).get("preprocessing", {}))
     defaults.setdefault("is_2ch", True)
@@ -71,14 +55,14 @@ def default_preprocessing_params(settings: Settings, source_path: str | Path) ->
     defaults.setdefault("overlaps_y", 24)
     defaults.setdefault("max_deviation_rigid", 3)
     defaults.setdefault("trimmed", 0)
-    defaults["raw_video_path"] = str(raw_movie_path(source_path))
+    defaults["raw_video_path"] = str(path_for(PathKind.RAW_MOVIE, source_path))
     defaults["home_dir"] = str(Path(source_path))
     return defaults
 
 
 def write_params_file(settings: Settings, run: dict, out: Path, params: dict) -> Path:
     now = datetime.now().strftime("%d-%m-%Y___%H-%M-%S")
-    raw_video = Path(params.get("raw_video_path") or raw_movie_path(run["source_path"]))
+    raw_video = Path(params.get("raw_video_path") or path_for(PathKind.RAW_MOVIE, run["source_path"]))
     home = Path(run["source_path"])
     payload = {
         **params,
@@ -89,26 +73,21 @@ def write_params_file(settings: Settings, run: dict, out: Path, params: dict) ->
         "home_dir_linux": cluster_path(home, settings),
         "is_2ch": bool(params.get("is_2ch", True)),
     }
-    params_dir = out / "pipeline_params"
-    params_dir.mkdir(parents=True, exist_ok=True)
-    path = params_dir / f"run_{run['id']}_preprocessing_params.json"
+    path_for(PathKind.PREPROCESSING_PARAMS_DIR, out).mkdir(parents=True, exist_ok=True)
+    path = path_for(PathKind.PREPROCESSING_PARAMS, out, run_id=run["id"])
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 
 
-def state_path(out: Path) -> Path:
-    return out / "preprocessing_state.json"
-
-
 def load_state(out: Path) -> dict:
-    path = state_path(out)
+    path = path_for(PathKind.PREPROCESSING_STATE, out)
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def save_state(out: Path, state: dict) -> None:
-    state_path(out).write_text(json.dumps(state, indent=2), encoding="utf-8")
+    path_for(PathKind.PREPROCESSING_STATE, out).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def initialize_preprocessing_run(settings: Settings, run: dict, out: Path) -> dict:
@@ -137,19 +116,13 @@ def initialize_preprocessing_run(settings: Settings, run: dict, out: Path) -> di
         "current_index": 0,
     }
     save_state(out, state)
-    with tx(settings) as conn:
-        conn.execute("DELETE FROM preprocessing_steps WHERE run_id=?", (run["id"],))
-        for index, step in enumerate(steps):
-            conn.execute(
-                "INSERT INTO preprocessing_steps(run_id,step_name,step_order,status) VALUES(?,?,?,?)",
-                (run["id"], step, index, "pending"),
-            )
+    repo.replace_preprocessing_steps(settings, int(run["id"]), steps)
     return submit_preprocessing_step(settings, out, state, 0)
 
 
 def submit_preprocessing_step(settings: Settings, out: Path, state: dict, index: int) -> dict:
     step = state["steps"][index]
-    script = settings.project_root / RUNNER_DIR / RUNNER_SCRIPTS[step["name"]]
+    script = path_for(PathKind.PREPROCESSING_RUNNER, settings.project_root, script=RUNNER_SCRIPTS[step["name"]])
     if not script.exists():
         raise FileNotFoundError(f"Missing preprocessing runner script: {script}")
     cluster = settings.raw.get("cluster", {})
@@ -159,7 +132,7 @@ def submit_preprocessing_step(settings: Settings, out: Path, state: dict, index:
     cmd = " ".join(
         [
             shlex.quote(submit),
-            f"--chdir={shlex.quote(cluster_path(settings.project_root / PREPROCESSING_SOURCE_DIR, settings))}",
+            f"--chdir={shlex.quote(cluster_path(path_for(PathKind.PREPROCESSING_SOURCE, settings.project_root), settings))}",
             f"--output={shlex.quote(cluster_path(log_path, settings))}",
             shlex.quote(cluster_path(script, settings)),
             shlex.quote(cluster_path(params_path, settings)),
@@ -185,16 +158,8 @@ def submit_preprocessing_step(settings: Settings, out: Path, state: dict, index:
     )
     state["current_index"] = index
     save_state(out, state)
-    (out / "cluster_job_id.txt").write_text(job_id + "\n", encoding="utf-8")
-    with tx(settings) as conn:
-        conn.execute(
-            """
-            UPDATE preprocessing_steps
-            SET status='queued',slurm_job_id=?,slurm_log_path=?,submitted_at=?,message=?
-            WHERE run_id=? AND step_name=?
-            """,
-            (job_id, real_log_path, step["submitted_at"], stdout.strip(), state["run_id"], step["name"]),
-        )
+    path_for(PathKind.CLUSTER_JOB_ID, out).write_text(job_id + "\n", encoding="utf-8")
+    repo.mark_step_queued(settings, state["run_id"], step["name"], job_id, real_log_path, step["submitted_at"], stdout.strip())
     return state
 
 
@@ -223,46 +188,18 @@ def _apply_step_rerun_params(state: dict, extra_params: dict | None) -> dict:
 def rerun_preprocessing_step(settings: Settings, experiment_id: int, step_name: str, extra_params: dict | None = None) -> dict:
     if step_name not in PREPROCESSING_STEPS:
         raise ValueError(f"Unknown preprocessing step: {step_name}")
-    with connect(settings) as conn:
-        run = conn.execute(
-            """
-            SELECT r.*
-            FROM analysis_runs r
-            WHERE r.experiment_id=?
-              AND r.step='preprocessing'
-              AND r.is_test=0
-            ORDER BY r.id DESC
-            LIMIT 1
-            """,
-            (experiment_id,),
-        ).fetchone()
-        if run is None:
-            raise ValueError("No preprocessing run exists for this experiment.")
-        run = dict(run)
-        active = conn.execute(
-            """
-            SELECT 1
-            FROM analysis_runs
-            WHERE id=? AND status IN ('pending','queued','running')
-            """,
-            (run["id"],),
-        ).fetchone()
-        if active is not None:
-            raise ValueError("A preprocessing run is already active.")
-        step_row = conn.execute(
-            """
-            SELECT *
-            FROM preprocessing_steps
-            WHERE run_id=? AND step_name=?
-            """,
-            (run["id"], step_name),
-        ).fetchone()
-        if step_row is None:
-            raise ValueError(f"Preprocessing step was not found: {step_name}")
-        rerunnable_statuses = {"blocked", "cancelled", "completed", "failed"}
-        if step_row["status"] not in rerunnable_statuses:
-            allowed = ", ".join(sorted(rerunnable_statuses))
-            raise ValueError(f"This step can be rerun only from: {allowed}. Current status is {step_row['status']}.")
+    run = repo.latest_preprocessing_run(settings, experiment_id)
+    if run is None:
+        raise ValueError("No preprocessing run exists for this experiment.")
+    if repo.run_is_active(settings, run["id"]):
+        raise ValueError("A preprocessing run is already active.")
+    step_row = repo.step_row(settings, run["id"], step_name)
+    if step_row is None:
+        raise ValueError(f"Preprocessing step was not found: {step_name}")
+    rerunnable_statuses = {"blocked", "cancelled", "completed", "failed"}
+    if step_row["status"] not in rerunnable_statuses:
+        allowed = ", ".join(sorted(rerunnable_statuses))
+        raise ValueError(f"This step can be rerun only from: {allowed}. Current status is {step_row['status']}.")
 
     out = Path(run["output_dir"] or "")
     state = load_state(out)
@@ -289,65 +226,30 @@ def rerun_preprocessing_step(settings: Settings, experiment_id: int, step_name: 
         )
     state["current_index"] = index
     save_state(out, state)
-    with tx(settings) as conn:
-        conn.execute(
-            """
-            UPDATE analysis_runs
-            SET status='queued',
-                ended_at=NULL,
-                exit_code=NULL,
-                review_note='',
-                parameters_json=?
-            WHERE id=?
-            """,
-            (Path(state["params_path"]).read_text(encoding="utf-8"), run["id"]),
-        )
-        conn.execute(
-            """
-            UPDATE experiments
-            SET workflow_stage='preprocessing_running',
-                preprocessing_review_state='unreviewed',
-                updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (experiment_id,),
-        )
-        for i, step in enumerate(steps):
-            if i < index:
-                continue
-            status = "submitting" if i == index else "pending"
-            conn.execute(
-                """
-                UPDATE preprocessing_steps
-                SET status=?,
-                    slurm_job_id='',
-                    slurm_log_path='',
-                    submitted_at=NULL,
-                    started_at=NULL,
-                    ended_at=NULL,
-                    exit_code=NULL,
-                    message=''
-                WHERE run_id=? AND step_name=?
-                """,
-                (status, run["id"], step["name"]),
-            )
+    repo.reset_for_rerun(
+        settings,
+        experiment_id,
+        run["id"],
+        Path(state["params_path"]).read_text(encoding="utf-8"),
+        [(step["name"], "submitting" if i == index else "pending") for i, step in enumerate(steps) if i >= index],
+    )
     try:
         return submit_preprocessing_step(settings, out, state, index)
     except Exception as exc:
         steps[index]["status"] = "failed"
         steps[index]["message"] = str(exc)
         save_state(out, state)
-        with tx(settings) as conn:
-            conn.execute(
-                """
-                UPDATE preprocessing_steps
-                SET status='failed',message=?,ended_at=?
-                WHERE run_id=? AND step_name=?
-                """,
-                (str(exc)[:1000], datetime.now().isoformat(timespec="seconds"), run["id"], step_name),
-            )
-            conn.execute(
-                "UPDATE analysis_runs SET status='failed',ended_at=?,exit_code=1,review_note=? WHERE id=?",
-                (datetime.now().isoformat(timespec="seconds"), str(exc)[:1000], run["id"]),
-            )
+        repo.mark_rerun_failed(settings, run["id"], step_name, str(exc), datetime.now().isoformat(timespec="seconds"))
         raise
+
+
+def latest_preprocessing_params(settings: Settings, experiment_id: int) -> dict:
+    """Parameters of the newest preprocessing run: the params file its state file points to, else the parameters saved with the run."""
+    run = repo.latest_preprocessing_run(settings, experiment_id)
+    if run is None:
+        return {}
+    state = load_state(Path(run["output_dir"] or ""))
+    params_path = Path(state.get("params_path") or "")
+    if state.get("params_path") and params_path.exists():
+        return json.loads(params_path.read_text(encoding="utf-8"))
+    return json.loads(run["parameters_json"] or "{}")

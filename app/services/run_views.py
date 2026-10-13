@@ -1,11 +1,12 @@
-"""Run rows as shown in the pages, run logs, and small DB look-ups shared by several pages."""
+"""Run rows as shown in the pages, and run logs."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from app.db.core import rows
 from app.services.runs import run_dir
+from utils import globals_utils as g
+from utils.paths_utils import PathKind, path_for
 
 STEP_LABELS = {"preprocessing": "Preprocessing", "spike": "Spike Detection", "behavior": "Behavior Split", "anatomy": "Anatomy Crop", "sta": "STA Maps"}
 STATUS_PROGRESS = {
@@ -22,7 +23,7 @@ STATUS_PROGRESS = {
 
 def run_view(row, settings):
     run = dict(row)
-    run["label"] = STEP_LABELS.get(run["step"], run["step"].title())
+    run["label"] = STEP_LABELS[run["step"]]
     run["progress"] = STATUS_PROGRESS.get(run["status"], 0)
     run["output_dir"] = str(run_dir(settings, int(run["id"]), bool(run["is_test"])))
     run["output_name"] = Path(run["output_dir"]).name
@@ -39,13 +40,13 @@ def run_view_for_neuron(row, settings, pipeline_neuron_id: str):
     run = run_view(row, settings)
     output_name = run["output_name"]
     cell_prefixes = (
-        f"{output_name}/cell_{pipeline_neuron_id}/",
-        f"{output_name}/sta_algorithm_home/sta-analysis/cell_{pipeline_neuron_id}/",
+        path_for(PathKind.SPIKE_CELL_DIR, output_name, cell=pipeline_neuron_id).as_posix() + "/",
+        path_for(PathKind.CELL_DIR, path_for(PathKind.STA_ANALYSIS, output_name), cell=pipeline_neuron_id).as_posix() + "/",
     )
     if run["step"] == "behavior":
         filtered = [
             a for a in run["artifacts"]
-            if Path(a.get("path", "")).name in {"behavioral_segements.npz", "behavior_speed_summary.png", "metrics.json"}
+            if Path(a.get("path", "")).name in {g.BEHAVIOR_SEGMENTS, g.BEHAVIOR_SPEED_PNG, g.RUN_METRICS_JSON}
         ]
     else:
         filtered = [a for a in run["artifacts"] if str(a.get("path", "")).replace("\\", "/").startswith(cell_prefixes)]
@@ -88,10 +89,10 @@ def run_stdout(run: dict) -> str:
     chunks = [read_tail(run.get("stdout_path"))]
     out_dir = Path(run["output_dir"]) if run.get("output_dir") else (Path(run["stdout_path"]).parent if run.get("stdout_path") else None)
     if out_dir is not None:
-        cluster = read_tail(str(out_dir / "cluster_stdout.log"))
+        cluster = read_tail(str(path_for(PathKind.CLUSTER_STDOUT_LOG, out_dir)))
         if cluster:
             chunks.append("\n\n--- Cluster stdout ---\n" + cluster)
-        for log_path in sorted(out_dir.glob("preprocessing_*.log")):
+        for log_path in sorted(out_dir.glob(g.PREPROCESSING_STEP_LOG_GLOB)):
             log_text = read_tail(str(log_path))
             if log_text:
                 chunks.append(f"\n\n--- {log_path.name} ---\n" + log_text)
@@ -102,7 +103,7 @@ def run_stderr(run: dict) -> str:
     chunks = [read_tail(run.get("stderr_path"))]
     out_dir = Path(run["output_dir"]) if run.get("output_dir") else (Path(run["stderr_path"]).parent if run.get("stderr_path") else None)
     if out_dir is not None:
-        cluster = read_tail(str(out_dir / "cluster_stderr.log"))
+        cluster = read_tail(str(path_for(PathKind.CLUSTER_STDERR_LOG, out_dir)))
         if cluster:
             chunks.append("\n\n--- Cluster stderr ---\n" + cluster)
     return "".join(chunks)
@@ -122,27 +123,3 @@ def failure_reason(run: dict, limit: int = 360) -> str:
     if isinstance(command, dict) and command.get("error"):
         return str(command["error"])[:limit]
     return str(command)[:limit] if command else "No error details were captured."
-
-
-def latest_completed_run(conn, experiment_id: int, step: str):
-    return conn.execute(
-        """
-        SELECT * FROM analysis_runs
-        WHERE experiment_id=? AND step=? AND is_test=0 AND status='completed'
-        ORDER BY id DESC LIMIT 1
-        """,
-        (experiment_id, step),
-    ).fetchone()
-
-
-def experiment_notes(conn, experiment_id: int) -> list[dict]:
-    return rows(
-        conn,
-        """
-        SELECT id,note_text,created_at,updated_at
-        FROM experiment_notes
-        WHERE experiment_id=?
-        ORDER BY created_at DESC, id DESC
-        """,
-        (experiment_id,),
-    )

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from utils.cluster_result import cluster_offset_from_roi
 from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
 
 MAX_SHIFT = 3
@@ -24,24 +25,22 @@ DIRECTION = {"cells_with_cluster": "high", "one_sidedness": "high", "similarity_
 
 
 def _rows_from_effect(effect, d, null_max, crop, spatial_bin, roi_center, null_max_neg=None):
-    """Significant-cluster rows of one effect movie. null_max is the pooled null (legacy) or, when the result was made with
+    """Significant-cluster rows of one effect movie. null_max is the pooled null or, when the result was made with
     per_sign_null, the positive-sign null with null_max_neg the negative-sign one: the same rule as the saved result."""
     args = saved_cluster_args(d)
     args["null_max"] = null_max
     if args.get("per_sign_null"):
         args["null_max_neg"] = null_max_neg
     clusters = extract_clusters(effect_movie=effect, **args)
-    y0, x0 = int(crop[0]), int(crop[2])
     rows = []
     for c in clusters:
         if not c.get("is_significant", False):
             continue
         mask2d = np.asarray(cluster_mask2d_from_cluster(c), dtype=bool)
-        ys, xs = np.nonzero(mask2d)
-        cy, cx = (y0 + ys.mean() + 0.5) * spatial_bin - 0.5, (x0 + xs.mean() + 0.5) * spatial_bin - 0.5
+        dy, dx = cluster_offset_from_roi(mask2d, crop, spatial_bin, roi_center)
         rows.append({
             "sign": 1 if str(c.get("sign", "")).lower() == "positive" else -1,  # +1 depolarizing, -1 hyperpolarizing
-            "dist": float(np.hypot(cy - roi_center[0], cx - roi_center[1])),
+            "dist": float(np.hypot(dy, dx)),
             "trace": effect[:, mask2d].mean(axis=1).astype(float).round(5).tolist(),
         })
     return rows
@@ -55,7 +54,7 @@ def cell_records(npz_path, roi_center) -> dict:
         args = saved_cluster_args(d)  # per_sign_null results: null_max / null_max_neg are the two per-sign nulls
         null_max, null_max_neg = args["null_max"], args.get("null_max_neg")
         crop = np.asarray(d["anatomy_crop_bounds"], dtype=int).ravel()
-        b = int(np.asarray(d["spatial_bin"]).item()) if "spatial_bin" in d.files else 1
+        b = int(np.asarray(d["spatial_bin"]).item())
         real = _rows_from_effect(effect, d, null_max, crop, b, roi_center, null_max_neg)
         fake = []
         for i in range(perm.shape[0]):

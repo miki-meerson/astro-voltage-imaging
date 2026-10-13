@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import re
 
+from utils import globals_utils as g
+from utils.paths_utils import PathKind, cell_dirs, path_for
 
 DEFAULT_NEURON_DATASET_NAME = "neuron_dataset.pkl"
 
@@ -147,7 +149,7 @@ def load_cluster_dataset(path: Path) -> pd.DataFrame:
 
 def parse_cluster_result_filename(path: str | Path) -> dict[str, int | str] | None:
     path = Path(path)
-    prefix = "astro_sta_cluster_permutation"
+    prefix = g.RESULT_PREFIX
     if not path.stem.startswith(prefix):
         return None
 
@@ -161,7 +163,7 @@ def parse_cluster_result_filename(path: str | Path) -> dict[str, int | str] | No
         version = int(m.group(1))
         suffix = suffix[:m.start()]
 
-    return {"result_type": suffix or "all", "version": version}
+    return {"result_type": suffix or g.ALL_GROUP, "version": version}
 
 
 def _npz_metadata_value(npz_data, key: str, default=np.nan):
@@ -180,33 +182,17 @@ def read_cluster_result_metadata(npz_path: str | Path) -> dict[str, Any] | None:
 
     with np.load(npz_path, allow_pickle=True) as d:
         row = {
-            "cell_id": (
-                int(np.asarray(d["cell_id"]).item())
-                if "cell_id" in d
-                else int(npz_path.parent.name.split("_", 1)[1])
-            ),
+            "cell_id": int(np.asarray(d["cell_id"]).item()),
             "file_name": npz_path.name,
             "path": npz_path,
             **parsed,
         }
         row.update({key: _npz_metadata_value(d, key) for key in CLUSTER_RESULT_HPARAM_KEYS})
-        row["n_permutations"] = (
-            int(len(d["permutation_shifts"]))
-            if "permutation_shifts" in d
-            else int(len(d["null_max_cluster_mass"])) if "null_max_cluster_mass" in d else np.nan
-        )
-        row["n_peaks"] = int(len(d["peaks"])) if "peaks" in d else np.nan
-        if "cluster_summary" in d:
-            clusters = np.asarray(d["cluster_summary"], dtype=object)
-            is_sig = [
-                bool(c.get("is_significant", False)) if isinstance(c, dict) else bool(c[6])
-                for c in clusters
-            ]
-            row["n_significant_clusters"] = int(sum(is_sig))
-            row["has_significant_cluster"] = bool(any(is_sig))
-        else:
-            row["n_significant_clusters"] = 0
-            row["has_significant_cluster"] = False
+        row["n_permutations"] = int(len(d["permutation_shifts"]))
+        row["n_peaks"] = int(len(d["peaks"]))
+        is_sig = [bool(c[6]) for c in np.asarray(d["cluster_summary"], dtype=object)]  # columns as written by save_cluster_result; 6 = is_significant
+        row["n_significant_clusters"] = int(sum(is_sig))
+        row["has_significant_cluster"] = bool(any(is_sig))
         return row
 
 
@@ -215,18 +201,15 @@ def collect_cluster_result_metadata(
     cell_ids: list[int] | None = None,
 ) -> pd.DataFrame:
     sta_dir = Path(sta_dir)
-    cell_dirs = (
-        [sta_dir / f"cell_{int(cell_id)}" for cell_id in cell_ids]
+    folders = (
+        [path_for(PathKind.CELL_DIR, sta_dir, cell=int(cell_id)) for cell_id in cell_ids]
         if cell_ids is not None
-        else sorted(
-            [p for p in sta_dir.glob("cell_*") if p.is_dir()],
-            key=lambda p: int(p.name.split("_", 1)[1]),
-        )
+        else list(cell_dirs(sta_dir).values())
     )
 
     rows = []
-    for cell_dir in cell_dirs:
-        for npz_path in sorted(cell_dir.glob("astro_sta_cluster_permutation*.npz")):
+    for cell_dir in folders:
+        for npz_path in sorted(cell_dir.glob(g.RESULT_GLOB)):
             row = read_cluster_result_metadata(npz_path)
             if row is not None:
                 rows.append(row)
@@ -235,19 +218,6 @@ def collect_cluster_result_metadata(
 
 def _infer_neuron_dataset_path_from_cluster_path(cluster_dataset_path: Path) -> Path:
     return Path(cluster_dataset_path).with_name(DEFAULT_NEURON_DATASET_NAME)
-
-
-def load_sta_metadata(cell_dir: str | Path) -> dict:
-    cell_dir = Path(cell_dir)
-    neuron_sta = np.load(cell_dir / "neuron_sta.npz", allow_pickle=True)
-    peak_params = np.load(cell_dir / "peak_detection_params.npz", allow_pickle=True)
-    return {
-        "pre_frames": int(np.asarray(neuron_sta["pre_frames"]).item()),
-        "post_frames": int(np.asarray(neuron_sta["post_frames"]).item()),
-        "sta_trace": np.asarray(neuron_sta["sta"]),
-        "threshold_factor": float(np.asarray(peak_params["threshold_factor"]).item()),
-        "min_distance": int(np.asarray(peak_params["min_distance"]).item()),
-    }
 
 
 def load_normalized_dataset(
@@ -285,28 +255,28 @@ def load_saved_npz(npz_path):
             "sta_movie": np.asarray(d["observed_sta_movie"], dtype=np.float32),
             "pre_frames": int(np.asarray(d["pre_frames"]).item()),
             "post_frames": int(np.asarray(d["post_frames"]).item()),
-            "baseline_frames": int(np.asarray(d["baseline_frames"]).item()) if "baseline_frames" in d else None,
-            "peaks": np.asarray(d["peaks"], dtype=np.int32) if "peaks" in d else np.empty(0, dtype=np.int32),
+            "baseline_frames": int(np.asarray(d["baseline_frames"]).item()),
+            "peaks": np.asarray(d["peaks"], dtype=np.int32),
             "analysis_window": aw,
             "baseline_window": np.asarray(d["baseline_window"], dtype=int),
             "threshold": float(np.asarray(d["cluster_threshold"]).item()),
             "null_max": np.asarray(d["null_max_cluster_mass"], dtype=float),
             "cluster_alpha": float(np.asarray(d["cluster_alpha"]).item()),
-            "cluster_connectivity": int(np.asarray(d["cluster_connectivity"]).item()) if "cluster_connectivity" in d else 1,
-            "min_cluster_size": int(np.asarray(d["min_cluster_size"]).item()) if "min_cluster_size" in d else 1,
-            "min_cluster_mass": float(np.asarray(d["min_cluster_mass"]).item()) if "min_cluster_mass" in d else 0.0,
-            "merge_similar_clusters": bool(np.asarray(d["merge_similar_clusters"]).item()) if "merge_similar_clusters" in d else False,
-            "merge_max_distance_px": float(np.asarray(d["merge_max_distance_px"]).item()) if "merge_max_distance_px" in d else 0.0,
-            "merge_min_trace_corr": float(np.asarray(d["merge_min_trace_corr"]).item()) if "merge_min_trace_corr" in d else 1.0,
+            "cluster_connectivity": int(np.asarray(d["cluster_connectivity"]).item()),
+            "min_cluster_size": int(np.asarray(d["min_cluster_size"]).item()),
+            "min_cluster_mass": float(np.asarray(d["min_cluster_mass"]).item()),
+            "merge_similar_clusters": bool(np.asarray(d["merge_similar_clusters"]).item()),
+            "merge_max_distance_px": float(np.asarray(d["merge_max_distance_px"]).item()),
+            "merge_min_trace_corr": float(np.asarray(d["merge_min_trace_corr"]).item()),
             "spatial_bin": int(np.asarray(d["spatial_bin"]).item()),
-            # dF/F-like effect for traces; observed_effect_movie is the TESTED statistic (z in per_pixel_z mode)
+            # dF/F-like effect for traces; observed_effect_movie is the TESTED statistic (z in per_pixel_z mode); the raw one is saved only when they differ
             "trace_effect": np.asarray(d["observed_effect_raw_movie"] if "observed_effect_raw_movie" in d else d["observed_effect_movie"], dtype=float),
-            "min_footprint_px": int(np.asarray(d["min_cluster_footprint_px"]).item()) if "min_cluster_footprint_px" in d else 0,
-            "min_frames": int(np.asarray(d["min_cluster_frames"]).item()) if "min_cluster_frames" in d else 0,
-            "significance_statistic": str(np.asarray(d["significance_statistic"]).item()) if "significance_statistic" in d else "effect",
+            "min_footprint_px": int(np.asarray(d["min_cluster_footprint_px"]).item()),
+            "min_frames": int(np.asarray(d["min_cluster_frames"]).item()),
+            "significance_statistic": str(np.asarray(d["significance_statistic"]).item()),
             # opt-in per-sign rule (see docs/statistics.md); for such files "threshold" / "null_max" above are the
-            # positive-sign values and the negative-sign ones are here
-            "per_sign_null": bool(np.asarray(d["per_sign_null"]).item()) if "per_sign_null" in d else False,
+            # positive-sign values and the negative-sign ones are here (saved only when per_sign_null is on)
+            "per_sign_null": bool(np.asarray(d["per_sign_null"]).item()),
             "threshold_neg": float(np.asarray(d["cluster_threshold_neg"]).item()) if "cluster_threshold_neg" in d else None,
             "null_max_pos": np.asarray(d["null_max_cluster_mass_pos"], dtype=float) if "null_max_cluster_mass_pos" in d else None,
             "null_max_neg": np.asarray(d["null_max_cluster_mass_neg"], dtype=float) if "null_max_cluster_mass_neg" in d else None,

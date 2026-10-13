@@ -92,8 +92,8 @@ def load_spike_payload(path: Path) -> dict:
     except FileNotFoundError:
         raise FileNotFoundError(f"The spike labels file {path} is missing: the Spike Detection step writes it, so rerun Spike Detection for this experiment.") from None
     with saved as d:
-        peaks = np.asarray(d["peaks_all"], dtype=np.int32) if "peaks_all" in d else np.empty(0, dtype=np.int32)
-        labels = np.asarray(d["labels"]).astype(str) if "labels" in d else np.full(peaks.shape, "simple")
+        peaks = np.asarray(d["peaks_all"], dtype=np.int32)
+        labels = np.asarray(d["labels"]).astype(str)
     order = np.argsort(peaks)
     return {"peaks_all": peaks[order], "labels": labels[order]}
 

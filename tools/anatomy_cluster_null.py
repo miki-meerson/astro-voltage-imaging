@@ -1,29 +1,29 @@
 """Group test for the anatomy clusters of one STA run (see utils/anatomy_group_test.py for the plain-language description).
 
-    python tools/anatomy_cluster_null.py --sta-dir <.../sta-analysis> --source-dir <experiment folder> [--workers 8] [--draws 3000]
+    python -m tools.anatomy_cluster_null --sta-dir <.../sta-analysis> --source-dir <experiment folder> [--workers 8] [--draws 3000]
 
 Heavy (it re-runs the cluster search on 200 fakes for every cell): run it as a Slurm job, cluster-code/run_anatomy_group_test.sh.
 Writes, inside the STA folder:
-  anatomy_group_records.json.gz   per cell: real clusters and the clusters found in each fake (reusable, so new draws need no recompute)
-  anatomy_group_test.json         the comparison shown on the experiment page
+  the group-test records (GROUP_TEST_RECORDS)  per cell: real clusters and the clusters found in each fake (reusable, so new draws need no recompute)
+  the group test (GROUP_TEST)                  the comparison shown on the experiment page
+(file names: utils/globals_utils.py)
 """
 from __future__ import annotations
 
 import argparse
 import gzip
 import json
-import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
-REPO = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(REPO)]
-
-from utils.anatomy_group_test import cell_records, group_test  # noqa: E402
-
-NPZ = "astro_sta_cluster_permutation_anatomy.npz"
+from utils.anatomy_group_test import cell_records, group_test
+from utils import globals_utils as g
+from utils.motion_diagnostics import cell_motion_status
+from utils.paths_utils import PathKind, cell_dirs, path_for
+from utils.suite2p_utils import roi_center, suite2p_stat_cells
 
 
 def _one(args):
@@ -40,30 +40,27 @@ def main() -> None:
     ap.add_argument("--reuse", action="store_true", help="only redo the draws from the saved records")
     a = ap.parse_args()
     sta = Path(a.sta_dir)
-    rec_path = sta / "anatomy_group_records.json.gz"
+    rec_path = path_for(PathKind.GROUP_TEST_RECORDS, sta)
 
     if a.reuse and rec_path.exists():
         with gzip.open(rec_path, "rt", encoding="utf-8") as fh:
             records = {int(k): v for k, v in json.load(fh).items()}
     else:
-        s2p = Path(a.source_dir) / "pipeline_results" / "for_suite2p" / "suite2p" / "plane0"
-        stat = np.load(s2p / "stat.npy", allow_pickle=True)[np.asarray(np.load(s2p / "iscell.npy", allow_pickle=True)[:, 0], dtype=bool)]
+        stat = suite2p_stat_cells(a.source_dir)
         jobs, skipped = [], {"motion_flagged": 0, "no_motion_diagnostics": 0, "no_anatomy_result": 0}
-        for cell_dir in sorted(sta.glob("cell_*")):
-            cid = int(cell_dir.name.split("_")[1])
-            if not (cell_dir / NPZ).exists() or cid >= len(stat):
+        status = cell_motion_status(pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta)))
+        for cid in cell_dirs(sta):
+            npz = path_for(PathKind.ANATOMY_RESULT, sta, cell=cid)
+            if not npz.exists() or cid >= len(stat):
                 skipped["no_anatomy_result"] += 1
                 continue
-            m = cell_dir / "motion_sta.npz"
-            if not m.exists():
+            cell_status = status.get(cid, g.MOTION_NOT_TESTED)
+            if cell_status == g.MOTION_NOT_TESTED:
                 skipped["no_motion_diagnostics"] += 1
-                continue
-            with np.load(m, allow_pickle=True) as z:
-                if bool(z["flag"]):
-                    skipped["motion_flagged"] += 1
-                    continue
-            roi = stat[cid]
-            jobs.append((cid, cell_dir / NPZ, (float(np.mean(roi["ypix"])), float(np.mean(roi["xpix"])))))
+            elif cell_status == g.MOTION_SUSPECTED:
+                skipped["motion_flagged"] += 1
+            else:
+                jobs.append((cid, npz, roi_center(stat[cid])))
         print(f"{len(jobs)} cells go into the test; left out: {skipped}", flush=True)
         records = {}
         with ProcessPoolExecutor(a.workers) as ex:
@@ -79,7 +76,7 @@ def main() -> None:
     result = group_test(records, n_draws=a.draws)
     if not a.reuse:
         result["left_out"] = skipped_info
-    out = sta / "anatomy_group_test.json"
+    out = path_for(PathKind.GROUP_TEST, sta)
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text(json.dumps(result, indent=2), encoding="utf-8")
     tmp.replace(out)

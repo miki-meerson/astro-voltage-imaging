@@ -4,7 +4,6 @@ import argparse
 import csv
 import json
 import multiprocessing as mp
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -12,20 +11,18 @@ from numpy.lib.stride_tricks import sliding_window_view
 from scipy.ndimage import find_objects, generate_binary_structure, label
 from scipy.sparse import csr_matrix
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
+from utils import globals_utils as g
+from utils.anatomy_summary import save_anatomy_summary
 from utils.clusters_utils import _merge_similar_clusters
 from utils.motion_diagnostics import (
     align_shifts_to_analysed_frames,
     build_motion_series,
+    cuts_from_bad_segments,
     load_shifts,
     motion_sta_stats,
     registration_quality,
 )
-from utils.movie_utils import get_movie_parameters, read_astro_movie, spatial_bin_movie
+from utils.movie_utils import read_astro_movie, read_frame_rate, spatial_bin_movie
 from utils.sta_stats_utils import (
     NULL_STANDARDIZATION_MODES,
     max_mass_by_sign,
@@ -37,17 +34,16 @@ from utils.sta_stats_utils import (
     smooth_spatial,
     standardize,
 )
-from utils.paths_utils import resolve_sta_paths
-from utils.tif_export import fiji_cell_dir, sta_note, write_imagej_stack
+from utils.paths_utils import PathKind, cell_dirs, path_for, resolve_sta_paths, result_file_name
+from utils.tif_export import sta_note, write_imagej_stack
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 
 HOME_DIR = Path(r"Z:\Adam-Lab-Shared\Data\Miki_Meerson\Imaging\HYP-JEDI\Hyp3\L\02-02-2026-awake\FOV1\z-18-x2")
 SOURCE_HOME_DIR: Path | None = None
 LINUX_SHARED_ROOT = Path("/ems/elsc-labs/adam-y/Adam-Lab-Shared")
 WINDOWS_SHARED_ROOT = Path(r"Z:\Adam-Lab-Shared")
-SPIKE_ANALYSIS_FOLDERS = ("automated_spike_analysis", "automated-spike-analysis")
-LABEL_FILE = "simple_complex_spike_labels.npz"
-BEHAVIORAL_SEGMENTS_FILE = "behavioral_segements.npz"
+SCRIPT_DIR = Path(__file__).resolve().parent
+JOB_PARAMS_FILE = "sta_maps_job_params.json"
 
 PRE_SECONDS = 2.0
 POST_SECONDS = 3.0
@@ -87,13 +83,11 @@ MOTION_REG_QUALITY_BIN = 0  # spatial bin of the movie used for the registration
 SAVE_BINNED_STA_MOVIES = True
 SAVE_FIJI_TIFS = False  # save each binned STA movie as an ImageJ .tif in <experiment>/sta_movies_tif/cell_<N>/ INSTEAD of the .npy in the run folder (needs SAVE_BINNED_STA_MOVIES)
 OVERWRITE = True
-CELL_IDS: list[int] | str = "all"
-RESULT_TYPES = ("all", "simple", "complex")
+CELL_IDS: list[int] | str = g.ALL_GROUP
+RESULT_TYPES = (g.ALL_GROUP, "simple", "complex")
 BEHAVIORAL_GROUPS = ("active", "inactive")
-VALID_RESULT_TYPES = {"all", "simple", "complex", "anatomy", "behavioral"}
+VALID_RESULT_TYPES = {g.ALL_GROUP, "simple", "complex", g.ANATOMY_GROUP, "behavioral"}
 SUMMARY_CSV: str | None = None
-
-ANATOMY_CROP_PARAMS = "anatomy_crop_params.npz"
 
 _MOVIE: np.ndarray | None = None
 _MOVIE_FLAT: np.ndarray | None = None
@@ -112,7 +106,7 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         type=str,
         default=None,
-        help="Path to sta_maps_job_params.json. Defaults to cluster-code/sta_maps_job_params.json when present.",
+        help=f"Path to {JOB_PARAMS_FILE}. Defaults to cluster-code/{JOB_PARAMS_FILE} when present.",
     )
     return parser.parse_args()
 
@@ -120,7 +114,7 @@ def parse_args() -> argparse.Namespace:
 def load_config(path_arg: str | None) -> dict:
     config_path = None if path_arg in (None, "", "None") else Path(path_arg)
     if config_path is None:
-        default_path = SCRIPT_DIR / "sta_maps_job_params.json"
+        default_path = SCRIPT_DIR / JOB_PARAMS_FILE
         config_path = default_path if default_path.exists() else None
     if config_path is None:
         return {}
@@ -215,16 +209,12 @@ def source_home_dir() -> Path:
 
 
 def spike_analysis_dir() -> Path:
-    for name in SPIKE_ANALYSIS_FOLDERS:
-        path = home_dir() / name
-        if path.exists():
-            return path
-    return home_dir() / SPIKE_ANALYSIS_FOLDERS[0]
+    return home_dir() / g.SPIKE_ANALYSIS_DIR
 
 
 def binned_movie_path(paths, spatial_bin: int | None = None) -> Path:
     bin_factor = SPATIAL_BIN if spatial_bin is None else int(spatial_bin)
-    return paths.pb_dir / f"astro_photobleaching_corrected_gevi_flipped_bin{bin_factor}.npy"
+    return path_for(PathKind.BINNED_ASTRO_MOVIE, paths.home_dir, bin=bin_factor)
 
 
 def movie_input_path(paths, spatial_bin: int | None = None) -> Path:
@@ -234,15 +224,16 @@ def movie_input_path(paths, spatial_bin: int | None = None) -> Path:
 
 def behavioral_binned_movie_path(paths, group: str, spatial_bin: int | None = None) -> Path:
     bin_factor = SPATIAL_BIN if spatial_bin is None else int(spatial_bin)
-    return paths.home_dir / "sta-analysis" / f"astro_photobleaching_corrected_gevi_flipped_behavioral_{group}_bin{bin_factor}.npy"
+    return path_for(PathKind.RUN_BEHAVIORAL_BINNED_MOVIE, paths.home_dir, group=group, bin=bin_factor)
 
 
 def behavioral_binned_frames_path(paths, group: str, spatial_bin: int | None = None) -> Path:
-    return behavioral_binned_movie_path(paths, group, spatial_bin).with_suffix(".frames.npy")
+    bin_factor = SPATIAL_BIN if spatial_bin is None else int(spatial_bin)
+    return path_for(PathKind.RUN_BEHAVIORAL_BINNED_FRAMES, paths.home_dir, group=group, bin=bin_factor)
 
 
 def anatomy_crop_params_path(paths) -> Path:
-    return paths.sta_dir / ANATOMY_CROP_PARAMS
+    return path_for(PathKind.ANATOMY_CROP_PARAMS, paths.sta_dir.parent)
 
 
 def load_anatomy_radius(paths, target_spatial_bin: int) -> dict:
@@ -253,7 +244,7 @@ def load_anatomy_radius(paths, target_spatial_bin: int) -> dict:
         )
     with np.load(path, allow_pickle=True) as d:
         source_radius = int(np.asarray(d["anatomy_radius_binned"]).item())
-        source_spatial_bin = int(np.asarray(d["spatial_bin"]).item()) if "spatial_bin" in d else SPATIAL_BIN
+        source_spatial_bin = int(np.asarray(d["spatial_bin"]).item())
     fullres_radius = int(source_radius) * max(1, int(source_spatial_bin))
     target_radius = int(np.ceil(fullres_radius / max(1, int(target_spatial_bin))))
     return {
@@ -309,7 +300,7 @@ def ensure_binned_movie(paths, spatial_bin: int | None = None) -> np.memmap:
 
 
 def load_behavioral_frame_groups(paths) -> dict[str, np.ndarray]:
-    path = paths.sta_dir / BEHAVIORAL_SEGMENTS_FILE
+    path = path_for(PathKind.STA_BEHAVIOR_SEGMENTS, paths.sta_dir)
     if not path.exists():
         raise FileNotFoundError(
             f"Missing {path}. Create it from the behavior notebook before running result_type='behavioral'."
@@ -434,16 +425,16 @@ def export_fiji_sta(cell_id: int, group: str, observed_sta: np.ndarray, pre: int
     try:
         source = source_home_dir()
         if _EXPORT_FPS is None:
-            _EXPORT_FPS = float(get_movie_parameters(f"{Path(source).as_posix()}/", is_dir=True)["fps"])
+            _EXPORT_FPS = read_frame_rate(source)
         write_imagej_stack(
-            fiji_cell_dir(source, cell_id) / f"sta_{group}_bin{SPATIAL_BIN}.tif",
+            path_for(PathKind.STA_MOVIE_TIF, source, cell=cell_id, group=group, bin=SPATIAL_BIN),
             observed_sta,
             _EXPORT_FPS,
             pre,
             sta_note(cell_id, n_spikes, f"{group} spikes, spatial bin {SPATIAL_BIN}", run=Path(home_dir()).parent.name),
         )
         return True
-    except Exception as exc:  # noqa: BLE001
+    except OSError as exc:  # the share could not be written: the .npy is kept; a frame rate that cannot be read is not caught
         print(f"WARNING: Fiji tif for cell {cell_id} {group} was not written: {exc}")
         return False
 
@@ -468,10 +459,8 @@ def load_cut_frames(paths, n_frames: int) -> list[int]:
 
     Bad segments are removed outside the app, before motion correction; qc/bad_segments.json ([start, end) frame ranges in the numbering
     before the removal) records where. Position in the cleaned movie = start - frames removed before it - photobleaching `trimmed`."""
-    qc_dir = Path(paths.mc_dir).parent / "qc"
-    from utils.motion_diagnostics import cuts_from_bad_segments
-
-    bad_file, pb_file = qc_dir / "bad_segments.json", qc_dir / "photobleaching_qc_astro.json"
+    experiment_dir = Path(paths.mc_dir).parents[1]  # <experiment>/pipeline_results/motion_corrected
+    bad_file, pb_file = path_for(PathKind.BAD_SEGMENTS, experiment_dir), path_for(PathKind.PB_QC_METRICS, experiment_dir, pb_kind="astro")
     bad = json.loads(bad_file.read_text()) if bad_file.exists() else []
     trimmed = int(json.loads(pb_file.read_text()).get("trimmed", 0)) if pb_file.exists() else 0
     return [c for c in cuts_from_bad_segments(bad, trimmed) if 0 < c < int(n_frames)]
@@ -482,7 +471,7 @@ def run_cut_frames(paths, n_frames: int) -> list[int]:
         return []
     try:
         cuts = load_cut_frames(paths, n_frames)
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, ValueError) as exc:
         raise RuntimeError(f"exclude_spikes_near_cuts is on but the cut positions could not be read: {exc}") from exc
     print(f"Bad-segment splices at analysed frames {cuts or 'none'}: spikes whose window [-pre, +post] contains one are excluded")
     return cuts
@@ -533,15 +522,10 @@ def init_worker(
 
 def list_cells() -> list[int]:
     found = []
-    for path in spike_analysis_dir().glob("cell_*"):
-        if not (path / LABEL_FILE).exists():
-            continue
-        try:
-            found.append(int(path.name.split("_", 1)[1]))
-        except ValueError:
-            pass
-    found = sorted(found)
-    if CELL_IDS == "all":
+    for cell, path in cell_dirs(spike_analysis_dir()).items():
+        if (path / g.SPIKE_LABELS).exists():
+            found.append(cell)
+    if CELL_IDS == g.ALL_GROUP:
         return found
     wanted = {int(x) for x in CELL_IDS}
     return [cell_id for cell_id in found if cell_id in wanted]
@@ -560,14 +544,14 @@ def kept_spike_peaks(d) -> tuple[np.ndarray, np.ndarray]:
 
 def load_spikes(cell_id: int, n_frames: int, pre: int, post: int, centers: np.ndarray | None = None) -> dict[str, np.ndarray]:
     """`centers` (the run's valid centres, splice-free when exclude_spikes_near_cuts is on) also drops spikes near splices."""
-    with np.load(spike_analysis_dir() / f"cell_{cell_id}" / LABEL_FILE, allow_pickle=True) as d:
+    with np.load(path_for(PathKind.SPIKE_CELL_DIR, spike_analysis_dir(), cell=cell_id) / g.SPIKE_LABELS, allow_pickle=True) as d:
         peaks, labels = kept_spike_peaks(d)
 
     def valid(p: np.ndarray) -> np.ndarray:
         p = filter_valid_peaks(p, n_frames, pre, post).astype(np.int32)
         return p[np.isin(p, centers)] if centers is not None else p
 
-    return {"all": valid(peaks), "simple": valid(peaks[labels == "simple"]), "complex": valid(peaks[labels == "complex"])}
+    return {g.ALL_GROUP: valid(peaks), "simple": valid(peaks[labels == "simple"]), "complex": valid(peaks[labels == "complex"])}
 
 
 def load_behavioral_spikes(
@@ -578,7 +562,7 @@ def load_behavioral_spikes(
     post: int,
 ) -> np.ndarray:
     source_frames = np.asarray(source_frames, dtype=np.int32)
-    with np.load(spike_analysis_dir() / f"cell_{cell_id}" / LABEL_FILE, allow_pickle=True) as d:
+    with np.load(path_for(PathKind.SPIKE_CELL_DIR, spike_analysis_dir(), cell=cell_id) / g.SPIKE_LABELS, allow_pickle=True) as d:
         peaks, _ = kept_spike_peaks(d)
 
     frame_pos = np.searchsorted(source_frames, peaks)
@@ -878,15 +862,14 @@ def analyze_group(
     observed_events = event_matrix(peaks, f0_by_pos=f0_by_pos)
     rels = np.arange(-pre, post + 1, dtype=np.int32)
     observed_sta = sta_for_rels(observed_events, rels, crop)[0]
-    sta_name = "astro_sta_movie" if group == "all" else f"astro_sta_movie_{group}"
+    sta_name = g.STA_MOVIE_NPY_PREFIX if group == g.ALL_GROUP else f"{g.STA_MOVIE_NPY_PREFIX}_{group}"
     if SAVE_BINNED_STA_MOVIES:
         # one saved copy: the .tif in the experiment folder; the .npy in the run folder only when the .tif could not be written
         if not (SAVE_FIJI_TIFS and export_fiji_sta(cell_id, group, observed_sta, pre, int(peaks.size))):
-            np.save(out_dir / f"{sta_name}_bin{SPATIAL_BIN}.npy", observed_sta.astype(np.float32))
+            np.save(path_for(PathKind.STA_MOVIE_NPY, out_dir.parent, cell=cell_id, name=sta_name, bin=SPATIAL_BIN), observed_sta.astype(np.float32))
 
     clusters = []
-    npz_name = "astro_sta_cluster_permutation.npz" if group == "all" else f"astro_sta_cluster_permutation_{group}.npz"
-    cluster_path = out_dir / npz_name
+    cluster_path = out_dir / result_file_name(group)
     if peaks.size >= MIN_SPIKES_FOR_CLUSTER:
         observed_effect = compute_effect_movie(observed_sta, pre, post, *windows)
         perm_events = event_matrix(peaks, shifts, f0_by_pos=f0_by_pos)
@@ -1039,7 +1022,7 @@ def sta_run_parameters(
 
 def save_sta_run_parameters(sta_dir: Path, params: dict) -> None:
     sta_dir.mkdir(parents=True, exist_ok=True)
-    json_path = sta_dir / "sta_maps_used_parameters.json"
+    json_path = path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir)
     json_path.write_text(json.dumps(params, indent=2), encoding="utf-8")
     npz_payload = {}
     for key, value in params.items():
@@ -1048,11 +1031,11 @@ def save_sta_run_parameters(sta_dir: Path, params: dict) -> None:
                 npz_payload[f"{key}_{subkey}"] = np.asarray(subvalue)
         else:
             npz_payload[key] = np.asarray(value if value is not None else "")
-    np.savez(sta_dir / "sta_maps_used_parameters.npz", **npz_payload)
+    np.savez(path_for(PathKind.STA_USED_PARAMETERS_NPZ, sta_dir), **npz_payload)
 
 
 def cell_output_dir(sta_dir_s: str, cell_id: int) -> Path:
-    out_dir = Path(sta_dir_s) / f"cell_{cell_id}"
+    out_dir = path_for(PathKind.CELL_DIR, sta_dir_s, cell=cell_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
 
@@ -1072,10 +1055,10 @@ def save_neuron_sta_metadata(out_dir: Path, cell_id: int, pre: int, post: int, b
         "pre_frames": np.asarray(pre, dtype=np.int32),
         "post_frames": np.asarray(post, dtype=np.int32),
         "baseline_frames": np.asarray(baseline, dtype=np.int32),
-        "source_spike_labels": str(spike_analysis_dir() / f"cell_{cell_id}" / LABEL_FILE),
+        "source_spike_labels": str(path_for(PathKind.SPIKE_CELL_DIR, spike_analysis_dir(), cell=cell_id) / g.SPIKE_LABELS),
         **extra,
     }
-    np.savez(out_dir / f"neuron_sta{suffix}.npz", **payload)
+    np.savez(path_for(PathKind.NEURON_STA, out_dir.parent, cell=cell_id, suffix=suffix), **payload)
 
 
 def run_pool(worker_fn, cfg: dict, cells: list[int], sta_dir: Path, init_args: tuple) -> list[dict]:
@@ -1087,10 +1070,12 @@ def run_pool(worker_fn, cfg: dict, cells: list[int], sta_dir: Path, init_args: t
 
 
 def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, shifts: np.ndarray, cfg: dict, out_dir: Path) -> dict:
-    """Spike-triggered motion test for one cell; writes cell_<id>/motion_sta.npz. Never raises (diagnostic only)."""
+    """Spike-triggered motion test for one cell; writes cell_<id>/motion_sta.npz. Returns the cell's motion status for the summary csv
+    (the one place that decides it). Never raises (diagnostic only)."""
     series = cfg.get("motion_series")
+    not_tested = {g.MOTION_STATUS_COLUMN: g.MOTION_NOT_TESTED}
     if series is None or not MOTION_DIAGNOSTICS:
-        return {}
+        return not_tested
     try:
         windows = cfg["windows"]
         stats = motion_sta_stats(
@@ -1099,11 +1084,11 @@ def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, shifts: np.ndarray, 
             analysis_window=tuple(int(v) for v in windows[2]),
             flag_alpha=MOTION_FLAG_ALPHA,
         )
-        np.savez(out_dir / "motion_sta.npz", cell_id=np.asarray(cell_id, dtype=np.int32), **stats)
-        return {"motion_flag": bool(stats["flag"]), "motion_min_p": float(stats["min_p"])}
-    except Exception as exc:  # noqa: BLE001
+        np.savez(path_for(PathKind.MOTION_STA, out_dir.parent, cell=cell_id), cell_id=np.asarray(cell_id, dtype=np.int32), **stats)
+        return {g.MOTION_STATUS_COLUMN: g.MOTION_SUSPECTED if bool(stats["flag"]) else g.MOTION_OK, "motion_min_p": float(stats["min_p"])}
+    except (OSError, ValueError, KeyError, IndexError) as exc:
         print(f"WARNING: motion diagnostics failed for cell {cell_id}: {exc}")
-        return {}
+        return not_tested
 
 
 def effective_motion_reg_bin() -> int:
@@ -1118,17 +1103,17 @@ def build_run_motion_series(paths, n_frames: int) -> dict | None:
     """Shifts (+ registration quality from the bin-8 astro movie) aligned to the analysed (kept) frames."""
     if not MOTION_DIAGNOSTICS:
         return None
-    shifts = load_shifts(paths.mc_dir)
+    shifts = load_shifts(path_for(PathKind.MC_SHIFTS, Path(paths.mc_dir).parents[1]))
     if shifts is None:
         print(f"WARNING: motion diagnostics skipped: no shifts file under {paths.mc_dir}")
         return None
     n_rows = len(shifts)
-    pb = Path(paths.mc_dir).parent / "qc" / "photobleaching_qc_astro.json"
+    pb = path_for(PathKind.PB_QC_METRICS, Path(paths.mc_dir).parents[1], pb_kind="astro")
     try:
         trimmed = int(json.loads(pb.read_text()).get("trimmed", 0)) if pb.exists() else 0
-    except Exception as exc:  # noqa: BLE001
-        print(f"WARNING: could not read the trimmed-frame count from {pb}: {exc}")
-        trimmed = 0
+    except (OSError, ValueError) as exc:
+        print(f"WARNING: motion diagnostics skipped: could not read the trimmed-frame count from {pb}: {exc}")
+        return None
     shifts = align_shifts_to_analysed_frames(shifts, int(n_frames), trimmed)
     if shifts is None:
         print(f"WARNING: motion diagnostics skipped: {n_rows} shift rows vs {n_frames} analysed frames (photobleaching trimmed {trimmed})")
@@ -1143,11 +1128,11 @@ def build_run_motion_series(paths, n_frames: int) -> dict | None:
         if len(reg) != int(n_frames):
             print(f"WARNING: registration-quality series has {len(reg)} frames vs {n_frames}; dropping it")
             reg = None
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, ValueError) as exc:
         print(f"WARNING: registration-quality series unavailable: {exc}")
     series = build_motion_series(shifts, reg)
     paths.sta_dir.mkdir(parents=True, exist_ok=True)
-    np.savez(paths.sta_dir / "motion_series.npz", reg_quality_bin=np.asarray(reg_bin if reg is not None else 0), **series)
+    np.savez(path_for(PathKind.MOTION_SERIES, paths.sta_dir), reg_quality_bin=np.asarray(reg_bin if reg is not None else 0), **series)
     return series
 
 
@@ -1160,12 +1145,12 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     spike_groups = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None)
     shifts = cell_shifts(cell_id, cfg["n_valid_centers"])
     save_neuron_sta_metadata(out_dir, cell_id, pre, post, baseline)
-    motion_row = run_motion_diagnostics(cell_id, spike_groups["all"], shifts, cfg, out_dir)
+    motion_row = run_motion_diagnostics(cell_id, spike_groups[g.ALL_GROUP], shifts, cfg, out_dir)
 
     rows = []
     for result_type in cfg.get("result_types", RESULT_TYPES):
-        peaks = spike_groups["all"] if result_type == "anatomy" else spike_groups[result_type]
-        kwargs = anatomy_analysis_kwargs(cell_id, pre, baseline, cfg.get("anatomy_settings")) if result_type == "anatomy" else {}
+        peaks = spike_groups[g.ALL_GROUP] if result_type == g.ANATOMY_GROUP else spike_groups[result_type]
+        kwargs = anatomy_analysis_kwargs(cell_id, pre, baseline, cfg.get("anatomy_settings")) if result_type == g.ANATOMY_GROUP else {}
         rows.append(
             analyze_group(
                 cell_id,
@@ -1276,10 +1261,10 @@ def main() -> None:
     resolved_home = home_dir()
     resolved_source_home = source_home_dir()
     paths = resolve_sta_paths(resolved_source_home, resolved_home)
-    fps = int(get_movie_parameters(f"{resolved_source_home.as_posix()}/", is_dir=True)["fps"])
+    fps = int(read_frame_rate(resolved_source_home))
     pre, post, baseline, *windows = frame_settings(fps)
-    standard_result_types = tuple(result_type for result_type in RESULT_TYPES if result_type not in {"behavioral", "anatomy"})
-    anatomy_settings = load_anatomy_radius(paths, ANATOMY_SPATIAL_BIN) if "anatomy" in RESULT_TYPES else None
+    standard_result_types = tuple(result_type for result_type in RESULT_TYPES if result_type not in {"behavioral", g.ANATOMY_GROUP})
+    anatomy_settings = load_anatomy_radius(paths, ANATOMY_SPATIAL_BIN) if g.ANATOMY_GROUP in RESULT_TYPES else None
     used_params = sta_run_parameters(fps, pre, post, baseline, windows, standard_result_types, anatomy_settings)
     save_sta_run_parameters(paths.sta_dir, used_params)
     cells = list_cells()
@@ -1323,7 +1308,7 @@ def main() -> None:
         init_args = (str(movie_input_path(paths, SPATIAL_BIN)), centers, f0_by_pos, str(paths.suite2p_path), None, SPATIAL_BIN, RUN_CONFIG)
         rows.extend(run_pool(process_cell, cfg, cells, paths.sta_dir, init_args))
 
-    if "anatomy" in RESULT_TYPES:
+    if g.ANATOMY_GROUP in RESULT_TYPES:
         anatomy_movie = ensure_binned_movie(paths, ANATOMY_SPATIAL_BIN)
         anatomy_centers = valid_centers(int(anatomy_movie.shape[0]), pre, post, run_cut_frames(paths, int(anatomy_movie.shape[0])))
         anatomy_f0 = f0_for_valid_centers(anatomy_movie, anatomy_centers, pre, baseline)
@@ -1334,7 +1319,7 @@ def main() -> None:
             windows,
             anatomy_movie.shape[0],
             anatomy_centers,
-            result_types=("anatomy",),
+            result_types=(g.ANATOMY_GROUP,),
             anatomy_settings=anatomy_settings,
         )
         if not standard_result_types:  # motion diagnostics are per cell, so run them once (with the first pool)
@@ -1352,7 +1337,7 @@ def main() -> None:
 
     if "behavioral" in RESULT_TYPES:
         frame_groups = load_behavioral_frame_groups(paths)
-        source_behavioral_segments = paths.sta_dir / BEHAVIORAL_SEGMENTS_FILE
+        source_behavioral_segments = path_for(PathKind.STA_BEHAVIOR_SEGMENTS, paths.sta_dir)
         skipped_groups = []
         for behavioral_group in BEHAVIORAL_GROUPS:
             source_frames = frame_groups[behavioral_group]
@@ -1408,15 +1393,23 @@ def main() -> None:
             )
             rows.extend(run_pool(process_cell_behavioral, behavioral_cfg, cells, paths.sta_dir, init_args))
         if skipped_groups:
-            skipped_path = paths.sta_dir / "sta_maps_skipped_behavioral_groups.json"
+            skipped_path = path_for(PathKind.STA_SKIPPED_BEHAVIORAL_GROUPS, paths.sta_dir)
             skipped_path.write_text(json.dumps(skipped_groups, indent=2), encoding="utf-8")
             print(f"Behavioral subgroup skip report saved to {skipped_path}")
 
-    summary_path = Path(SUMMARY_CSV) if SUMMARY_CSV else paths.sta_dir / "sta_maps_from_automated_spikes_sparse_summary.csv"
+    summary_path = Path(SUMMARY_CSV) if SUMMARY_CSV else path_for(PathKind.STA_SUMMARY_CSV, paths.sta_dir)
     if not summary_path.is_absolute():
         summary_path = resolved_home / summary_path
     write_summary(rows, summary_path)
     print(f"Done. Summary saved to {summary_path}")
+
+    if g.ANATOMY_GROUP in RESULT_TYPES:  # the experiment page's "Anatomy Clusters" card reads this file
+        print("Saving the anatomy clusters summary for the experiment page ...", flush=True)
+        try:
+            out = save_anatomy_summary(paths.sta_dir, resolved_source_home, summary_csv=summary_path, log=lambda m: print(m, flush=True))
+            print(f"Anatomy clusters summary saved to {out}")
+        except (OSError, ValueError, KeyError) as exc:  # all STA results are already saved: a problem here must not fail the run
+            print(f"WARNING: the anatomy clusters summary was not written ({exc}). The experiment page needs it: rerun STA Maps.", flush=True)
 
 
 if __name__ == "__main__":

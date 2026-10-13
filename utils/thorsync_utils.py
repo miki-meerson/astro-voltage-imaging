@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import h5py
 import numpy as np
+
+from utils import globals_utils as g
 
 TS_SAMPLING_RATE_HZ = 30000.0
 ENCODER_PULSES_PER_REVOLUTION = 200.0
@@ -35,7 +38,7 @@ class TSBehavior:
 
 def find_ts_h5_files(experiment_dir: str | Path) -> list[Path]:
     home = Path(experiment_dir)
-    ts_dirs = sorted([p for p in home.iterdir() if p.is_dir() and p.name.lower().startswith("ts")])
+    ts_dirs = sorted([p for p in home.iterdir() if p.is_dir() and p.name.lower().startswith(g.TS_DIR_PREFIX)])
     files: list[Path] = []
     for ts_dir in ts_dirs:
         files.extend(sorted(ts_dir.rglob("*.h5")))
@@ -44,8 +47,6 @@ def find_ts_h5_files(experiment_dir: str | Path) -> list[Path]:
 
 
 def list_h5_datasets(h5_path: str | Path) -> list[dict]:
-    import h5py
-
     result: list[dict] = []
     with h5py.File(h5_path, "r") as f:
         def visit(name, obj):
@@ -57,8 +58,6 @@ def list_h5_datasets(h5_path: str | Path) -> list[dict]:
 
 
 def _find_dataset(f, requested: str | None):
-    import h5py
-
     datasets = {}
 
     def visit(name, obj):
@@ -79,8 +78,6 @@ def _find_dataset(f, requested: str | None):
 
 
 def _dataset_by_leaf(f, leaf: str):
-    import h5py
-
     found = None
 
     def visit(name, obj):
@@ -116,8 +113,6 @@ def load_ts_behavior(
     velocity_key: str | None = None,
     sample_rate_hz: float = TS_SAMPLING_RATE_HZ,
 ) -> TSBehavior:
-    import h5py
-
     h5_files = find_ts_h5_files(experiment_dir)
     if not h5_files:
         raise FileNotFoundError(f"No TS Episode .h5 file found in {experiment_dir}")
@@ -160,8 +155,6 @@ def load_ts_encoder_velocity_at_times(
     invert_direction: bool = True,
     absolute: bool = False,
 ) -> tuple[np.ndarray, dict]:
-    import h5py
-
     h5_files = find_ts_h5_files(experiment_dir)
     if not h5_files:
         raise FileNotFoundError(f"No TS Episode .h5 file found in {experiment_dir}")

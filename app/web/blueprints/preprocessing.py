@@ -5,20 +5,20 @@ from pathlib import Path
 
 from flask import jsonify, redirect, render_template, request, send_file, url_for
 
-from app.db.core import connect, rows
+from app.db import preprocessing_repository as repo
 from app.services import caches
 from app.services.experiments import confirm_preprocessing, confirm_suite2p, launch_analysis_defaults
 from app.services.movies import (
-    latest_preprocessing_params,
     mean_intensity_payload,
     experiment_fps,
+    PB_KINDS,
     pb_movie_path,
-    pb_qc_plot_path,
 )
-from app.services.preprocessing import PREPROCESSING_STEPS, rerun_preprocessing_step
-from app.services.run_views import STEP_LABELS, experiment_notes, run_view
+from app.services.preprocessing import PREPROCESSING_STEPS, latest_preprocessing_params, rerun_preprocessing_step
+from app.services.run_views import STEP_LABELS, run_view
 from app.services.runs import create_run, launch_run
 from app.web.common import FlatBlueprint, get_settings
+from utils.paths_utils import PathKind, path_for
 
 bp = FlatBlueprint("preprocessing", __name__)
 
@@ -26,37 +26,27 @@ bp = FlatBlueprint("preprocessing", __name__)
 @bp.get("/experiments/<int:experiment_id>/preprocessing")
 def experiment_preprocessing(experiment_id):
     settings = get_settings()
-    with connect(settings) as conn:
-        exp = conn.execute("SELECT * FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-        if exp is None:
-            return render_template("error.html", title="Missing Experiment", message="Experiment not found"), 404
-        runs = [run_view(r, settings) for r in conn.execute("SELECT * FROM analysis_runs WHERE experiment_id=? ORDER BY created_at DESC, id ASC", (experiment_id,))]
-        pre_steps = rows(
-            conn,
-            """
-            SELECT ps.*
-            FROM preprocessing_steps ps
-            JOIN analysis_runs r ON r.id=ps.run_id
-            WHERE r.experiment_id=?
-            ORDER BY ps.run_id DESC, ps.step_order ASC
-            """,
-            (experiment_id,),
-        )
-        preprocessing_params = latest_preprocessing_params(conn, experiment_id)
-        notes = experiment_notes(conn, experiment_id)
+    data = repo.preprocessing_page_data(settings, experiment_id)
+    if data is None:
+        return render_template("error.html", title="Missing Experiment", message="Experiment not found"), 404
+    exp = data["experiment"]
+    runs = [run_view(r, settings) for r in data["runs"]]
+    pre_steps = data["steps"]
+    preprocessing_params = latest_preprocessing_params(settings, experiment_id)
+    notes = data["notes"]
     active = any(r["status"] in {"pending", "queued", "running"} for r in runs)
     pb_available = any(
         path is not None and path.exists()
         for path in (pb_movie_path(exp["source_path"], "astro"), pb_movie_path(exp["source_path"], "neuron"))
     )
     pb_qc_plots = [
-        {"kind": kind, "label": kind.title(), "available": bool((path := pb_qc_plot_path(exp["source_path"], kind)) and path.exists())}
-        for kind in ("astro", "neuron")
+        {"kind": kind, "label": kind.title(), "available": path_for(PathKind.PB_QC_PLOT, exp["source_path"], pb_kind=kind).exists()}
+        for kind in PB_KINDS
     ]
     pb_review_available = pb_available or any(plot["available"] for plot in pb_qc_plots)
     return render_template(
         "preprocessing.html",
-        exp=dict(exp),
+        exp=exp,
         runs=runs,
         pre_steps=pre_steps,
         active=active,
@@ -120,13 +110,12 @@ def confirm_suite2p_route(experiment_id):
 @bp.get("/experiments/<int:experiment_id>/preprocessing/mean-intensity/data")
 def preprocessing_mean_intensity_data(experiment_id):
     settings = get_settings()
-    with connect(settings) as conn:
-        exp = conn.execute("SELECT source_path FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-    if exp is None:
+    source_path = repo.experiment_source_path(settings, experiment_id)
+    if source_path is None:
         return jsonify({"available": False, "message": "Experiment not found."}), 404
     try:
         max_points = min(1600, max(200, int(request.args.get("max_points", "350"))))
-        return jsonify(mean_intensity_payload(exp["source_path"], experiment_fps(exp["source_path"]), max_points=max_points))
+        return jsonify(mean_intensity_payload(source_path, experiment_fps(source_path), max_points=max_points))
     except Exception as exc:
         return jsonify({"available": False, "message": str(exc)}), 500
 
@@ -134,15 +123,11 @@ def preprocessing_mean_intensity_data(experiment_id):
 @bp.get("/experiments/<int:experiment_id>/preprocessing/photobleaching-qc/<kind>.png")
 def preprocessing_photobleaching_qc_plot(experiment_id, kind):
     settings = get_settings()
-    path = None
-    with connect(settings) as conn:
-        exp = conn.execute("SELECT source_path FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-    if exp is not None:
-        path = pb_qc_plot_path(exp["source_path"], kind)
-    if exp is None or path is None:
+    source_path = repo.experiment_source_path(settings, experiment_id)
+    if source_path is None or kind not in PB_KINDS:
         return render_template("error.html", title="Missing Experiment", message="Experiment not found."), 404
-    source_root = Path(exp["source_path"]).resolve()
-    target = path.resolve()
+    source_root = Path(source_path).resolve()
+    target = path_for(PathKind.PB_QC_PLOT, source_path, pb_kind=kind).resolve()
     if source_root not in target.parents and target != source_root:
         return render_template("error.html", title="Unsafe Path", message="QC plot path is outside the experiment folder."), 400
     if not target.exists() or not target.is_file():

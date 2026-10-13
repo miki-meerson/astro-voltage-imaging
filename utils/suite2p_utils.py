@@ -1,13 +1,16 @@
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+
+from utils.paths_utils import PathKind, path_for
 
 
 def read_suite2p_traces(suite2p_path, cell_mask, neuropil_correction=False):
-    F = np.load(suite2p_path + 'F.npy', allow_pickle=True)
+    F = np.load(path_for(PathKind.SUITE2P_F, suite2p_path), allow_pickle=True)
     F_cells = F[cell_mask, :]
 
     if neuropil_correction:
-        Fneu = np.load(suite2p_path + 'Fneu.npy', allow_pickle=True)
+        Fneu = np.load(path_for(PathKind.SUITE2P_FNEU, suite2p_path), allow_pickle=True)
         Fneu_cells = Fneu[cell_mask, :]
 
         neuropil_coeff = 0.7
@@ -21,11 +24,11 @@ def read_suite2p_traces(suite2p_path, cell_mask, neuropil_correction=False):
 
 def load_suite2p_context(suite2p_path: str | Path) -> dict:
     suite2p_path = Path(suite2p_path)
-    iscell = np.load(suite2p_path / "iscell.npy", allow_pickle=True)
+    iscell = np.load(path_for(PathKind.SUITE2P_ISCELL, suite2p_path), allow_pickle=True)
     cell_mask = iscell[:, 0].astype(bool)
-    stat = np.load(suite2p_path / "stat.npy", allow_pickle=True)
+    stat = np.load(path_for(PathKind.SUITE2P_STAT, suite2p_path), allow_pickle=True)
     stat_cells = stat[cell_mask]
-    f_raw, f_norm = read_suite2p_traces(f"{suite2p_path.as_posix()}/", cell_mask)
+    f_raw, f_norm = read_suite2p_traces(suite2p_path, cell_mask)
     return {
         "cell_mask": cell_mask,
         "stat_cells": stat_cells,
@@ -33,6 +36,18 @@ def load_suite2p_context(suite2p_path: str | Path) -> dict:
         "F_norm": f_norm,
         "n_cells": int(cell_mask.sum()),
     }
+
+
+def suite2p_stat_cells(source_dir: str | Path) -> np.ndarray:
+    """Suite2p ROI stats of the accepted cells only (cell ids are indices into this array); source_dir is the experiment folder."""
+    plane0 = path_for(PathKind.SUITE2P_PLANE0, source_dir)
+    iscell = np.load(path_for(PathKind.SUITE2P_ISCELL, plane0), allow_pickle=True)[:, 0].astype(bool)
+    return np.load(path_for(PathKind.SUITE2P_STAT, plane0), allow_pickle=True)[iscell]
+
+
+def roi_center(stat_cell) -> tuple[float, float]:
+    """Centre (y, x) of one ROI as the mean of its pixels, in full-resolution pixels."""
+    return float(np.mean(stat_cell["ypix"])), float(np.mean(stat_cell["xpix"]))
 
 
 def neuron_centroid_binned(cell_id, spatial_bin, map_shape, suite2p_ctx):

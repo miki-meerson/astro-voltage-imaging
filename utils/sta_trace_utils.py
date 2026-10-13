@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from scipy.signal import butter, sosfiltfilt
 
 
 def significant_cluster_specs_from_npz(npz_path: str | Path, cluster_colors: dict | None = None) -> list[dict]:
@@ -17,7 +18,7 @@ def significant_cluster_specs_from_npz(npz_path: str | Path, cluster_colors: dic
         spatial_bin = int(np.asarray(d["spatial_bin"]))
         peaks = np.asarray(d["peaks"], dtype=int)
         summary = np.asarray(d["cluster_summary"], dtype=object)
-        analysis_window = tuple(np.asarray(d["analysis_window"], dtype=int)) if "analysis_window" in d else None
+        analysis_window = tuple(np.asarray(d["analysis_window"], dtype=int))
     if not sig.any() or summary.size == 0:
         return []
     sig_rows = summary[np.asarray(summary[:, 6], dtype=bool)]
@@ -27,11 +28,7 @@ def significant_cluster_specs_from_npz(npz_path: str | Path, cluster_colors: dic
     allowed_signs = set(cluster_colors or {"positive": None, "negative": None})
     mask_crop = sig.any(axis=0)
     effect_trace = np.asarray(trace_effect[:, mask_crop].mean(axis=1), dtype=np.float32)
-    if analysis_window is None:
-        effect_t_rel = np.arange(effect_trace.size, dtype=int)
-    else:
-        effect_t_rel = np.arange(int(analysis_window[0]), int(analysis_window[1]) + 1, dtype=int)
-        effect_t_rel = effect_t_rel[: effect_trace.size]
+    effect_t_rel = np.arange(int(analysis_window[0]), int(analysis_window[1]) + 1, dtype=int)[: effect_trace.size]
     specs = []
     for row in sig_rows:
         sign = str(row[1]).lower()
@@ -159,7 +156,6 @@ def lowpass_centered(trace: np.ndarray, sample_rate_hz: float, cutoff_hz: float 
     if nyquist <= 0 or float(cutoff_hz) >= nyquist:
         centered = y - np.nanmean(y)
         return centered.astype(np.float32)
-    from scipy.signal import butter, sosfiltfilt
 
     filled = y.copy()
     filled[~finite] = np.interp(np.flatnonzero(~finite), np.flatnonzero(finite), y[finite])

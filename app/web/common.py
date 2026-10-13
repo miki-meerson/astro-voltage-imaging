@@ -6,7 +6,7 @@ from io import BytesIO
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask.blueprints import BlueprintSetupState
 
-from app.db.core import connect
+from app.db.experiment_repository import experiment_source_path
 from app.services import polarity
 from app.services.movies import experiment_fps, movie_frame_jpeg, movie_metadata
 
@@ -40,24 +40,15 @@ def get_settings():
     return current_app.config["SETTINGS"]
 
 
-def get_neuron(conn, neuron_id: int):
-    """The neuron row joined with its experiment (canonical_id, source_path, experiment_id), or None."""
-    return conn.execute(
-        "SELECT n.*,e.canonical_id,e.source_path,e.id AS experiment_id FROM neurons n JOIN experiments e ON e.id=n.experiment_id WHERE n.id=?",
-        (neuron_id,),
-    ).fetchone()
-
-
 def _movie_path_for(experiment_id: int, kind: str, path_of):
     """(source_path, movie path, error response). path_of(source_path, kind) gives the movie file, or None for an unknown kind."""
-    with connect(get_settings()) as conn:
-        exp = conn.execute("SELECT source_path FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-    if exp is None:
+    source_path = experiment_source_path(get_settings(), experiment_id)
+    if source_path is None:
         return None, None, "Experiment not found.", 404
-    path = path_of(exp["source_path"], kind)
+    path = path_of(source_path, kind)
     if path is None:
         return None, None, "Unknown movie type.", 400
-    return exp["source_path"], path, None, 200
+    return source_path, path, None, 200
 
 
 def movie_meta_response(experiment_id: int, path_of):
@@ -73,7 +64,7 @@ def movie_meta_response(experiment_id: int, path_of):
         payload["kind"] = kind
         payload["gevi_flipped"] = polarity.flip_for_kind(kind)
         return jsonify(payload)
-    except Exception as exc:
+    except (ValueError, OSError) as exc:
         return jsonify({"available": False, "message": str(exc)}), 500
 
 
@@ -93,5 +84,5 @@ def movie_frame_response(experiment_id: int, path_of):
     try:
         jpeg = movie_frame_jpeg(path, frame_index, max_size, request.args.get("contrast", "auto"), invert_sign=polarity.flip_for_kind(kind))
         return send_file(BytesIO(jpeg), mimetype="image/jpeg", max_age=600)
-    except Exception as exc:
+    except (ValueError, OSError) as exc:
         return jsonify({"error": str(exc)}), 500

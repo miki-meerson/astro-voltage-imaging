@@ -5,12 +5,17 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from scipy.ndimage import binary_erosion
 
+from app.db import neuron_repository
 from app.services import caches, polarity
-from app.services.run_views import latest_completed_run
 from app.services.runs import run_dir
-from app.services.spikes import suite2p_plane0, suite2p_stat_cells
+from utils.suite2p_utils import suite2p_stat_cells
 from app.settings import Settings
+from utils.cluster_result import load_cluster_result
+from utils.db_utils import collect_cluster_result_metadata
+from utils.movie_utils import get_mean_images
+from utils.paths_utils import PathKind, path_for, resolve_sta_paths, sta_dir_of_run
 
 RESULT_ORDER = {
     "all": 0,
@@ -28,9 +33,6 @@ PANEL = "#0b0f14"
 TEXT = "#edf3fa"
 MUTED = "#9aa8b7"
 TRACE_TEXT = "#d7e1ec"
-# Cluster traces on the Cell Detail summary are DISPLAYED over -N..+N frames around the spike (clipped to the saved STA
-# window). Only the analysis window (default -10..+10) is tested; the rest is descriptive and shaded differently.
-TRACE_HALF_WINDOW_FRAMES = 50
 
 
 def _font(size: int):
@@ -69,13 +71,8 @@ def _mask_outline(mask: np.ndarray) -> np.ndarray:
     mask = np.asarray(mask, dtype=bool)
     if not mask.any():
         return mask
-    try:
-        from scipy.ndimage import binary_erosion
-
-        outline = mask & ~binary_erosion(mask)
-        return outline if outline.any() else mask
-    except Exception:
-        return mask
+    outline = mask & ~binary_erosion(mask)
+    return outline if outline.any() else mask
 
 
 def _hex_rgb(color: str) -> tuple[int, int, int]:
@@ -206,62 +203,17 @@ def _message(title: str, message: str) -> BytesIO:
     return _image_response(img)
 
 
-def _sta_dir(settings: Settings, run_row) -> Path:
-    return run_dir(settings, int(run_row["id"]), bool(run_row["is_test"])) / "sta_algorithm_home" / "sta-analysis"
-
-
-def _mirror_home(settings: Settings, run_row) -> Path:
-    return run_dir(settings, int(run_row["id"]), bool(run_row["is_test"])) / "sta_algorithm_home"
-
-
 def _cluster_color(cluster: dict) -> str:
     return polarity.polarity_color(polarity.polarity_from_sign(str(cluster.get("sign", ""))))
 
 
 def _load_cluster_result(path: Path):
-    from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
-    from utils.sta_stats_utils import cluster_trace_wide
-
+    """Cached (in memory, by file and mtime) read of a saved cluster result; the reading itself is utils.cluster_result.load_cluster_result."""
     cache_key = (str(path), int(path.stat().st_mtime_ns))
     cached = caches.CLUSTER_RESULT.get(cache_key)
     if cached is not None:
         return cached
-
-    with np.load(path, allow_pickle=True) as d:
-        effect = np.asarray(d["observed_effect_movie"], dtype=np.float32)
-        # traces are drawn on a dF/F axis: use the raw effect, not the z-statistic that was tested
-        trace_effect = np.asarray(d["observed_effect_raw_movie"], dtype=np.float32) if "observed_effect_raw_movie" in d else effect
-        aw = np.asarray(d["analysis_window"], dtype=int)
-        wide = None
-        if "observed_sta_movie" in d.files:  # kept only for this call, never cached (can be large at bin 1)
-            wide = dict(
-                sta=np.asarray(d["observed_sta_movie"], dtype=np.float32),
-                pre=int(np.asarray(d["pre_frames"]).item()),
-                post=int(np.asarray(d["post_frames"]).item()),
-                baseline_window=tuple(int(v) for v in np.asarray(d["baseline_window"]).ravel()),
-            )
-        clusters = extract_clusters(effect_movie=effect, **saved_cluster_args(d))  # honours per_sign_null when the file says so
-        metadata = {
-            "spatial_bin": int(np.asarray(d["spatial_bin"]).item()) if "spatial_bin" in d else 1,
-            "behavioral_group": str(np.asarray(d["behavioral_group"]).item()) if "behavioral_group" in d else None,
-            "anatomy_crop_bounds": tuple(np.asarray(d["anatomy_crop_bounds"], dtype=int).tolist()) if "anatomy_crop_bounds" in d else None,
-            "trace_effect": trace_effect,
-            "tested_window": (int(aw[0]), int(aw[1])),
-        }
-    t_rel = np.arange(int(aw[0]), int(aw[1]) + 1)
-    sig = []
-    for cluster in clusters:
-        if not cluster.get("is_significant", False):
-            continue
-        mask = cluster_mask2d_from_cluster(cluster)
-        if mask is not None and mask.any():
-            if wide is not None and mask.shape == wide["sta"].shape[1:]:
-                cluster["wide_trace"] = cluster_trace_wide(
-                    wide["sta"], wide["pre"], wide["post"], wide["baseline_window"], mask, TRACE_HALF_WINDOW_FRAMES
-                )
-            sig.append((cluster, mask))
-    del wide
-    result = (effect, t_rel, sig, metadata)
+    result = load_cluster_result(path)
     caches.CLUSTER_RESULT.put(cache_key, result)
     return result
 
@@ -298,9 +250,9 @@ def _mean_binned_image(paths, spatial_bin: int, cache: dict, behavioral_group: s
     if key in cache:
         return cache[key]
     path = (
-        paths.home_dir / "sta-analysis" / f"astro_photobleaching_corrected_gevi_flipped_behavioral_{behavioral_group}_bin{spatial_bin}.npy"
+        path_for(PathKind.RUN_BEHAVIORAL_BINNED_MOVIE, paths.home_dir, group=behavioral_group, bin=int(spatial_bin))
         if behavioral_group
-        else paths.pb_dir / f"astro_photobleaching_corrected_gevi_flipped_bin{spatial_bin}.npy"
+        else path_for(PathKind.BINNED_ASTRO_MOVIE, paths.home_dir, bin=int(spatial_bin))
     )
     if path.exists():
         movie = np.load(path, mmap_mode="r")
@@ -315,24 +267,20 @@ def _astro_mean_image(paths, spatial_bin: int, cache: dict) -> np.ndarray | None
     if key in cache:
         return cache[key]
     try:
-        from utils.movie_utils import get_mean_images
-
-        astro_mean, _ = get_mean_images(paths.mc_dir, spatial_bin=int(spatial_bin))
+        astro_mean, _ = get_mean_images(paths.home_dir, spatial_bin=int(spatial_bin))
         # astro_mean_image.npy is raw; the binned caches above are already flipped, so flip this one to match
         cache[key] = polarity.to_biological(astro_mean)
         return cache[key]
-    except Exception:
+    except (OSError, ValueError):  # the motion-corrected mean image is not saved: the tile says so
         return None
 
 
-def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
-    from utils.db_utils import collect_cluster_result_metadata
-    from utils.paths_utils import resolve_sta_paths
-
-    sta_run = latest_completed_run(conn, int(neuron_row["experiment_id"]), "sta")
+def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
+    sta_run = neuron_repository.latest_completed_run(settings, int(neuron_row["experiment_id"]), "sta")
     if sta_run is None:
         return _message("STA Maps", "No completed STA maps run is available for this experiment.")
-    sta_dir = _sta_dir(settings, sta_run)
+    sta_run_dir = run_dir(settings, int(sta_run["id"]), bool(sta_run["is_test"]))
+    sta_dir = sta_dir_of_run(sta_run_dir)
     if not sta_dir.exists():
         return _message("STA Maps", f"STA output folder was not found: {sta_dir}")
 
@@ -344,9 +292,8 @@ def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
     rows = rows.assign(_order=rows["result_type"].map(lambda x: RESULT_ORDER.get(str(x), 100))).sort_values(["_order", "result_type"])
     result_paths = [Path(row.path) for row in rows.itertuples()]
     source_path = neuron_row["source_path"]
-    suite2p_path = suite2p_plane0(source_path)
     source_mtimes = []
-    for path in result_paths + [suite2p_path / "iscell.npy", suite2p_path / "stat.npy"]:
+    for path in result_paths + [path_for(PathKind.SUITE2P_ISCELL, source_path), path_for(PathKind.SUITE2P_STAT, source_path)]:
         source_mtimes.append((str(path), int(path.stat().st_mtime_ns) if path.exists() else 0))
     cache_key = (
         int(sta_run["id"]),
@@ -360,10 +307,10 @@ def render_sta_cell_summary(settings: Settings, conn, neuron_row) -> BytesIO:
     if cached is not None:
         return _bytes_response(cached)
 
-    paths = resolve_sta_paths(source_path, _mirror_home(settings, sta_run))
+    paths = resolve_sta_paths(source_path, path_for(PathKind.STA_ALGORITHM_HOME, sta_run_dir))
     try:
         stat_cells = suite2p_stat_cells(source_path)
-    except Exception as exc:
+    except (OSError, ValueError, IndexError, KeyError) as exc:
         return _message("STA Maps", f"Could not read Suite2p outlines: {exc}")
 
     n = max(1, len(rows))
@@ -513,13 +460,13 @@ def _draw_motion_tile(rels, observed, null_mean, null_sd, title: str, p: float, 
     return tile
 
 
-def render_motion_sta(settings: Settings, conn, neuron_row) -> BytesIO:
+def render_motion_sta(settings: Settings, neuron_row) -> BytesIO:
     """Cell Detail: is this cell's spiking time-locked to motion / registration quality? (diagnostic only)"""
-    sta_run = latest_completed_run(conn, int(neuron_row["experiment_id"]), "sta")
+    sta_run = neuron_repository.latest_completed_run(settings, int(neuron_row["experiment_id"]), "sta")
     if sta_run is None:
         return _message("Motion diagnostics", "No completed STA maps run is available for this experiment.")
     cell_id = int(neuron_row["pipeline_neuron_id"])
-    path = _sta_dir(settings, sta_run) / f"cell_{cell_id}" / "motion_sta.npz"
+    path = path_for(PathKind.MOTION_STA, sta_dir_of_run(run_dir(settings, int(sta_run["id"]), bool(sta_run["is_test"]))), cell=cell_id)
     if not path.exists():
         return _message("Motion diagnostics", "Not computed for this cell. Re-run STA Maps (motion diagnostics need shifts that match the analysed frames).")
     with np.load(path, allow_pickle=True) as d:
@@ -528,7 +475,7 @@ def render_motion_sta(settings: Settings, conn, neuron_row) -> BytesIO:
         observed, null_mean, null_sd = d["observed"], d["null_mean"], d["null_sd"]
         p, z = np.asarray(d["p"], dtype=float), np.asarray(d["z"], dtype=float)
         flag, min_p, alpha = bool(d["flag"]), float(d["min_p"]), float(d["flag_alpha"])
-        p_floor = float(d["p_floor"]) if "p_floor" in d.files else 0.0
+        p_floor = float(d["p_floor"])
         n_peaks = int(d["n_peaks_used"])
     tile_w, tile_h, gap, margin, head = 430, 210, 18, 22, 84
     cols, nrows = 3, int(np.ceil(len(names) / 3))

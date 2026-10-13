@@ -258,12 +258,8 @@ def saved_cluster_args(d) -> dict:
     """Keyword arguments for `extract_clusters` (all but effect_movie) from an opened STA result npz.
 
     Applies the same rule the result was produced with: when the file says `per_sign_null`, the per-sign thresholds
-    and the two per-sign nulls are passed; otherwise the legacy single threshold / pooled null (also for old files
-    without the flag). Callers that need a different null (leave-one-out) override the null_max* entries.
+    and the two per-sign nulls are passed; otherwise the single symmetric threshold / pooled null. Callers that need a different null (leave-one-out) override the null_max* entries.
     """
-    def scalar(key, cast, default):
-        return cast(np.asarray(d[key]).item()) if key in d else default
-
     args = dict(
         threshold=float(np.asarray(d["cluster_threshold"]).item()),
         connectivity=int(np.asarray(d["cluster_connectivity"]).item()),
@@ -274,10 +270,10 @@ def saved_cluster_args(d) -> dict:
         merge_min_trace_corr=float(np.asarray(d["merge_min_trace_corr"]).item()),
         null_max=np.asarray(d["null_max_cluster_mass"], dtype=np.float32),
         cluster_alpha=float(np.asarray(d["cluster_alpha"]).item()),
-        min_footprint_px=scalar("min_cluster_footprint_px", int, 0),
-        min_frames=scalar("min_cluster_frames", int, 0),
+        min_footprint_px=int(np.asarray(d["min_cluster_footprint_px"]).item()),
+        min_frames=int(np.asarray(d["min_cluster_frames"]).item()),
     )
-    if scalar("per_sign_null", bool, False):
+    if bool(np.asarray(d["per_sign_null"]).item()):
         args.update(
             per_sign_null=True,
             threshold=float(np.asarray(d["cluster_threshold_pos"]).item()),
@@ -289,7 +285,7 @@ def saved_cluster_args(d) -> dict:
 
 
 def per_sign_overrides(saved: dict) -> dict:
-    """extract_clusters keyword overrides for a `load_saved_npz` dict: {} for legacy results, the per-sign rule otherwise."""
+    """extract_clusters keyword overrides for a `load_saved_npz` dict: {} for symmetric-threshold results, the per-sign rule otherwise."""
     if not saved.get("per_sign_null"):
         return {}
     return dict(per_sign_null=True, neg_threshold=saved["threshold_neg"], null_max=saved["null_max_pos"], null_max_neg=saved["null_max_neg"])
