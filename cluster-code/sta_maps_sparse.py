@@ -35,6 +35,7 @@ from utils.sta_stats_utils import (
     standardize,
 )
 from utils.paths_utils import PathKind, cell_dirs, path_for, resolve_sta_paths, result_file_name
+from utils.qc_utils import read_bad_segments, read_trimmed_frames
 from utils.tif_export import sta_note, write_imagej_stack
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 
@@ -460,10 +461,8 @@ def load_cut_frames(paths, n_frames: int) -> list[int]:
     Bad segments are removed outside the app, before motion correction; qc/bad_segments.json ([start, end) frame ranges in the numbering
     before the removal) records where. Position in the cleaned movie = start - frames removed before it - photobleaching `trimmed`."""
     experiment_dir = Path(paths.mc_dir).parents[1]  # <experiment>/pipeline_results/motion_corrected
-    bad_file, pb_file = path_for(PathKind.BAD_SEGMENTS, experiment_dir), path_for(PathKind.PB_QC_METRICS, experiment_dir, pb_kind="astro")
-    bad = json.loads(bad_file.read_text()) if bad_file.exists() else []
-    trimmed = int(json.loads(pb_file.read_text()).get("trimmed", 0)) if pb_file.exists() else 0
-    return [c for c in cuts_from_bad_segments(bad, trimmed) if 0 < c < int(n_frames)]
+    cuts = cuts_from_bad_segments(read_bad_segments(experiment_dir), read_trimmed_frames(experiment_dir))
+    return [c for c in cuts if 0 < c < int(n_frames)]
 
 
 def run_cut_frames(paths, n_frames: int) -> list[int]:
@@ -1103,16 +1102,16 @@ def build_run_motion_series(paths, n_frames: int) -> dict | None:
     """Shifts (+ registration quality from the bin-8 astro movie) aligned to the analysed (kept) frames."""
     if not MOTION_DIAGNOSTICS:
         return None
-    shifts = load_shifts(path_for(PathKind.MC_SHIFTS, Path(paths.mc_dir).parents[1]))
+    experiment_dir = Path(paths.mc_dir).parents[1]
+    shifts = load_shifts(path_for(PathKind.MC_SHIFTS, experiment_dir))
     if shifts is None:
         print(f"WARNING: motion diagnostics skipped: no shifts file under {paths.mc_dir}")
         return None
     n_rows = len(shifts)
-    pb = path_for(PathKind.PB_QC_METRICS, Path(paths.mc_dir).parents[1], pb_kind="astro")
     try:
-        trimmed = int(json.loads(pb.read_text()).get("trimmed", 0)) if pb.exists() else 0
+        trimmed = read_trimmed_frames(experiment_dir)
     except (OSError, ValueError) as exc:
-        print(f"WARNING: motion diagnostics skipped: could not read the trimmed-frame count from {pb}: {exc}")
+        print(f"WARNING: motion diagnostics skipped: could not read the trimmed-frame count: {exc}")
         return None
     shifts = align_shifts_to_analysed_frames(shifts, int(n_frames), trimmed)
     if shifts is None:

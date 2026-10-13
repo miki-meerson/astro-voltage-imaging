@@ -12,6 +12,7 @@ from utils.thorsync_utils import (
 )
 from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
+from utils.qc_utils import read_bad_segments
 
 
 def _save_speed_png(path: Path, speed, fps: float, threshold: float) -> None:
@@ -52,9 +53,7 @@ def _kept_frames(home: Path, fps: float) -> tuple[int, int, np.ndarray, np.ndarr
         raw_frames = tif.series[0].shape[0] // 2
     with tifffile.TiffFile(path_for(PathKind.ASTRO_PB_MOVIE, home)) as tif:
         pb_frames = tif.series[0].shape[0]
-    bad_path = path_for(PathKind.BAD_SEGMENTS, home)
-    bad = json.loads(bad_path.read_text()) if bad_path.exists() else []
-    removed = np.array(sorted({f for s, e in bad for f in range(int(s), int(e))}), dtype=int)
+    removed = np.array(sorted({f for s, e in read_bad_segments(home) for f in range(int(s), int(e))}), dtype=int)
     kept_untrimmed = np.setdiff1d(np.arange(raw_frames), removed)
     pb_trace_path = path_for(PathKind.PB_QC_TRACE, home, pb_kind="astro")
     pb_idx = _pb_frame_indices(pb_trace_path)

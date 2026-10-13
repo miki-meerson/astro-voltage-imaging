@@ -22,12 +22,16 @@ def read_suite2p_traces(suite2p_path, cell_mask, neuropil_correction=False):
     return F_cells, F_norm
 
 
-def load_suite2p_context(suite2p_path: str | Path) -> dict:
+def load_cell_selection(suite2p_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """(cell_mask, stat_cells): the accepted cells of a Suite2p plane0 folder and their ROI stats. The only place iscell.npy and stat.npy are read."""
+    cell_mask = np.load(path_for(PathKind.SUITE2P_ISCELL, suite2p_path), allow_pickle=True)[:, 0].astype(bool)
+    return cell_mask, np.load(path_for(PathKind.SUITE2P_STAT, suite2p_path), allow_pickle=True)[cell_mask]
+
+
+def load_suite2p_context(suite2p_path: str | Path, cell_selection: tuple[np.ndarray, np.ndarray] | None = None) -> dict:
+    """Accepted cells, their ROI stats and the fluorescence. Pass an already loaded cell_selection to avoid reading iscell/stat again."""
     suite2p_path = Path(suite2p_path)
-    iscell = np.load(path_for(PathKind.SUITE2P_ISCELL, suite2p_path), allow_pickle=True)
-    cell_mask = iscell[:, 0].astype(bool)
-    stat = np.load(path_for(PathKind.SUITE2P_STAT, suite2p_path), allow_pickle=True)
-    stat_cells = stat[cell_mask]
+    cell_mask, stat_cells = cell_selection if cell_selection is not None else load_cell_selection(suite2p_path)
     f_raw, f_norm = read_suite2p_traces(suite2p_path, cell_mask)
     return {
         "cell_mask": cell_mask,
@@ -40,9 +44,7 @@ def load_suite2p_context(suite2p_path: str | Path) -> dict:
 
 def suite2p_stat_cells(source_dir: str | Path) -> np.ndarray:
     """Suite2p ROI stats of the accepted cells only (cell ids are indices into this array); source_dir is the experiment folder."""
-    plane0 = path_for(PathKind.SUITE2P_PLANE0, source_dir)
-    iscell = np.load(path_for(PathKind.SUITE2P_ISCELL, plane0), allow_pickle=True)[:, 0].astype(bool)
-    return np.load(path_for(PathKind.SUITE2P_STAT, plane0), allow_pickle=True)[iscell]
+    return load_cell_selection(path_for(PathKind.SUITE2P_PLANE0, source_dir))[1]
 
 
 def roi_pixels(stat_cell) -> tuple[np.ndarray, np.ndarray]:
@@ -95,8 +97,7 @@ def neuron_centroid_binned(cell_id, spatial_bin, map_shape, suite2p_ctx):
     if "med" in s and len(s["med"]) >= 2:
         y, x = float(s["med"][0]), float(s["med"][1])
     else:
-        y = float(np.mean(s["ypix"]))
-        x = float(np.mean(s["xpix"]))
+        y, x = roi_center(s)
     yb = int(np.clip(np.floor(y / spatial_bin), 0, map_shape[0] - 1))
     xb = int(np.clip(np.floor(x / spatial_bin), 0, map_shape[1] - 1))
     return yb, xb
