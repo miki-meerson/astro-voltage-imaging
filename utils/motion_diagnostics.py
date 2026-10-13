@@ -13,18 +13,31 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+from scipy.io import loadmat
+
+from utils import globals_utils as g
 
 SERIES_NAMES = ("dy", "dx", "shift_mag", "jerk", "reg_corr")
-SHIFTS_FILE = ("shifts", "motion_corrected_shifts.mat")
 
 
-def load_shifts(mc_dir: str | Path) -> np.ndarray | None:
-    from scipy.io import loadmat
+def cell_motion_status(summary: pd.DataFrame) -> dict[int, str]:
+    """{cell id: MOTION_OK | MOTION_SUSPECTED | MOTION_NOT_TESTED} from the STA summary csv. The one place that says whether a cell
+    counts as motion-suspected: every consumer (anatomy summary, group test, pages) uses it and none opens the per-cell files.
+    Raises ValueError when the csv has no status column (rerun STA Maps)."""
+    if g.MOTION_STATUS_COLUMN not in summary:
+        raise ValueError(f"The STA summary csv has no '{g.MOTION_STATUS_COLUMN}' column. It is written by the STA Maps step: rerun STA Maps for this experiment.")
+    cells = summary[g.MOTION_STATUS_COLUMN]
+    per_cell = cells.groupby(summary["cell_id"]).first()  # every row of a cell carries the same status; empty rows are skipped
+    return {int(c): str(s) if pd.notna(s) else g.MOTION_NOT_TESTED for c, s in per_cell.items()}
 
-    path = Path(mc_dir).joinpath(*SHIFTS_FILE)
+
+def load_shifts(shifts_path: str | Path) -> np.ndarray | None:
+    """The registration shifts (frames, 2) from the motion-correction .mat file (path_for(PathKind.MC_SHIFTS, experiment)); None when absent."""
+    path = Path(shifts_path)
     if not path.exists():
         return None
-    return np.asarray(loadmat(path)["motion_corrected_shifts"], dtype=np.float32)
+    return np.asarray(loadmat(path)[g.MOTION_SHIFTS_MAT_KEY], dtype=np.float32)
 
 
 def registration_quality(movie: np.ndarray) -> np.ndarray:

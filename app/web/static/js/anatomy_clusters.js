@@ -89,7 +89,7 @@
     const hit = pts.map(p => ({p, d: Math.hypot(p.x - mx, p.y - my)})).filter(o => o.d < 10).sort((a, b) => a.d - b.d)[0];
     if (!hit) { tip.style.display = "none"; e.currentTarget.style.cursor = "default"; return; }
     const c = hit.p.c; e.currentTarget.style.cursor = "pointer";
-    tip.innerHTML = `Cell ${c.cell} &middot; ${Polarity.of(c.sign)}<br>distance ${c.dist.toFixed(1)} px &middot; p=${c.p.toFixed(3)} &middot; ${c.n_px} px (bin ${c.bin}), frames ${c.first_rel}..${c.last_rel}<br><span style="color:#9aa8b7">click to open the cell</span>`;
+    tip.innerHTML = `Cell ${c.cell} &middot; ${Polarity.of(c.sign)}<br>distance ${c.dist.toFixed(1)} px &middot; p=${c.p == null ? 'n/a' : c.p.toFixed(3)} &middot; ${c.n_px} px (bin ${c.bin}), frames ${c.first_rel}..${c.last_rel}<br><span style="color:#9aa8b7">click to open the cell</span>`;
     tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px";
   });
   $("ac-scatter").addEventListener("mouseleave", () => { tip.style.display = "none"; });
