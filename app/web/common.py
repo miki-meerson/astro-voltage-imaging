@@ -8,7 +8,8 @@ from flask.blueprints import BlueprintSetupState
 
 from app.db.experiment_repository import experiment_source_path
 from app.services import polarity
-from app.services.movies import experiment_fps, movie_frame_jpeg, movie_metadata
+from app.services.movies import movie_frame_jpeg, movie_metadata
+from utils.movie_utils import read_frame_rate
 
 
 class _FlatSetupState(BlueprintSetupState):
@@ -60,7 +61,7 @@ def movie_meta_response(experiment_id: int, path_of):
     if not path.exists():
         return jsonify({"available": False, "message": f"{path.name} was not found."})
     try:
-        payload = movie_metadata(path, experiment_fps(source_path))
+        payload = movie_metadata(path, read_frame_rate(source_path))
         payload["kind"] = kind
         payload["gevi_flipped"] = polarity.flip_for_kind(kind)
         return jsonify(payload)

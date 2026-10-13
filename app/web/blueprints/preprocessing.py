@@ -10,7 +10,6 @@ from app.services import caches
 from app.services.experiments import confirm_preprocessing, confirm_suite2p, launch_analysis_defaults
 from app.services.movies import (
     mean_intensity_payload,
-    experiment_fps,
     PB_KINDS,
     pb_movie_path,
 )
@@ -18,6 +17,7 @@ from app.services.preprocessing import PREPROCESSING_STEPS, latest_preprocessing
 from app.services.run_views import STEP_LABELS, run_view
 from app.services.runs import create_run, launch_run
 from app.web.common import FlatBlueprint, get_settings
+from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
 
 bp = FlatBlueprint("preprocessing", __name__)
@@ -115,7 +115,7 @@ def preprocessing_mean_intensity_data(experiment_id):
         return jsonify({"available": False, "message": "Experiment not found."}), 404
     try:
         max_points = min(1600, max(200, int(request.args.get("max_points", "350"))))
-        return jsonify(mean_intensity_payload(source_path, experiment_fps(source_path), max_points=max_points))
+        return jsonify(mean_intensity_payload(source_path, read_frame_rate(source_path), max_points=max_points))
     except Exception as exc:
         return jsonify({"available": False, "message": str(exc)}), 500
 

@@ -1,3 +1,4 @@
+from functools import lru_cache
 import os
 import numpy as np
 import tifffile
@@ -54,8 +55,10 @@ def get_movie_parameters(path, is_dir=False, verbal=False):
     return {'fps': fps, 'width': width, 'height': height}
 
 
+@lru_cache(maxsize=None)
 def read_frame_rate(source_dir) -> float:
-    """Frame rate (fps) of an experiment from its Experiment.xml. There is no default: when it cannot be read this raises a ValueError that names the file."""
+    """Frame rate (fps) of an experiment from its Experiment.xml, read once per experiment (per process) and reused by everything that needs it.
+    There is no default: when it cannot be read this raises a ValueError that names the file (a failure is not cached)."""
     xml_path = path_for(PathKind.EXPERIMENT_XML, source_dir)
     try:
         fps = float(get_movie_parameters(xml_path)['fps'])
@@ -73,14 +76,6 @@ def _read_raw_movie(path, dtype=np.uint16):
     """
     raw_movie_1d = np.fromfile(path, dtype)
     xml_path = path_for(PathKind.EXPERIMENT_XML, os.path.split(path)[0])
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-
-    # Find the LSM tag and get the frameRate attribute
-    lsm = root.find("LSM")
-    fs = int(float(lsm.attrib['frameRate'].replace(',', '')))
-    print('Frame rate:', fs)
-
     width, height = _get_xml_camera_shape(xml_path)
     movie_3d = np.reshape(raw_movie_1d, (-1, height, width))
     print(f"Movie shape: {movie_3d.shape}")

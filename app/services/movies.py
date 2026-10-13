@@ -10,13 +10,7 @@ import tifffile
 from PIL import Image
 
 from app.services import caches, polarity
-from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
-
-
-def experiment_fps(source_path: str | Path) -> float:
-    """Frame rate of the experiment's movies, from its Experiment.xml (raises a ValueError that says so when it cannot be read; no default)."""
-    return read_frame_rate(source_path)
 
 
 def pb_movie_path(source_path: str | Path | None, kind: str) -> Path | None:

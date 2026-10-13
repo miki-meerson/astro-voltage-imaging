@@ -5,7 +5,6 @@ from flask import jsonify, render_template, request
 import numpy as np
 
 from app.db import neuron_repository
-from app.services.movies import experiment_fps
 from app.services.runs import run_dir
 from app.services.spikes import (
     bounded_spike_params,
@@ -15,6 +14,7 @@ from app.services.spikes import (
     stale_suite2p_cell_message,
 )
 from app.web.common import FlatBlueprint, get_settings
+from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
 from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
 from utils.suite2p_utils import load_suite2p_context, suite2p_trace_dff
@@ -51,7 +51,7 @@ def spike_data(neuron_id):
         return jsonify({"error": stale_message or f"Cell {cell_id} is outside Suite2p traces."}), 400
     trace = np.asarray(suite2p_trace_dff(cell_id, suite2p_ctx=suite2p_ctx), dtype=float)
     try:
-        fps = experiment_fps(n["source_path"])
+        fps = read_frame_rate(n["source_path"])
     except ValueError as exc:  # no frame rate in Experiment.xml
         return jsonify({"error": str(exc)}), 400
     run_folder = run_dir(settings, int(spike_run["id"]), bool(spike_run["is_test"]))
@@ -85,7 +85,7 @@ def detect_spike_data(neuron_id):
     suite2p = load_suite2p_context(path_for(PathKind.SUITE2P_PLANE0, n["source_path"]))
     cell_id = int(n["pipeline_neuron_id"])
     try:
-        fps = int(experiment_fps(n["source_path"]))
+        fps = int(read_frame_rate(n["source_path"]))
     except ValueError as exc:  # no frame rate in Experiment.xml
         return jsonify({"error": str(exc)}), 400
     traces = np.asarray(suite2p["F_norm"], dtype=np.float32)
