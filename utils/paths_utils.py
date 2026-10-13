@@ -22,7 +22,6 @@ class Anchor(Enum):
     STA_RUN = "STA run folder"
     STA_ANALYSIS = "STA analysis folder"
     PROJECT = "project folder"
-    STA_HOME = "STA algorithm home folder (<STA run>/sta_algorithm_home)"
     OUTPUT_ROOT = "outputs root (runtime/outputs or the test outputs folder)"
     SUITE2P_PLANE0 = "Suite2p plane0 folder"
     MOTION_CORRECTED = "motion_corrected folder"
@@ -57,7 +56,6 @@ class PathKind(Enum):
     ANATOMY_RESULT = auto()  # fields: cell
     CLUSTER_RESULT = auto()  # fields: cell, result_type
     MOTION_STA = auto()  # fields: cell
-    STA_BEHAVIOR_SEGMENTS = auto()  # the copy the cluster mirror keeps in the STA analysis folder
     # preprocessing: QC files (experiment folder), raw movie names, run-folder files, runner scripts (project folder)
     PB_QC_METRICS = auto()  # anchor: experiment; fields: pb_kind
     PB_QC_TRACE = auto()  # anchor: experiment; fields: pb_kind
@@ -119,7 +117,6 @@ class PathKind(Enum):
     STA_JOB_SCRIPT = auto()  # anchor: project
     STA_ALGORITHM_SCRIPT = auto()  # anchor: project
     GROUP_TEST_JOB_SCRIPT = auto()  # anchor: project
-    SPIKE_RUN_LINK = auto()  # anchor: STA algorithm home (the cluster mirror): the link to the spike run
     RUN_DIR = auto()  # anchor: outputs root; fields: canonical_id, cell, step, run_id
     RUN_DIR_ATTEMPT = auto()  # anchor: outputs root; fields: canonical_id, cell, step, run_id, attempt
 
@@ -158,7 +155,6 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.ANATOMY_RESULT: _Spec(_A, (_CELL, g.ANATOMY_RESULT)),
     PathKind.CLUSTER_RESULT: _Spec(_A, (_CELL, g.TYPED_RESULT_TEMPLATE)),
     PathKind.MOTION_STA: _Spec(_A, (_CELL, g.MOTION_STA)),
-    PathKind.STA_BEHAVIOR_SEGMENTS: _Spec(_A, (g.BEHAVIOR_SEGMENTS,)),
     PathKind.PB_QC_METRICS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.PB_QC_METRICS_TEMPLATE)),
     PathKind.PB_QC_TRACE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.PB_QC_TRACE_TEMPLATE)),
     PathKind.PB_QC_PLOT: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.PB_QC_PLOT_TEMPLATE)),
@@ -214,7 +210,6 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.STA_JOB_SCRIPT: _Spec(Anchor.PROJECT, (g.CLUSTER_CODE_DIR, g.STA_JOB_SCRIPT)),
     PathKind.STA_ALGORITHM_SCRIPT: _Spec(Anchor.PROJECT, (g.CLUSTER_CODE_DIR, g.STA_ALGORITHM_SCRIPT)),
     PathKind.GROUP_TEST_JOB_SCRIPT: _Spec(Anchor.PROJECT, (g.CLUSTER_CODE_DIR, g.GROUP_TEST_JOB_SCRIPT)),
-    PathKind.SPIKE_RUN_LINK: _Spec(Anchor.STA_HOME, (g.SPIKE_ANALYSIS_DIR,)),
     PathKind.RUN_DIR: _Spec(Anchor.OUTPUT_ROOT, (g.RUN_DIR_TEMPLATE,)),
     PathKind.RUN_DIR_ATTEMPT: _Spec(Anchor.OUTPUT_ROOT, (g.RUN_DIR_ATTEMPT_TEMPLATE,)),
 }

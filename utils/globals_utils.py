@@ -51,7 +51,6 @@ ANATOMY_CROP_PARAMS = "anatomy_crop_params.npz"  # written by the Anatomy Crop s
 BEHAVIOR_SEGMENTS = "behavioral_segements.npz"  # spelling as saved by the Behavior Split step
 
 # ---- spike detection outputs (<spike run>/cell_<N>/...) ------------------------------------------------------------------------------------
-SPIKE_ANALYSIS_DIR = "automated-spike-analysis"  # how the STA cluster mirror names the spike run
 SPIKE_LABELS = "simple_complex_spike_labels.npz"
 SPIKE_PEAKS = "simple_complex_peaks_for_analysis.npz"
 MANUAL_SPIKE_REVIEW = "manual_spike_review.json"

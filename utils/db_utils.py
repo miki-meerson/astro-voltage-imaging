@@ -188,7 +188,7 @@ def read_cluster_result_metadata(npz_path: str | Path) -> dict[str, Any] | None:
             **parsed,
         }
         row.update({key: _npz_metadata_value(d, key) for key in CLUSTER_RESULT_HPARAM_KEYS})
-        row["n_permutations"] = int(len(d["permutation_shifts"]))
+        row["n_permutations"] = int(len(d["permutation_positions"]))
         row["n_peaks"] = int(len(d["peaks"]))
         is_sig = [bool(c[6]) for c in np.asarray(d["cluster_summary"], dtype=object)]  # columns as written by save_cluster_result; 6 = is_significant
         row["n_significant_clusters"] = int(sum(is_sig))

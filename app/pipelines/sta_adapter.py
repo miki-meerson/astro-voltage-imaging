@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from app.cluster import client, mirror
+from app.cluster import client
 from app.settings import PROJECT_ROOT
 from utils import globals_utils as g
 from utils.paths_utils import PathKind, cell_dirs, path_for, sta_dir_of_run
@@ -49,10 +49,11 @@ def _validate_spike_suite2p_alignment(source_home: Path, spike_run: Path) -> Non
         )
 
 
-def _prepare_cluster_mirror(source_home: Path, out: Path, params: dict) -> tuple[Path, Path, Path | None]:
-    mirror_home = path_for(PathKind.STA_ALGORITHM_HOME, out)
-    mirror_home.mkdir(parents=True, exist_ok=True)
-    path_for(PathKind.RUN_STA_ANALYSIS, mirror_home).mkdir(parents=True, exist_ok=True)
+def _check_inputs_and_make_output_dir(source_home: Path, out: Path, params: dict) -> tuple[Path, Path, Path | None]:
+    """Check that the input runs the STA reads exist and create the run's output folder. Returns (output home, spike run, behavior run)."""
+    sta_home = path_for(PathKind.STA_ALGORITHM_HOME, out)
+    sta_home.mkdir(parents=True, exist_ok=True)
+    path_for(PathKind.RUN_STA_ANALYSIS, sta_home).mkdir(parents=True, exist_ok=True)
 
     spike_run = _optional_path(params, "spike_run")
     if spike_run is None or not spike_run.exists():
@@ -73,13 +74,20 @@ def _prepare_cluster_mirror(source_home: Path, out: Path, params: dict) -> tuple
                 "Run the Anatomy Crop step first, or rerun STA Maps without the Anatomy checkbox."
             )
 
-    return mirror_home, spike_run, behavior_run
+    return sta_home, spike_run, behavior_run
 
 
-def _write_config(mirror_home: Path, out: Path, params: dict, source_home: Path) -> Path:
+def _write_config(sta_home: Path, out: Path, params: dict, source_home: Path, spike_run: Path, behavior_run: Path | None) -> Path:
     cfg = dict(params)
-    cfg["home_dir"] = client.to_cluster_path(mirror_home, _cluster(params))
+    cfg["home_dir"] = client.to_cluster_path(sta_home, _cluster(params))
     cfg["source_home_dir"] = client.to_cluster_path(source_home, _cluster(params))
+    cfg["spike_run_dir"] = client.to_cluster_path(spike_run, _cluster(params))
+    if behavior_run is not None:
+        cfg["behavior_segments_path"] = client.to_cluster_path(path_for(PathKind.BEHAVIOR_SEGMENTS, behavior_run), _cluster(params))
+    anatomy_run = _optional_path(params, "anatomy_run")
+    if anatomy_run is not None:
+        cfg["anatomy_crop_params_path"] = client.to_cluster_path(path_for(PathKind.ANATOMY_CROP_PARAMS, anatomy_run), _cluster(params))
+    cfg["run_name"] = out.name
     cfg.setdefault("cell_ids", "all")
     cfg.setdefault("result_types", DEFAULT_RESULT_TYPES)
     cfg.setdefault("n_permutations", 200)
@@ -96,8 +104,8 @@ def _write_config(mirror_home: Path, out: Path, params: dict, source_home: Path)
     return cfg_path
 
 
-def _write_metrics(out: Path, mirror_home: Path, config_path: Path, spike_run: Path) -> None:
-    sta_dir = path_for(PathKind.RUN_STA_ANALYSIS, mirror_home)
+def _write_metrics(out: Path, sta_home: Path, config_path: Path, spike_run: Path) -> None:
+    sta_dir = path_for(PathKind.RUN_STA_ANALYSIS, sta_home)
     npz_files = sorted(p for cell_dir in cell_dirs(sta_dir).values() for p in cell_dir.glob(g.RESULT_GLOB))
     rows = []
     for p in npz_files:
@@ -152,28 +160,12 @@ def _sta_script(cluster: dict) -> Path:
     return script
 
 
-def _run_preflight(cluster: dict, preflight: str) -> int:
-    print("Preparing cluster STA mirror through remote shell commands.")
-    preflight_out, preflight_err, preflight_code = client.run_remote(cluster, preflight)
-    if preflight_out:
-        print(preflight_out.strip())
-    if preflight_err:
-        print(preflight_err.strip(), file=sys.stderr)
-    if preflight_code != 0:
-        print(f"Cluster mirror preparation exited with code {preflight_code}", file=sys.stderr)
-    return int(preflight_code)
-
-
-def _run_cluster_job(config_path: Path, out: Path, params: dict, preflight: str = "", source_home: Path | None = None) -> int:
+def _run_cluster_job(config_path: Path, out: Path, params: dict, source_home: Path | None = None) -> int:
     cluster = _cluster(params)
     client.check_ready(cluster)
     cluster_script = _sta_script(cluster)
     cluster_stdout = path_for(PathKind.CLUSTER_STDOUT_LOG, out)
     cluster_stderr = path_for(PathKind.CLUSTER_STDERR_LOG, out)
-    if preflight.strip():
-        preflight_code = _run_preflight(cluster, preflight)
-        if preflight_code != 0:
-            return preflight_code
     print("Submitting STA Maps cluster job:")
     print(f"Cluster stdout: {client.to_cluster_path(cluster_stdout, cluster)}")
     print(f"Cluster stderr: {client.to_cluster_path(cluster_stderr, cluster)}")
@@ -202,13 +194,12 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     params = json.loads(args.params_json or "{}")
 
-    mirror_home, spike_run, behavior_run = _prepare_cluster_mirror(source_home, out, params)
-    config_path = _write_config(mirror_home, out, params, source_home)
-    preflight = mirror.preflight_script(source_home, mirror_home, spike_run, behavior_run, _optional_path(params, "anatomy_run"), _cluster(params))
-    return_code = _run_cluster_job(config_path, out, params, preflight, source_home)
+    sta_home, spike_run, behavior_run = _check_inputs_and_make_output_dir(source_home, out, params)
+    config_path = _write_config(sta_home, out, params, source_home, spike_run, behavior_run)
+    return_code = _run_cluster_job(config_path, out, params, source_home)
     if return_code != 0:
         raise SystemExit(return_code)
-    _write_metrics(out, mirror_home, config_path, spike_run)
+    _write_metrics(out, sta_home, config_path, spike_run)
 
 
 if __name__ == "__main__":

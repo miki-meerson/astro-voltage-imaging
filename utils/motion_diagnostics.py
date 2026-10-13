@@ -2,7 +2,7 @@
 
 Question answered per cell: are this cell's spikes time-locked to motion / registration quality?
 For each motion series (applied registration shifts, jerk, per-frame registration quality) we compute the
-spike-triggered average over the same window as the STA effect and test it with the SAME circular-shift
+spike-triggered average over the same window as the STA effect and test it with the SAME random-frame
 surrogates used for the maps. Diagnostic only: it never changes the map statistics.
 
 Limitation: the shifts are the motion that was *corrected*. Residual motion after registration is only
@@ -67,28 +67,25 @@ def build_motion_series(shifts: np.ndarray, reg_corr: np.ndarray | None = None) 
 def motion_sta_stats(
     series: dict[str, np.ndarray],
     peaks: np.ndarray,
-    permutation_shifts: np.ndarray,
+    surrogate_centers: np.ndarray,
     pre: int,
     post: int,
     baseline_window: tuple[int, int],
     analysis_window: tuple[int, int],
     flag_alpha: float = 0.01,
 ) -> dict:
-    """Event-triggered average of each motion series vs circular-shift null.
+    """Event-triggered average of each motion series vs the random-frame null of the STA maps.
 
-    peaks are frame indices of valid spikes (pre+1 <= peak < n_frames-post). Shifts follow the STA convention:
-    surrogate centers = (valid position + shift) mod n_valid, valid centers = arange(pre+1, n_frames-post).
+    peaks are frame indices of valid spikes; surrogate_centers (n_surrogates, len(peaks)) are the frames of the chance copies, the same
+    ones the maps use (random valid spike frames, splice-free when the maps exclude spikes near splices).
     Returns arrays over the analysis window, baseline-subtracted like the STA effect.
     """
     names = [n for n in SERIES_NAMES if n in series]
-    n_frames = len(series[names[0]])
-    n_valid = n_frames - post - pre - 1
     rels = np.arange(-pre, post + 1)
     base = np.flatnonzero((rels >= baseline_window[0]) & (rels <= baseline_window[1]))
     ana = np.flatnonzero((rels >= analysis_window[0]) & (rels <= analysis_window[1]))
-    pos = np.asarray(peaks, dtype=int) - (pre + 1)
-    pos = pos[(pos >= 0) & (pos < n_valid)]
-    shifts = np.r_[0, np.asarray(permutation_shifts, dtype=int)]  # row 0 = observed
+    peaks = np.asarray(peaks, dtype=int)
+    centers = np.vstack([peaks[None, :], np.asarray(surrogate_centers, dtype=int).reshape(len(surrogate_centers), peaks.size)])  # row 0 = observed
 
     observed = np.full((len(names), ana.size), np.nan, dtype=np.float32)
     null_mean = np.full_like(observed, np.nan)
@@ -96,8 +93,7 @@ def motion_sta_stats(
     stat = np.full(len(names), np.nan, dtype=np.float32)
     p = np.full(len(names), np.nan, dtype=np.float32)
     z = np.full(len(names), np.nan, dtype=np.float32)
-    if pos.size:
-        centers = ((pos[None, :] + shifts[:, None]) % n_valid) + (pre + 1)  # (1+P, K)
+    if peaks.size:
         for i, name in enumerate(names):
             x = np.asarray(series[name], dtype=np.float32)
             sta = x[centers[:, :, None] + rels[None, None, :]].mean(axis=1)  # (1+P, rels)
@@ -123,8 +119,8 @@ def motion_sta_stats(
         "flag": np.bool_(np.isfinite(min_p) and min_p <= flag_alpha),
         "flag_alpha": np.float32(flag_alpha),
         # smallest p the permutation count can resolve; if p_floor > flag_alpha the flag can never trigger
-        "p_floor": np.float32(1.0 / (len(shifts))),
-        "n_peaks_used": np.int32(pos.size),
+        "p_floor": np.float32(1.0 / len(centers)),
+        "n_peaks_used": np.int32(peaks.size),
     }
 
 

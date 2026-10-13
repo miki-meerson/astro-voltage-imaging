@@ -126,7 +126,7 @@
       </div>
     </div>
     <div class="tabpane" data-pane="motion">
-      <details><summary>What am I looking at?</summary><p>Spike-triggered average of the applied registration shifts and per-frame registration quality (colored) against the same circular-shift null used for the maps (grey band, &plusmn;2 sd). A red curve means this cell's spikes are time-locked to motion, so its STA clusters may be motion artifacts.</p></details>
+      <details><summary>What am I looking at?</summary><p>Spike-triggered average of the applied registration shifts and per-frame registration quality (colored) against the same random-frame null used for the maps (grey band, &plusmn;2 sd). A red curve means this cell's spikes are time-locked to motion, so its STA clusters may be motion artifacts.</p></details>
       <div class="zv" style="--h:300px"><img class="analysis-image lazy" data-src="/neurons/{{ neuron.id }}/motion-sta.png?run={{ r.id }}" alt="Spike-triggered motion diagnostics for cell {{ neuron.pipeline_neuron_id }}"></div>
     </div>
   </div>

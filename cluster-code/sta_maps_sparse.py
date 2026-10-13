@@ -41,6 +41,11 @@ from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 
 HOME_DIR = Path(r"Z:\Adam-Lab-Shared\Data\Miki_Meerson\Imaging\HYP-JEDI\Hyp3\L\02-02-2026-awake\FOV1\z-18-x2")
 SOURCE_HOME_DIR: Path | None = None
+# the input runs and the run name, given by the app in the job config (no folder layout is assumed around home_dir)
+SPIKE_RUN_DIR: Path | None = None
+BEHAVIOR_SEGMENTS_FILE: Path | None = None
+ANATOMY_CROP_PARAMS_FILE: Path | None = None
+RUN_NAME = ""
 LINUX_SHARED_ROOT = Path("/ems/elsc-labs/adam-y/Adam-Lab-Shared")
 WINDOWS_SHARED_ROOT = Path(r"Z:\Adam-Lab-Shared")
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -76,7 +81,7 @@ PER_SIGN_NULL = False  # opt-in: per-sign voxel thresholds + per-sign max-mass n
 SMOOTH_SIGMA_FULLRES_PX = 0.0  # spatial gaussian (full-resolution px; converted by spatial bin, off below 0.25 analysis px)
 MIN_CLUSTER_FOOTPRINT_FULLRES_PX = 0.0  # min spatial footprint, in full-resolution px^2 (converted by spatial bin)
 MIN_CLUSTER_FRAMES = 0  # min number of frames a cluster must span
-EXCLUDE_SPIKES_NEAR_CUTS = False  # drop spikes whose analysis window contains a splice where a bad segment was removed (also from the shifted surrogates)
+EXCLUDE_SPIKES_NEAR_CUTS = False  # drop spikes whose analysis window contains a splice where a bad segment was removed (the random-frame chance copies are drawn from the same splice-free frames)
 MOTION_DIAGNOSTICS = True  # diagnostic only: spike-triggered motion / registration-quality test per cell
 MOTION_FLAG_ALPHA = 0.01
 MOTION_REG_QUALITY_BIN = 0  # spatial bin of the movie used for the registration-quality series; 0 = auto
@@ -126,17 +131,22 @@ def load_config(path_arg: str | None) -> dict:
 
 
 def apply_config(config: dict) -> None:
-    global HOME_DIR, SOURCE_HOME_DIR, SPATIAL_BIN, ANATOMY_SPATIAL_BIN, N_PERMUTATIONS, N_WORKERS, VOXEL_ALPHA, CLUSTER_ALPHA
+    global HOME_DIR, SOURCE_HOME_DIR, SPIKE_RUN_DIR, BEHAVIOR_SEGMENTS_FILE, ANATOMY_CROP_PARAMS_FILE, RUN_NAME, SPATIAL_BIN, ANATOMY_SPATIAL_BIN, N_PERMUTATIONS, N_WORKERS, VOXEL_ALPHA, CLUSTER_ALPHA
     global CLUSTER_CONNECTIVITY, MIN_CLUSTER_SIZE, MIN_CLUSTER_MASS, MERGE_SIMILAR_CLUSTERS
     global MERGE_MAX_DISTANCE_PX, MERGE_MIN_TRACE_CORR, RNG_SEED, SAVE_BINNED_STA_MOVIES, SAVE_FIJI_TIFS
     global OVERWRITE, CELL_IDS, RESULT_TYPES, SUMMARY_CSV, PRE_SECONDS, POST_SECONDS
     global BASELINE_SECONDS, ANALYSIS_HALF_WINDOW_SECONDS, ANALYSIS_HALF_WINDOW_FRAMES
     global MIN_SPIKES_FOR_CLUSTER, NULL_STANDARDIZATION, NULL_SD_FLOOR_QUANTILE, SMOOTH_SIGMA_FULLRES_PX, PER_SIGN_NULL
     global MIN_CLUSTER_FOOTPRINT_FULLRES_PX, MIN_CLUSTER_FRAMES, MOTION_DIAGNOSTICS, MOTION_FLAG_ALPHA, MOTION_REG_QUALITY_BIN
+    global EXCLUDE_SPIKES_NEAR_CUTS
 
     if "home_dir" in config:
         HOME_DIR = Path(config["home_dir"])
     SOURCE_HOME_DIR = Path(config["source_home_dir"]) if config.get("source_home_dir") else None
+    SPIKE_RUN_DIR = Path(config["spike_run_dir"]) if config.get("spike_run_dir") else None
+    BEHAVIOR_SEGMENTS_FILE = Path(config["behavior_segments_path"]) if config.get("behavior_segments_path") else None
+    ANATOMY_CROP_PARAMS_FILE = Path(config["anatomy_crop_params_path"]) if config.get("anatomy_crop_params_path") else None
+    RUN_NAME = str(config.get("run_name", ""))
     CELL_IDS = config.get("cell_ids", CELL_IDS)
     SPATIAL_BIN = int(config.get("spatial_bin", SPATIAL_BIN))
     ANATOMY_SPATIAL_BIN = int(config.get("anatomy_spatial_bin", ANATOMY_SPATIAL_BIN))
@@ -210,7 +220,16 @@ def source_home_dir() -> Path:
 
 
 def spike_analysis_dir() -> Path:
-    return home_dir() / g.SPIKE_ANALYSIS_DIR
+    """The spike run folder (cell_<N>/ label files) the STA reads."""
+    if SPIKE_RUN_DIR is None:
+        raise ValueError("The STA job config has no spike_run_dir (the app writes it from the experiment's completed spike run).")
+    return _resolve_shared_path(SPIKE_RUN_DIR)
+
+
+def behavior_segments_path() -> Path:
+    if BEHAVIOR_SEGMENTS_FILE is None:
+        raise ValueError("The STA job config has no behavior_segments_path (the behavioral result type needs the Behavior Split run).")
+    return _resolve_shared_path(BEHAVIOR_SEGMENTS_FILE)
 
 
 def binned_movie_path(paths, spatial_bin: int | None = None) -> Path:
@@ -233,12 +252,14 @@ def behavioral_binned_frames_path(paths, group: str, spatial_bin: int | None = N
     return path_for(PathKind.RUN_BEHAVIORAL_BINNED_FRAMES, paths.home_dir, group=group, bin=bin_factor)
 
 
-def anatomy_crop_params_path(paths) -> Path:
-    return path_for(PathKind.ANATOMY_CROP_PARAMS, paths.sta_dir.parent)
+def anatomy_crop_params_path() -> Path:
+    if ANATOMY_CROP_PARAMS_FILE is None:
+        raise ValueError("The STA job config has no anatomy_crop_params_path (the anatomy result type needs the Anatomy Crop run).")
+    return _resolve_shared_path(ANATOMY_CROP_PARAMS_FILE)
 
 
 def load_anatomy_radius(paths, target_spatial_bin: int) -> dict:
-    path = anatomy_crop_params_path(paths)
+    path = anatomy_crop_params_path()
     if not path.exists():
         raise FileNotFoundError(
             f"Missing {path}. Run the app Anatomy Crop step before requesting result_type='anatomy'."
@@ -301,7 +322,7 @@ def ensure_binned_movie(paths, spatial_bin: int | None = None) -> np.memmap:
 
 
 def load_behavioral_frame_groups(paths) -> dict[str, np.ndarray]:
-    path = path_for(PathKind.STA_BEHAVIOR_SEGMENTS, paths.sta_dir)
+    path = behavior_segments_path()
     if not path.exists():
         raise FileNotFoundError(
             f"Missing {path}. Create it from the behavior notebook before running result_type='behavioral'."
@@ -432,7 +453,7 @@ def export_fiji_sta(cell_id: int, group: str, observed_sta: np.ndarray, pre: int
             observed_sta,
             _EXPORT_FPS,
             pre,
-            sta_note(cell_id, n_spikes, f"{group} spikes, spatial bin {SPATIAL_BIN}", run=Path(home_dir()).parent.name),
+            sta_note(cell_id, n_spikes, f"{group} spikes, spatial bin {SPATIAL_BIN}", run=RUN_NAME),
         )
         return True
     except OSError as exc:  # the share could not be written: the .npy is kept; a frame rate that cannot be read is not caught
@@ -444,7 +465,7 @@ def valid_centers(n_frames: int, pre: int, post: int, cuts=None) -> np.ndarray:
     """Spike frames whose window [c - pre, c + post] fits in the movie and, when `cuts` is given, contains no splice.
 
     A cut k means frames k-1 and k are not adjacent in time (a bad segment was removed between them). The splice lies in the
-    window when c - pre <= k - 1 and k <= c + post. The same centres define the shifted surrogates, so the null is matched.
+    window when c - pre <= k - 1 and k <= c + post. The same centres are where the random-frame chance copies are drawn, so the null is matched.
     """
     centers = np.arange(pre + 1, n_frames - post, dtype=np.int32)
     k = np.asarray(sorted({int(c) for c in cuts or []}), dtype=np.int64)
@@ -572,30 +593,31 @@ def load_behavioral_spikes(
     return filter_valid_peaks(remapped, n_frames, pre, post).astype(np.int32)
 
 
-def event_matrix(peaks: np.ndarray, shifts: np.ndarray | None = None, f0_by_pos: np.ndarray | None = None) -> csr_matrix:
+def event_matrix(peaks: np.ndarray, positions: np.ndarray | None = None, f0_by_pos: np.ndarray | None = None) -> csr_matrix:
+    """Row-normalised event weights over the valid centres. positions=None: the observed spike train (1 row). Otherwise `positions`
+    (n_surrogates, n_spikes) are indices into the valid centres: one surrogate spike train per row."""
     if _VALID_CENTERS is None or _F0_BY_POS is None:
         raise RuntimeError("Worker was not initialized.")
     f0 = _F0_BY_POS if f0_by_pos is None else np.asarray(f0_by_pos, dtype=np.float32)
     peaks = np.asarray(peaks, dtype=np.int32)
     peak_pos = np.searchsorted(_VALID_CENTERS, peaks)
     if peaks.size == 0:
-        n_rows = 1 if shifts is None else len(shifts)
+        n_rows = 1 if positions is None else len(positions)
         return csr_matrix((n_rows, _VALID_CENTERS.size), dtype=np.float32)
 
     if np.any(_VALID_CENTERS[peak_pos] != peaks):
         raise ValueError("All peaks must be valid centers.")
 
-    if shifts is None:
+    if positions is None:
         rows = np.zeros(peaks.size, dtype=np.int32)
         cols = peak_pos.astype(np.int32)
         data = (1.0 / (peaks.size * f0[cols])).astype(np.float32)
         return csr_matrix((data, (rows, cols)), shape=(1, _VALID_CENTERS.size), dtype=np.float32)
 
-    cols2d = (peak_pos[None, :] + shifts[:, None]) % _VALID_CENTERS.size
-    rows = np.repeat(np.arange(len(shifts), dtype=np.int32), peaks.size)
-    cols = cols2d.reshape(-1).astype(np.int32)
+    rows = np.repeat(np.arange(len(positions), dtype=np.int32), peaks.size)
+    cols = np.asarray(positions).reshape(-1).astype(np.int32)
     data = (1.0 / (peaks.size * f0[cols])).astype(np.float32)
-    return csr_matrix((data, (rows, cols)), shape=(len(shifts), _VALID_CENTERS.size), dtype=np.float32)
+    return csr_matrix((data, (rows, cols)), shape=(len(positions), _VALID_CENTERS.size), dtype=np.float32)
 
 
 def sta_for_rels(events: csr_matrix, rels: np.ndarray, crop: tuple[int, int, int, int] | None = None) -> np.ndarray:
@@ -730,7 +752,7 @@ def save_cluster_result(path: Path, result: dict) -> None:
         null_max_cluster_mass=np.asarray(result["null_max_cluster_mass"], dtype=np.float32),
         cluster_summary=cluster_array,
         cluster_threshold=np.asarray(result["cluster_threshold"], dtype=np.float32),
-        permutation_shifts=np.asarray(result["permutation_shifts"], dtype=np.int32),
+        permutation_positions=np.asarray(result["permutation_positions"], dtype=np.int32),
         pre_frames=np.asarray(result["pre_frames"], dtype=np.int32),
         post_frames=np.asarray(result["post_frames"], dtype=np.int32),
         baseline_frames=np.asarray(result["baseline_frames"], dtype=np.int32),
@@ -847,7 +869,6 @@ def analyze_group(
     cell_id: int,
     group: str,
     peaks: np.ndarray,
-    shifts: np.ndarray,
     pre: int,
     post: int,
     baseline: int,
@@ -871,7 +892,8 @@ def analyze_group(
     cluster_path = out_dir / result_file_name(group)
     if peaks.size >= MIN_SPIKES_FOR_CLUSTER:
         observed_effect = compute_effect_movie(observed_sta, pre, post, *windows)
-        perm_events = event_matrix(peaks, shifts, f0_by_pos=f0_by_pos)
+        positions = surrogate_positions(cell_id, int(peaks.size), _VALID_CENTERS.size)
+        perm_events = event_matrix(peaks, positions, f0_by_pos=f0_by_pos)
         perm_effects = permutation_effects(perm_events, pre, post, windows, crop)
         obs_stat, perm_stat, sd_map = prepare_test_statistic(observed_effect["effect_movie"], perm_effects)
         del perm_effects
@@ -894,7 +916,7 @@ def analyze_group(
             "null_max_cluster_mass": null_max,
             "cluster_summary": clusters,
             "cluster_threshold": threshold,
-            "permutation_shifts": shifts,
+            "permutation_positions": positions,
             "pre_frames": pre,
             "post_frames": post,
             "baseline_frames": baseline,
@@ -953,7 +975,6 @@ def analysis_cfg(pre: int, post: int, baseline: int, windows: tuple, n_frames: i
         "baseline": baseline,
         "windows": tuple(windows),
         "n_frames": int(n_frames),
-        "n_valid_centers": int(len(centers)),
         **extra,
     }
 
@@ -1039,13 +1060,14 @@ def cell_output_dir(sta_dir_s: str, cell_id: int) -> Path:
     return out_dir
 
 
-def cell_shifts(cell_id: int, n_valid_centers: int) -> np.ndarray:
-    return np.random.default_rng(RNG_SEED + int(cell_id)).integers(
-        0,
-        int(n_valid_centers),
-        size=N_PERMUTATIONS,
-        dtype=np.int32,
-    )
+def surrogate_positions(cell_id: int, n_spikes: int, n_valid_centers: int) -> np.ndarray:
+    """The chance copies of one spike train: (N_PERMUTATIONS, n_spikes) positions, each row n_spikes distinct random frames drawn from the
+    valid spike frames (the run's valid centres: splice-free when exclude_spikes_near_cuts is on, like the real spikes). Same seed for the
+    same (rng_seed, cell, number of spikes), so the null of a cell does not change between runs."""
+    if n_spikes > n_valid_centers:
+        raise ValueError(f"Cell {cell_id} has {n_spikes} spikes but only {n_valid_centers} valid spike frames exist: no random surrogate can be drawn.")
+    rng = np.random.default_rng([RNG_SEED, int(cell_id), int(n_spikes)])
+    return np.stack([rng.choice(int(n_valid_centers), size=int(n_spikes), replace=False) for _ in range(N_PERMUTATIONS)]).astype(np.int32)
 
 
 def save_neuron_sta_metadata(out_dir: Path, cell_id: int, pre: int, post: int, baseline: int, suffix: str = "", **extra) -> None:
@@ -1068,7 +1090,7 @@ def run_pool(worker_fn, cfg: dict, cells: list[int], sta_dir: Path, init_args: t
     return rows
 
 
-def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, shifts: np.ndarray, cfg: dict, out_dir: Path) -> dict:
+def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, cfg: dict, out_dir: Path) -> dict:
     """Spike-triggered motion test for one cell; writes cell_<id>/motion_sta.npz. Returns the cell's motion status for the summary csv
     (the one place that decides it). Never raises (diagnostic only)."""
     series = cfg.get("motion_series")
@@ -1077,8 +1099,9 @@ def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, shifts: np.ndarray, 
         return not_tested
     try:
         windows = cfg["windows"]
+        surrogate_frames = _VALID_CENTERS[surrogate_positions(cell_id, int(peaks.size), _VALID_CENTERS.size)]
         stats = motion_sta_stats(
-            series, peaks, shifts, cfg["pre"], cfg["post"],
+            series, peaks, surrogate_frames, cfg["pre"], cfg["post"],
             baseline_window=tuple(int(v) for v in windows[3]),
             analysis_window=tuple(int(v) for v in windows[2]),
             flag_alpha=MOTION_FLAG_ALPHA,
@@ -1142,9 +1165,8 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     out_dir = cell_output_dir(sta_dir_s, cell_id)
 
     spike_groups = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None)
-    shifts = cell_shifts(cell_id, cfg["n_valid_centers"])
     save_neuron_sta_metadata(out_dir, cell_id, pre, post, baseline)
-    motion_row = run_motion_diagnostics(cell_id, spike_groups[g.ALL_GROUP], shifts, cfg, out_dir)
+    motion_row = run_motion_diagnostics(cell_id, spike_groups[g.ALL_GROUP], cfg, out_dir)
 
     rows = []
     for result_type in cfg.get("result_types", RESULT_TYPES):
@@ -1155,7 +1177,6 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
                 cell_id,
                 result_type,
                 peaks,
-                shifts,
                 pre,
                 post,
                 baseline,
@@ -1178,7 +1199,6 @@ def process_cell_behavioral(args: tuple[int, dict, str]) -> list[dict]:
     out_dir = cell_output_dir(sta_dir_s, cell_id)
 
     peaks = load_behavioral_spikes(cell_id, source_frames, cfg["n_frames"], pre, post)
-    shifts = cell_shifts(cell_id, cfg["n_valid_centers"])
     group = f"behavioral_{behavioral_group}"
     save_neuron_sta_metadata(
         out_dir,
@@ -1196,7 +1216,6 @@ def process_cell_behavioral(args: tuple[int, dict, str]) -> list[dict]:
             cell_id,
             group,
             peaks,
-            shifts,
             pre,
             post,
             baseline,
@@ -1336,7 +1355,7 @@ def main() -> None:
 
     if "behavioral" in RESULT_TYPES:
         frame_groups = load_behavioral_frame_groups(paths)
-        source_behavioral_segments = path_for(PathKind.STA_BEHAVIOR_SEGMENTS, paths.sta_dir)
+        source_behavioral_segments = behavior_segments_path()
         skipped_groups = []
         for behavioral_group in BEHAVIORAL_GROUPS:
             source_frames = frame_groups[behavioral_group]

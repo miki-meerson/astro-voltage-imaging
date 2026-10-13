@@ -399,7 +399,7 @@ MOTION_SERIES_LABELS = {
 
 
 def _draw_motion_tile(rels, observed, null_mean, null_sd, title: str, p: float, z: float, size: tuple[int, int]) -> Image.Image:
-    """Spike-triggered average of one motion series (colored) over its circular-shift null (grey band, +-2 sd)."""
+    """Spike-triggered average of one motion series (colored) over its random-frame null (grey band, +-2 sd)."""
     tile = Image.new("RGB", size, "#0b0f14")
     draw = ImageDraw.Draw(tile)
     w, h = size
