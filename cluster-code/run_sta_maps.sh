@@ -13,4 +13,6 @@ echo "bashrc sourced"
 . ${HOME}/miniconda3/bin/activate caiman
 echo "caiman env activated"
 
+# the job starts in --chdir (= cluster-code): the repo root holds the utils package
+export PYTHONPATH="$(cd "$PWD/.." && pwd)${PYTHONPATH:+:$PYTHONPATH}"
 python -u sta_maps_sparse.py "$PARAMS_FILE"

@@ -7,13 +7,16 @@ import shlex
 import sys
 import time
 
+import paramiko
+
 from app.services.cluster_ssh import load_cluster_credentials, run_ssh_command
+from app.settings import PROJECT_ROOT
+from utils import globals_utils as g
+from utils.paths_utils import PathKind, cell_dirs, path_for, sta_dir_of_run
 from utils.suite2p_utils import load_suite2p_context
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-STA_SCRIPT = PROJECT_ROOT / "cluster-code" / "sta_maps_sparse.py"
-BEHAVIOR_SEGMENTS = "behavioral_segements.npz"
+DEFAULT_RESULT_TYPES = ["all", "simple", "complex", "behavioral"]
+DATA_SHARE_NAME = "Adam-Lab-Shared"  # the folder of the lab share that the cluster mounts at path_map["to_cluster"]
 
 
 def _cluster_path(path: Path | str, params: dict) -> str:
@@ -29,7 +32,7 @@ def _cluster_path(path: Path | str, params: dict) -> str:
             suffix = value[len(from_root):].lstrip("\\/")
             return to_root + ("/" + suffix.replace("\\", "/") if suffix else "")
     normalized = value.replace("\\", "/")
-    marker = "Adam-Lab-Shared"
+    marker = DATA_SHARE_NAME
     if to_root and marker in normalized:
         suffix = normalized.split(marker, 1)[1].lstrip("/")
         return to_root + ("/" + suffix if suffix else "")
@@ -51,10 +54,6 @@ def _submit_command_available(command: list[str], params: dict) -> None:
         raise ValueError("cluster_submit_command is empty.")
     if _submission_method(params) != "paramiko":
         raise ValueError("Cluster STA submission supports only Paramiko remote sbatch.")
-    try:
-        import paramiko  # noqa: F401
-    except ImportError as exc:
-        raise FileNotFoundError("paramiko is required for cluster submission but is not installed.") from exc
     load_cluster_credentials(_ssh_settings(params))
 
 
@@ -75,7 +74,7 @@ def _run_paramiko_command(command: str, params: dict) -> tuple[str, str, int]:
     for attempt in range(1, attempts + 1):
         try:
             return run_ssh_command(_ssh_settings(params), command)
-        except Exception as exc:
+        except (OSError, paramiko.SSHException, EOFError) as exc:  # connection problems; anything else is a bug and propagates
             last_exc = exc
             if attempt == attempts:
                 raise
@@ -87,30 +86,22 @@ def _run_paramiko_command(command: str, params: dict) -> tuple[str, str, int]:
                 flush=True,
             )
             time.sleep(delay)
-    raise RuntimeError(f"Paramiko command failed: {last_exc}")
+    raise RuntimeError(f"Paramiko command was not run: cluster_paramiko_attempts is {attempts}, it must be at least 1.")
 
 
 def _result_types(params: dict) -> list[str]:
-    result_types = params.get("result_types", ["all", "simple", "complex", "behavioral"])
+    result_types = params.get("result_types", DEFAULT_RESULT_TYPES)
     if isinstance(result_types, str):
         return [result_types]
     return [str(item) for item in result_types]
 
 
 def _spike_cell_ids(spike_run: Path) -> list[int]:
-    cell_ids = []
-    for path in spike_run.glob("cell_*"):
-        if not path.is_dir():
-            continue
-        try:
-            cell_ids.append(int(path.name.split("_", 1)[1]))
-        except ValueError:
-            continue
-    return sorted(cell_ids)
+    return sorted(cell_dirs(spike_run))
 
 
 def _validate_spike_suite2p_alignment(source_home: Path, spike_run: Path) -> None:
-    suite_path = source_home / "pipeline_results" / "for_suite2p" / "suite2p" / "plane0"
+    suite_path = path_for(PathKind.SUITE2P_PLANE0, source_home)
     suite2p = load_suite2p_context(suite_path)
     n_cells = int(suite2p["n_cells"])
     spike_cells = _spike_cell_ids(spike_run)
@@ -125,9 +116,9 @@ def _validate_spike_suite2p_alignment(source_home: Path, spike_run: Path) -> Non
 
 
 def _prepare_cluster_mirror(source_home: Path, out: Path, params: dict) -> tuple[Path, Path, Path | None]:
-    mirror_home = out / "sta_algorithm_home"
+    mirror_home = path_for(PathKind.STA_ALGORITHM_HOME, out)
     mirror_home.mkdir(parents=True, exist_ok=True)
-    (mirror_home / "sta-analysis").mkdir(parents=True, exist_ok=True)
+    path_for(PathKind.RUN_STA_ANALYSIS, mirror_home).mkdir(parents=True, exist_ok=True)
 
     spike_run = Path(params.get("spike_run") or "") if params.get("spike_run") else None
     if spike_run is None or not spike_run.exists():
@@ -136,12 +127,12 @@ def _prepare_cluster_mirror(source_home: Path, out: Path, params: dict) -> tuple
 
     behavior_run = Path(params.get("behavior_run") or "") if params.get("behavior_run") else None
     if "behavioral" in _result_types(params):
-        if behavior_run is None or not (behavior_run / BEHAVIOR_SEGMENTS).exists():
+        if behavior_run is None or not path_for(PathKind.BEHAVIOR_SEGMENTS, behavior_run).exists():
             raise FileNotFoundError("STA behavioral result_type requires a project-owned behavioral run output.")
 
     if "anatomy" in _result_types(params):
         anatomy_run = Path(params.get("anatomy_run") or "") if params.get("anatomy_run") else None
-        crop_path = anatomy_run / "sta-analysis" / "anatomy_crop_params.npz" if anatomy_run else None
+        crop_path = path_for(PathKind.ANATOMY_CROP_PARAMS, anatomy_run) if anatomy_run else None
         if crop_path is None or not crop_path.exists():
             raise FileNotFoundError(
                 "STA anatomy result_type was requested, but no completed app Anatomy Crop output was supplied. "
@@ -162,7 +153,11 @@ def _cluster_preflight(source_home: Path, mirror_home: Path, spike_run: Path, be
     behavior = _sh_single(_cluster_path(behavior_run, params)) if behavior_run else "''"
     anatomy_run = Path(params.get("anatomy_run") or "") if params.get("anatomy_run") else None
     anatomy = _sh_single(_cluster_path(anatomy_run, params)) if anatomy_run else "''"
-    behavioral_segments = _sh_single(BEHAVIOR_SEGMENTS)
+
+    def at(kind: PathKind, root: str, **fields) -> str:
+        return path_for(kind, root, **fields).as_posix()  # a shell path under $SOURCE_HOME, $MIRROR_HOME or $ANATOMY_RUN
+
+    mirror_sta = at(PathKind.RUN_STA_ANALYSIS, "$MIRROR_HOME")
     return f"""
 set -euo pipefail
 SOURCE_HOME={source}
@@ -170,36 +165,35 @@ MIRROR_HOME={mirror}
 SPIKE_RUN={spike}
 BEHAVIOR_RUN={behavior}
 ANATOMY_RUN={anatomy}
-BEHAVIOR_SEGMENTS={behavioral_segments}
 
 echo "Preparing cluster STA mirror at $MIRROR_HOME"
-mkdir -p "$MIRROR_HOME/pipeline_results/pb_corrected"
-mkdir -p "$MIRROR_HOME/pipeline_results/for_suite2p/suite2p"
-mkdir -p "$MIRROR_HOME/pipeline_results/qc"
-mkdir -p "$MIRROR_HOME/sta-analysis"
+mkdir -p "{at(PathKind.PB_CORRECTED_DIR, "$MIRROR_HOME")}"
+mkdir -p "{at(PathKind.SUITE2P_PLANE0, "$MIRROR_HOME")}"
+mkdir -p "{at(PathKind.QC_DIR, "$MIRROR_HOME")}"
+mkdir -p "{mirror_sta}"
 
-ln -sfn "$SOURCE_HOME/Experiment.xml" "$MIRROR_HOME/Experiment.xml"
-ln -sfn "$SOURCE_HOME/Image_scan_1_region_0_0.tif" "$MIRROR_HOME/Image_scan_1_region_0_0.tif"
-for behavior_csv in "$SOURCE_HOME"/imaging_*.csv; do
+ln -sfn "{at(PathKind.EXPERIMENT_XML, "$SOURCE_HOME")}" "{at(PathKind.EXPERIMENT_XML, "$MIRROR_HOME")}"
+ln -sfn "{at(PathKind.RAW_MOVIE, "$SOURCE_HOME")}" "{at(PathKind.RAW_MOVIE, "$MIRROR_HOME")}"
+for behavior_csv in "$SOURCE_HOME"/{g.IMAGING_CSV_GLOB}; do
   if [ -e "$behavior_csv" ]; then ln -sfn "$behavior_csv" "$MIRROR_HOME/$(basename "$behavior_csv")"; fi
 done
-ln -sfn "$SOURCE_HOME/pipeline_results/pb_corrected/astro_photobleaching_corrected.tif" "$MIRROR_HOME/pipeline_results/pb_corrected/astro_photobleaching_corrected.tif"
-if [ -e "$SOURCE_HOME/pipeline_results/pb_corrected/neuron_photobleaching_corrected.tif" ]; then
-  ln -sfn "$SOURCE_HOME/pipeline_results/pb_corrected/neuron_photobleaching_corrected.tif" "$MIRROR_HOME/pipeline_results/pb_corrected/neuron_photobleaching_corrected.tif"
+ln -sfn "{at(PathKind.ASTRO_PB_MOVIE, "$SOURCE_HOME")}" "{at(PathKind.ASTRO_PB_MOVIE, "$MIRROR_HOME")}"
+if [ -e "{at(PathKind.NEURON_PB_MOVIE, "$SOURCE_HOME")}" ]; then
+  ln -sfn "{at(PathKind.NEURON_PB_MOVIE, "$SOURCE_HOME")}" "{at(PathKind.NEURON_PB_MOVIE, "$MIRROR_HOME")}"
 fi
-if [ -e "$SOURCE_HOME/pipeline_results/qc/bad_segments.json" ]; then
-  ln -sfn "$SOURCE_HOME/pipeline_results/qc/bad_segments.json" "$MIRROR_HOME/pipeline_results/qc/bad_segments.json"
+if [ -e "{at(PathKind.BAD_SEGMENTS, "$SOURCE_HOME")}" ]; then
+  ln -sfn "{at(PathKind.BAD_SEGMENTS, "$SOURCE_HOME")}" "{at(PathKind.BAD_SEGMENTS, "$MIRROR_HOME")}"
 fi
-rm -rf "$MIRROR_HOME/pipeline_results/for_suite2p/suite2p/plane0"
-ln -sfn "$SOURCE_HOME/pipeline_results/for_suite2p/suite2p/plane0" "$MIRROR_HOME/pipeline_results/for_suite2p/suite2p/plane0"
+rm -rf "{at(PathKind.SUITE2P_PLANE0, "$MIRROR_HOME")}"
+ln -sfn "{at(PathKind.SUITE2P_PLANE0, "$SOURCE_HOME")}" "{at(PathKind.SUITE2P_PLANE0, "$MIRROR_HOME")}"
 
-rm -rf "$MIRROR_HOME/automated-spike-analysis"
-ln -sfn "$SPIKE_RUN" "$MIRROR_HOME/automated-spike-analysis"
-if [ -n "$BEHAVIOR_RUN" ] && [ -e "$BEHAVIOR_RUN/$BEHAVIOR_SEGMENTS" ]; then
-  ln -sfn "$BEHAVIOR_RUN/$BEHAVIOR_SEGMENTS" "$MIRROR_HOME/sta-analysis/$BEHAVIOR_SEGMENTS"
+rm -rf "{at(PathKind.SPIKE_RUN_LINK, "$MIRROR_HOME")}"
+ln -sfn "$SPIKE_RUN" "{at(PathKind.SPIKE_RUN_LINK, "$MIRROR_HOME")}"
+if [ -n "$BEHAVIOR_RUN" ] && [ -e "{at(PathKind.BEHAVIOR_SEGMENTS, "$BEHAVIOR_RUN")}" ]; then
+  ln -sfn "{at(PathKind.BEHAVIOR_SEGMENTS, "$BEHAVIOR_RUN")}" "{at(PathKind.STA_BEHAVIOR_SEGMENTS, mirror_sta)}"
 fi
-if [ -n "$ANATOMY_RUN" ] && [ -e "$ANATOMY_RUN/sta-analysis/anatomy_crop_params.npz" ]; then
-  ln -sfn "$ANATOMY_RUN/sta-analysis/anatomy_crop_params.npz" "$MIRROR_HOME/sta-analysis/anatomy_crop_params.npz"
+if [ -n "$ANATOMY_RUN" ] && [ -e "{at(PathKind.ANATOMY_CROP_PARAMS, "$ANATOMY_RUN")}" ]; then
+  ln -sfn "{at(PathKind.ANATOMY_CROP_PARAMS, "$ANATOMY_RUN")}" "{at(PathKind.ANATOMY_CROP_PARAMS, "$MIRROR_HOME")}"
 fi
 """
 
@@ -209,7 +203,7 @@ def _write_config(mirror_home: Path, out: Path, params: dict, source_home: Path)
     cfg["home_dir"] = _cluster_path(mirror_home, params)
     cfg["source_home_dir"] = _cluster_path(source_home, params)
     cfg.setdefault("cell_ids", "all")
-    cfg.setdefault("result_types", ["all", "simple", "complex", "behavioral"])
+    cfg.setdefault("result_types", DEFAULT_RESULT_TYPES)
     cfg.setdefault("n_permutations", 200)
     cfg.setdefault("spatial_bin", 1)
     cfg.setdefault("anatomy_spatial_bin", 1)
@@ -218,38 +212,80 @@ def _write_config(mirror_home: Path, out: Path, params: dict, source_home: Path)
     cfg.setdefault("rng_seed", 0)
     cfg.setdefault("analysis_half_window", 10)
     cfg.setdefault("n_workers", 1)
-    cfg["summary_csv"] = "sta-analysis/sta_maps_batch_summary.csv"
-    cfg_path = out / "sta_maps_job_params.effective.json"
+    cfg["summary_csv"] = path_for(PathKind.STA_SUMMARY_CSV, path_for(PathKind.RUN_STA_ANALYSIS, ".")).as_posix()
+    cfg_path = path_for(PathKind.STA_JOB_PARAMS_EFFECTIVE, out)
     cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return cfg_path
 
 
 def _write_metrics(out: Path, mirror_home: Path, config_path: Path, spike_run: Path) -> None:
-    sta_dir = mirror_home / "sta-analysis"
-    npz_files = sorted(sta_dir.glob("cell_*/astro_sta_cluster_permutation*.npz"))
+    sta_dir = path_for(PathKind.RUN_STA_ANALYSIS, mirror_home)
+    npz_files = sorted(p for cell_dir in cell_dirs(sta_dir).values() for p in cell_dir.glob(g.RESULT_GLOB))
     rows = []
     for p in npz_files:
         rows.append({"path": str(p.relative_to(out)), "size_bytes": p.stat().st_size})
     metrics = {
-        "algorithm": "cluster-code/sta_maps_sparse.py",
+        "algorithm": path_for(PathKind.STA_ALGORITHM_SCRIPT, "").as_posix(),
         "effective_config": str(config_path.relative_to(out)),
         "source_spike_run": str(spike_run),
         "sta_npz_count": len(npz_files),
         "sta_outputs": rows,
     }
-    (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    path_for(PathKind.RUN_METRICS_JSON, out).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 
-def _run_cluster_job(config_path: Path, out: Path, params: dict, preflight: str = "") -> int:
+def _submit_group_test(out: Path, source_home: Path, params: dict, sta_job_id: str) -> str | None:
+    """Submit the anatomy group test (real vs shifted-spike results of all cells) as a Slurm job that starts when the STA job finished OK.
+
+    Part of the pipeline: it needs the finished anatomy results, so it is chained with a dependency and needs no waiting here. A problem
+    only prints a warning: the STA job is already submitted and does not depend on it. Returns the job id, or None."""
+    if not params.get("run_group_test_after_sta", True):
+        return None
+    if "anatomy" not in _result_types(params):
+        print("Group test not submitted: this run has no 'anatomy' result type.")
+        return None
+    script = path_for(PathKind.GROUP_TEST_JOB_SCRIPT, PROJECT_ROOT)
+    if not script.exists():
+        print(f"WARNING: group test not submitted: missing {script}", file=sys.stderr)
+        return None
+    sta_dir = sta_dir_of_run(out)
+    log = path_for(PathKind.GROUP_TEST_STDOUT_LOG, out)
+    cmd = _command_parts(params.get("cluster_submit_command") or "sbatch") + [
+        f"--dependency=afterok:{sta_job_id}",
+        "--kill-on-invalid-dep=yes",
+        f"--chdir={_cluster_path(path_for(PathKind.CLUSTER_CODE, PROJECT_ROOT), params)}",
+        f"--output={_cluster_path(log, params)}",
+        f"--error={_cluster_path(log, params)}",
+        _cluster_path(script, params),
+        _cluster_path(sta_dir, params),
+        _cluster_path(source_home, params),
+    ]
+    print("Submitting the anatomy group test (starts after the STA job):")
+    print(" ".join(cmd))
+    try:
+        stdout, stderr, code = _run_paramiko_command(shlex.join(cmd), params)
+    except (OSError, ValueError, RuntimeError, paramiko.SSHException) as exc:
+        print(f"WARNING: group test not submitted: {exc}", file=sys.stderr)
+        return None
+    job_id = _parse_sbatch_job_id(stdout) if code == 0 else None
+    if not job_id:
+        print(f"WARNING: group test not submitted (sbatch exit {code}): {(stderr or stdout).strip()[:300]}", file=sys.stderr)
+        return None
+    path_for(PathKind.GROUP_TEST_JOB_ID, out).write_text(job_id + "\n", encoding="utf-8")
+    print(f"Submitted group test job {job_id} (after STA job {sta_job_id}); it writes {g.GROUP_TEST} in the STA folder.")
+    return job_id
+
+
+def _run_cluster_job(config_path: Path, out: Path, params: dict, preflight: str = "", source_home: Path | None = None) -> int:
     submit_command = _command_parts(params.get("cluster_submit_command") or "sbatch")
     _submit_command_available(submit_command, params)
-    cluster_script = Path(params.get("cluster_script") or (PROJECT_ROOT / "cluster-code" / "run_sta_maps.sh"))
+    cluster_script = Path(params.get("cluster_script") or path_for(PathKind.STA_JOB_SCRIPT, PROJECT_ROOT))
     if not cluster_script.is_absolute():
         cluster_script = PROJECT_ROOT / cluster_script
     if not cluster_script.exists():
         raise FileNotFoundError(f"Missing cluster STA script: {cluster_script}")
-    cluster_stdout = out / "cluster_stdout.log"
-    cluster_stderr = out / "cluster_stderr.log"
+    cluster_stdout = path_for(PathKind.CLUSTER_STDOUT_LOG, out)
+    cluster_stderr = path_for(PathKind.CLUSTER_STDERR_LOG, out)
     if preflight.strip():
         print("Preparing cluster STA mirror through remote shell commands.")
         preflight_out, preflight_err, preflight_code = _run_paramiko_command(preflight, params)
@@ -261,7 +297,7 @@ def _run_cluster_job(config_path: Path, out: Path, params: dict, preflight: str 
             print(f"Cluster mirror preparation exited with code {preflight_code}", file=sys.stderr)
             return int(preflight_code)
     cmd = submit_command + [
-        f"--chdir={_cluster_path(STA_SCRIPT.parent, params)}",
+        f"--chdir={_cluster_path(path_for(PathKind.CLUSTER_CODE, PROJECT_ROOT), params)}",
         f"--output={_cluster_path(cluster_stdout, params)}",
         f"--error={_cluster_path(cluster_stderr, params)}",
         _cluster_path(cluster_script, params),
@@ -283,9 +319,11 @@ def _run_cluster_job(config_path: Path, out: Path, params: dict, preflight: str 
     if not job_id:
         print("Could not parse a Slurm job id from sbatch output; treating submission as failed.", file=sys.stderr)
         return 1
-    (out / "cluster_job_id.txt").write_text(job_id + "\n", encoding="utf-8")
+    path_for(PathKind.CLUSTER_JOB_ID, out).write_text(job_id + "\n", encoding="utf-8")
     print(f"Submitted Slurm job {job_id}")
     print("Slurm job submitted; the web app will monitor completion.")
+    if source_home is not None:
+        _submit_group_test(out, source_home, params, job_id)
     return 0
 
 
@@ -308,13 +346,10 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     params = json.loads(args.params_json or "{}")
 
-    if not STA_SCRIPT.exists():
-        raise FileNotFoundError(f"Missing STA script: {STA_SCRIPT}")
-
     mirror_home, spike_run, behavior_run = _prepare_cluster_mirror(source_home, out, params)
     config_path = _write_config(mirror_home, out, params, source_home)
     preflight = _cluster_preflight(source_home, mirror_home, spike_run, behavior_run, params)
-    return_code = _run_cluster_job(config_path, out, params, preflight)
+    return_code = _run_cluster_job(config_path, out, params, preflight, source_home)
     if return_code != 0:
         raise SystemExit(return_code)
     _write_metrics(out, mirror_home, config_path, spike_run)
