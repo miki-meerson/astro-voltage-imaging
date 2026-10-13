@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from utils.paths_utils import PathKind, path_for
+from utils.sta_trace_utils import pixels_in_crop
 
 
 def read_suite2p_traces(suite2p_path, cell_mask, neuropil_correction=False):
@@ -60,10 +61,7 @@ def roi_center(stat_cell) -> tuple[float, float]:
 
 def roi_pixels_in_crop(stat_cell, crop: dict) -> list:
     """The ROI pixels [[y, x], ...] that fall inside a crop box {y0, x0, height, width}, in the crop's own coordinates."""
-    ys, xs = roi_pixels(stat_cell)
-    ys, xs = ys - int(crop["y0"]), xs - int(crop["x0"])
-    keep = (ys >= 0) & (ys < int(crop["height"])) & (xs >= 0) & (xs < int(crop["width"]))
-    return np.stack([ys[keep], xs[keep]], axis=1).tolist()
+    return pixels_in_crop(*roi_pixels(stat_cell), crop)
 
 
 def suite2p_trace_dff(

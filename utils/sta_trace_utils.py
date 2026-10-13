@@ -1,67 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
 
-def significant_cluster_specs_from_npz(npz_path: str | Path, cluster_colors: dict | None = None) -> list[dict]:
-    with np.load(npz_path, allow_pickle=True) as d:
-        sig = np.asarray(d["significant_cluster_mask"], dtype=bool)
-        effect = np.asarray(d["observed_effect_movie"], dtype=float)
-        # trace values are dF/F-like: use the raw effect, not the tested z-statistic (sign test below is unaffected)
-        trace_effect = np.asarray(d["observed_effect_raw_movie"], dtype=float) if "observed_effect_raw_movie" in d else effect
-        crop = tuple(np.asarray(d["anatomy_crop_bounds"], dtype=int))
-        pre = int(np.asarray(d["pre_frames"]))
-        post = int(np.asarray(d["post_frames"]))
-        spatial_bin = int(np.asarray(d["spatial_bin"]))
-        peaks = np.asarray(d["peaks"], dtype=int)
-        summary = np.asarray(d["cluster_summary"], dtype=object)
-        analysis_window = tuple(np.asarray(d["analysis_window"], dtype=int))
-    if not sig.any() or summary.size == 0:
-        return []
-    sig_rows = summary[np.asarray(summary[:, 6], dtype=bool)]
-    if sig_rows.size == 0:
-        return []
-
-    allowed_signs = set(cluster_colors or {"positive": None, "negative": None})
-    mask_crop = sig.any(axis=0)
-    effect_trace = np.asarray(trace_effect[:, mask_crop].mean(axis=1), dtype=np.float32)
-    effect_t_rel = np.arange(int(analysis_window[0]), int(analysis_window[1]) + 1, dtype=int)[: effect_trace.size]
-    specs = []
-    for row in sig_rows:
-        sign = str(row[1]).lower()
-        if sign not in allowed_signs:
-            sign = "positive" if np.nanmean(effect[sig]) >= 0 else "negative"
-        specs.append(
-            {
-                "component_id": int(row[0]),
-                "sign": sign,
-                "mask_crop": mask_crop,
-                "crop": crop,
-                "pre": pre,
-                "post": post,
-                "spatial_bin": spatial_bin,
-                "peaks": peaks,
-                "effect_trace": effect_trace,
-                "effect_t_rel": effect_t_rel,
-            }
-        )
-    return specs
-
-
-def crop_mask_to_fullres(mask_crop: np.ndarray, crop: tuple[int, int, int, int], spatial_bin: int, image_shape: tuple[int, int]) -> np.ndarray:
-    y0, y1, x0, x1 = crop
-    spatial_bin = int(spatial_bin)
-    binned_shape = (int(np.ceil(image_shape[0] / spatial_bin)), int(np.ceil(image_shape[1] / spatial_bin)))
-    full_binned = np.zeros(binned_shape, dtype=bool)
-    h = min(mask_crop.shape[0], y1 - y0)
-    w = min(mask_crop.shape[1], x1 - x0)
-    full_binned[y0 : y0 + h, x0 : x0 + w] = np.asarray(mask_crop, dtype=bool)[:h, :w]
-    if spatial_bin <= 1:
-        return full_binned[: image_shape[0], : image_shape[1]]
-    return np.repeat(np.repeat(full_binned, spatial_bin, axis=0), spatial_bin, axis=1)[: image_shape[0], : image_shape[1]]
+def pixels_in_crop(ys: np.ndarray, xs: np.ndarray, crop: dict) -> list:
+    """The pixels (ys, xs) that fall inside a crop box {y0, x0, height, width}, as [[y, x], ...] in the crop's own coordinates."""
+    ys, xs = np.asarray(ys) - int(crop["y0"]), np.asarray(xs) - int(crop["x0"])
+    keep = (ys >= 0) & (ys < int(crop["height"])) & (xs >= 0) & (xs < int(crop["width"]))
+    return np.stack([ys[keep], xs[keep]], axis=1).tolist()
 
 
 def event_triggered_mean(x: np.ndarray, centers: np.ndarray, rels: np.ndarray) -> np.ndarray:

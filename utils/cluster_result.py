@@ -15,13 +15,22 @@ from utils.sta_stats_utils import cluster_trace_wide
 TRACE_HALF_WINDOW_FRAMES = 50
 
 
-def cluster_center_fullres(mask2d: np.ndarray, crop, spatial_bin: int) -> tuple[float, float]:
-    """Centre (y, x) of a 2D cluster footprint in full-resolution pixel coordinates (crop = (y0, y1, x0, x1) of the anatomy crop or None)."""
+def cluster_pixels_fullres(mask2d: np.ndarray, crop, spatial_bin: int) -> tuple[np.ndarray, np.ndarray]:
+    """Full-resolution pixel coordinates (ys, xs) covered by a 2D cluster footprint given in bin units (crop = (y0, y1, x0, x1) of the
+    anatomy crop in bin units, or None). Each bin is a block of spatial_bin x spatial_bin pixels. The one bin -> pixel mapping."""
     ys, xs = np.nonzero(mask2d)
     y0, x0 = (int(crop[0]), int(crop[2])) if crop is not None else (0, 0)
     b = int(spatial_bin)
-    # bin units -> full-resolution pixel coordinates (pixel centres)
-    return (y0 + float(ys.mean()) + 0.5) * b - 0.5, (x0 + float(xs.mean()) + 0.5) * b - 0.5
+    block_y, block_x = np.meshgrid(np.arange(b), np.arange(b), indexing="ij")
+    full_y = (y0 + ys)[:, None] * b + block_y.ravel()[None, :]
+    full_x = (x0 + xs)[:, None] * b + block_x.ravel()[None, :]
+    return full_y.ravel(), full_x.ravel()
+
+
+def cluster_center_fullres(mask2d: np.ndarray, crop, spatial_bin: int) -> tuple[float, float]:
+    """Centre (y, x) of a 2D cluster footprint in full-resolution pixel coordinates (crop = (y0, y1, x0, x1) of the anatomy crop or None)."""
+    ys, xs = cluster_pixels_fullres(mask2d, crop, spatial_bin)
+    return float(ys.mean()), float(xs.mean())
 
 
 def cluster_offset_from_roi(mask2d: np.ndarray, crop, spatial_bin: int, roi_yx: tuple[float, float]) -> tuple[float, float]:

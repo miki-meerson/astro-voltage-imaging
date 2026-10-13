@@ -13,9 +13,10 @@ from app.services import caches
 from app.services.runs import run_dir
 from utils import globals_utils as g
 from utils.cluster_context import significant_clusters
-from utils.cluster_result import cluster_basic_fields
+from utils.cluster_result import cluster_basic_fields, cluster_pixels_fullres
 from utils.db_utils import collect_cluster_result_metadata
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
+from utils.sta_trace_utils import pixels_in_crop
 
 STA_RESULT_TYPES = [
     ("all", "All"),
@@ -108,20 +109,13 @@ def anatomy_clusters_in_crop(anatomy_npz: Path, crop: dict) -> list[dict]:
         b = int(np.asarray(d["spatial_bin"]).item())
         window_start = int(np.asarray(d["analysis_window"], dtype=int)[0])
         for c in significant_clusters(d, limit=None):
-            ys, xs = np.nonzero(np.asarray(c["mask3d"], dtype=bool).any(axis=0))
-            pix = set()
-            for y, x in zip(ys.tolist(), xs.tolist()):  # bin units -> full-resolution pixels (blocks), then into the crop
-                for dy in range(b):
-                    for dx in range(b):
-                        yy, xx = (ay0 + y) * b + dy - int(crop["y0"]), (ax0 + x) * b + dx - int(crop["x0"])
-                        if 0 <= yy < int(crop["height"]) and 0 <= xx < int(crop["width"]):
-                            pix.add((yy, xx))
-            if not pix:
+            ys, xs = cluster_pixels_fullres(np.asarray(c["mask3d"], dtype=bool).any(axis=0), (ay0, 0, ax0, 0), b)
+            pixels = np.unique(np.array(pixels_in_crop(ys, xs, crop)).reshape(-1, 2), axis=0)  # sorted, no duplicates
+            if not len(pixels):
                 continue
-            arr = np.array(sorted(pix))
             out.append({
                 **cluster_basic_fields(c, window_start),
-                "centroid": [float(arr[:, 0].mean()), float(arr[:, 1].mean())],
-                "pixels": arr.tolist(),
+                "centroid": [float(pixels[:, 0].mean()), float(pixels[:, 1].mean())],
+                "pixels": pixels.tolist(),
             })
     return out
