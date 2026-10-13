@@ -1,6 +1,6 @@
 """Re-evaluate saved STA anatomy results under alternative statistic settings and calibrate against surrogates.
 
-Read-only. For every cell it loads `astro_sta_cluster_permutation_anatomy.npz` (observed + permutation effects),
+Read-only. For every cell it loads the anatomy result (utils/globals_utils.py ANATOMY_RESULT; observed + permutation effects),
 re-runs the cluster-permutation statistic with the real code from cluster-code/sta_maps_sparse.py under several
 configurations, and reports for each:
 
@@ -9,8 +9,8 @@ configurations, and reports for each:
   * where the significant pixels fall in brightness deciles (real vs. chance) -> brightness bias,
   * median cluster size (voxels / footprint px / frames), real vs. chance.
 
-Usage (from the repo root, analysis environment with numpy/scipy):
-  python tools/sta_surrogate_calibration.py --sta-dir <run>/sta_algorithm_home/sta-analysis \
+Usage (from the repo root, analysis environment with numpy/scipy; PYTHONPATH must hold the repo root and cluster-code):
+  PYTHONPATH=.:cluster-code python -m tools.sta_surrogate_calibration --sta-dir <run>/sta_algorithm_home/sta-analysis \
       --pipeline-dir <experiment>/pipeline_results --out calib.json [--configs configs.json]
 
 `--configs` is an optional JSON {name: {SETTING: value}} of sta_maps_sparse module globals, e.g.
@@ -20,18 +20,16 @@ See docs/statistics.md for how to read the output.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import scipy.ndimage as ndi
 from scipy.stats import rankdata
 
-REPO = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(REPO), str(REPO / "cluster-code")]
-import sta_maps_sparse as sta  # noqa: E402
+import sta_maps_sparse as sta
+from utils import globals_utils as g
+from utils.paths_utils import PathKind, cell_dirs, path_for
 
 DEFAULT_CONFIGS = {
     "legacy": dict(NULL_STANDARDIZATION="none", SMOOTH_SIGMA_FULLRES_PX=0.0, MIN_CLUSTER_FOOTPRINT_FULLRES_PX=0.0, MIN_CLUSTER_FRAMES=0),
@@ -42,8 +40,10 @@ DEFAULT_CONFIGS = {
 DECILES = np.arange(0, 101, 10)
 
 
-def _cell_id(path: str) -> int:
-    return int(Path(path).parent.name.split("_", 1)[1])
+def _anatomy_files(sta_dir: str | Path) -> list[Path]:
+    """The anatomy result of every cell that has one, ordered by cell number."""
+    files = [path_for(PathKind.ANATOMY_RESULT, sta_dir, cell=cell) for cell in cell_dirs(sta_dir)]
+    return [f for f in files if f.exists()]
 
 
 def _geom(mask: np.ndarray) -> tuple[int, int, int]:
@@ -51,7 +51,7 @@ def _geom(mask: np.ndarray) -> tuple[int, int, int]:
     return int(mask.sum()), int(footprint.sum()), int(mask.any((1, 2)).sum())
 
 
-def evaluate(files: list[str], mean_full: np.ndarray, configs: dict) -> dict:
+def evaluate(files: list[Path], mean_full: np.ndarray, configs: dict) -> dict:
     out = {k: dict(cells=0, cells_sig=0, sur_any=[], real_b=np.zeros(10), sur_b=np.zeros(10), real_g=[], sur_g=[]) for k in configs}
     mean_img = None
     for f in files:
@@ -93,7 +93,7 @@ def evaluate(files: list[str], mean_full: np.ndarray, configs: dict) -> dict:
                         o["sur_b"] += np.histogram(bright[rec["mask"].any(0)], bins=DECILES)[0]
                 hits += hit
             o["sur_any"].append(hits / perm.shape[0])
-        print(f"cell {_cell_id(f)}: " + ", ".join(f"{k}={out[k]['cells_sig']}" for k in out), flush=True)
+        print(f"{Path(f).parent.name}: " + ", ".join(f"{k}={out[k]['cells_sig']}" for k in out), flush=True)
 
     def share(hist, idx):
         return round(float(hist[idx].sum() / max(hist.sum(), 1)), 3)
@@ -125,12 +125,12 @@ def main() -> None:
     args = ap.parse_args()
 
     configs = json.loads(Path(args.configs).read_text()) if args.configs else DEFAULT_CONFIGS
-    files = sorted(glob.glob(str(Path(args.sta_dir) / "cell_*" / "astro_sta_cluster_permutation_anatomy.npz")), key=_cell_id)
+    files = _anatomy_files(args.sta_dir)
     if args.max_cells:
         files = files[: args.max_cells]
     if not files:
-        raise SystemExit("no astro_sta_cluster_permutation_anatomy.npz files found")
-    mean_full = np.load(Path(args.pipeline_dir) / "motion_corrected" / "astro_mean_image.npy").astype(np.float32)
+        raise SystemExit(f"no {g.ANATOMY_RESULT} files found")
+    mean_full = np.load(path_for(PathKind.MC_ASTRO_MEAN_IMAGE, path_for(PathKind.MOTION_CORRECTED_DIR, Path(args.pipeline_dir).parent))).astype(np.float32)
     result = evaluate(files, mean_full, configs)
     text = json.dumps(result, indent=1)
     print(text)

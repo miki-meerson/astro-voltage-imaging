@@ -22,27 +22,25 @@ def behavior_payload(settings, run_row) -> dict:
         return cached
     max_points = 3000
     with np.load(path, allow_pickle=True) as d:
-        time_s = np.asarray(d["pb_frame_times_s"], dtype=float) if "pb_frame_times_s" in d else np.arange(0)
-        active = np.asarray(d["active_mask"], dtype=bool) if "active_mask" in d else np.zeros(time_s.shape, dtype=bool)
-        inactive = np.asarray(d["inactive_mask"], dtype=bool) if "inactive_mask" in d else np.zeros(time_s.shape, dtype=bool)
-        covered = np.asarray(d["behavior_covered_mask"], dtype=bool) if "behavior_covered_mask" in d else np.ones(time_s.shape, dtype=bool)
-        threshold = float(np.asarray(d["speed_threshold"]).item()) if "speed_threshold" in d else 0.0
-        if "fps" not in d:
-            raise ValueError(f"The behavior result {path} has no frame rate (fps): rerun the Behavior Split step.")
+        time_s = np.asarray(d["pb_frame_times_s"], dtype=float)
+        active = np.asarray(d["active_mask"], dtype=bool)
+        inactive = np.asarray(d["inactive_mask"], dtype=bool)
+        covered = np.asarray(d["behavior_covered_mask"], dtype=bool)
+        threshold = float(np.asarray(d["speed_threshold"]).item())
         fps = float(np.asarray(d["fps"]).item())
-        chosen = str(np.asarray(d["chosen_alignment"]).item()) if "chosen_alignment" in d else ""
-        behavior_source = str(np.asarray(d["behavior_source"]).item()) if "behavior_source" in d else ""
-        ts_fallback_reason = str(np.asarray(d["ts_fallback_reason"]).item()) if "ts_fallback_reason" in d else ""
-        ts_velocity_key = str(np.asarray(d["ts_velocity_key"]).item()) if "ts_velocity_key" in d else ""
-        behavior_file = str(np.asarray(d["behavior_file"]).item()) if "behavior_file" in d else ""
+        chosen = str(np.asarray(d["chosen_alignment"]).item())
+        behavior_source = str(np.asarray(d["behavior_source"]).item())
+        ts_fallback_reason = str(np.asarray(d["ts_fallback_reason"]).item())
+        ts_velocity_key = str(np.asarray(d["ts_velocity_key"]).item())
+        behavior_file = str(np.asarray(d["behavior_file"]).item())
         speed = np.asarray(d["speed_trace"], dtype=float)
         velocity = np.asarray(d["velocity_trace"], dtype=float)
-        ts_encoder_mode = str(np.asarray(d["ts_encoder_mode"]).item()) if "ts_encoder_mode" in d else ""
-        ts_velocity_signed = bool(np.asarray(d["ts_velocity_signed"]).item()) if "ts_velocity_signed" in d else False
-        ts_wheel_diameter_cm = float(np.asarray(d["ts_wheel_diameter_cm"]).item()) if "ts_wheel_diameter_cm" in d else 0.0
-        ts_encoder_pulses_per_revolution = float(np.asarray(d["ts_encoder_pulses_per_revolution"]).item()) if "ts_encoder_pulses_per_revolution" in d else 0.0
-        ts_counts_per_revolution = float(np.asarray(d["ts_counts_per_revolution"]).item()) if "ts_counts_per_revolution" in d else 0.0
-        ts_direction_inverted = bool(np.asarray(d["ts_direction_inverted"]).item()) if "ts_direction_inverted" in d else False
+        ts_encoder_mode = str(np.asarray(d["ts_encoder_mode"]).item())
+        ts_velocity_signed = bool(np.asarray(d["ts_velocity_signed"]).item())
+        ts_wheel_diameter_cm = float(np.asarray(d["ts_wheel_diameter_cm"]).item())
+        ts_encoder_pulses_per_revolution = float(np.asarray(d["ts_encoder_pulses_per_revolution"]).item())
+        ts_counts_per_revolution = float(np.asarray(d["ts_counts_per_revolution"]).item())
+        ts_direction_inverted = bool(np.asarray(d["ts_direction_inverted"]).item())
     n = int(min(time_s.size, speed.size, velocity.size, active.size, inactive.size, covered.size))
     time_s, speed, velocity, active, inactive, covered = time_s[:n], speed[:n], velocity[:n], active[:n], inactive[:n], covered[:n]
     state = np.zeros(n, dtype=np.uint8)

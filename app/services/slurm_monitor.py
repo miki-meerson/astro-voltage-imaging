@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 from datetime import datetime
-import json
 from pathlib import Path
+import sqlite3
 import threading
 import time
 
-from app.db.core import connect, tx
+import paramiko
+
+from app.db import run_repository
 from app.services.cluster_ssh import run_ssh_command
 from app.services.preprocessing import load_state, save_state, submit_preprocessing_step
-from app.services.runs import output_manifest, replace_artifacts
+from app.services.runs import output_manifest
 from app.settings import Settings
+from utils.paths_utils import PathKind, path_for
 
 
 FAILED_STATES = ("FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL")
 RUNNING_STATES = ("RUNNING", "COMPLETING", "CONFIGURING", "RESIZING", "STAGE_OUT")
 QUEUED_STATES = ("PENDING", "REQUEUED", "REQUEUE_FED", "REQUEUE_HOLD", "SUSPENDED")
+# what a Slurm lookup or a job submission over SSH can raise: no/incomplete credentials or a broken connection (OSError), an SSH protocol error,
+# an unreadable answer (ValueError, KeyError), a refused submission (RuntimeError)
+CLUSTER_ERRORS = (OSError, paramiko.SSHException, ValueError, KeyError, RuntimeError)
 
 
 def _ssh_command(settings: Settings, command: str) -> tuple[str, str, int]:
@@ -27,7 +33,7 @@ def _ssh_command(settings: Settings, command: str) -> tuple[str, str, int]:
 def _job_id(output_dir: str | None) -> str | None:
     if not output_dir:
         return None
-    path = Path(output_dir) / "cluster_job_id.txt"
+    path = path_for(PathKind.CLUSTER_JOB_ID, output_dir)
     if not path.exists():
         return None
     text = path.read_text(encoding="utf-8", errors="replace").strip()
@@ -91,7 +97,7 @@ def _cluster_log_failure(output_dir: str | None, stderr_path: str | None = None)
     paths: list[Path] = []
     if output_dir:
         out = Path(output_dir)
-        paths.extend([out / "cluster_stderr.log", out / "cluster_stdout.log"])
+        paths.extend([path_for(PathKind.CLUSTER_STDERR_LOG, out), path_for(PathKind.CLUSTER_STDOUT_LOG, out)])
     if stderr_path:
         paths.append(Path(stderr_path))
     seen: set[Path] = set()
@@ -107,19 +113,7 @@ def _cluster_log_failure(output_dir: str | None, stderr_path: str | None = None)
 
 def _sync_preprocessing_state(settings: Settings, run_id: int, out: Path, state: dict) -> dict:
     """Keep the optional JSON status file aligned with SQLite."""
-    with connect(settings) as conn:
-        rows = [
-            dict(row)
-            for row in conn.execute(
-                """
-                SELECT step_name,status,slurm_job_id,slurm_log_path,submitted_at,ended_at,message
-                FROM preprocessing_steps
-                WHERE run_id=?
-                ORDER BY step_order
-                """,
-                (run_id,),
-            )
-        ]
+    rows = run_repository.preprocessing_step_rows(settings, run_id)
     if not rows:
         return state
     labels = {step.get("name"): step.get("label", step.get("name")) for step in state.get("steps", [])}
@@ -162,15 +156,7 @@ def _copy_remote_log(settings: Settings, remote_log_path: str, local_path: Path)
 
 
 def poll_slurm_once(settings: Settings) -> int:
-    with connect(settings) as conn:
-        runs = [dict(row) for row in conn.execute(
-            """
-            SELECT id,status,output_dir,stderr_path
-            FROM analysis_runs
-            WHERE step='sta' AND backend='cluster' AND status IN ('queued','running')
-            ORDER BY id
-            """
-        )]
+    runs = run_repository.active_cluster_runs(settings, "sta")
     changed = 0
     for run in runs:
         job_id = _job_id(run.get("output_dir"))
@@ -180,56 +166,28 @@ def poll_slurm_once(settings: Settings) -> int:
         if not status:
             try:
                 status, exit_code, note_text = _slurm_status(settings, job_id)
-            except Exception as exc:
+            except CLUSTER_ERRORS as exc:
                 print(f"[slurm monitor warning] run {run['id']} status lookup failed: {type(exc).__name__}: {exc}")
                 continue
         if status in {"queued", "running"}:
             if status != run["status"]:
-                with tx(settings) as conn:
-                    conn.execute("UPDATE analysis_runs SET status=? WHERE id=?", (status, run["id"]))
+                run_repository.set_run_status(settings, run["id"], status)
                 changed += 1
             continue
         manifest = output_manifest(Path(run["output_dir"]))
         note = ""
         if status == "failed":
-            stderr_path = Path(run["output_dir"]) / "cluster_stderr.log" if run.get("output_dir") else Path(run.get("stderr_path") or "")
+            stderr_path = path_for(PathKind.CLUSTER_STDERR_LOG, run["output_dir"]) if run.get("output_dir") else Path(run.get("stderr_path") or "")
             note = _tail(stderr_path) or note_text
         if status:
-            with tx(settings) as conn:
-                conn.execute(
-                    """
-                    UPDATE analysis_runs
-                    SET status=?,ended_at=?,exit_code=?,output_manifest_json=?,review_note=?
-                    WHERE id=?
-                    """,
-                    (
-                        status,
-                        datetime.now().isoformat(timespec="seconds"),
-                        exit_code,
-                        json.dumps(manifest),
-                        note[-1000:],
-                        run["id"],
-                    ),
-                )
-                replace_artifacts(conn, run["id"], manifest)
+            run_repository.finish_cluster_run(settings, run["id"], status, datetime.now().isoformat(timespec="seconds"), exit_code, manifest, note[-1000:])
             changed += 1
     changed += poll_preprocessing_once(settings)
     return changed
 
 
 def poll_preprocessing_once(settings: Settings) -> int:
-    with connect(settings) as conn:
-        runs = [
-            dict(row)
-            for row in conn.execute(
-                """
-                SELECT id,status,output_dir,experiment_id
-                FROM analysis_runs
-                WHERE step='preprocessing' AND backend='cluster' AND status IN ('queued','running')
-                ORDER BY id
-                """
-            )
-        ]
+    runs = run_repository.active_cluster_runs(settings, "preprocessing")
     changed = 0
     for run in runs:
         out = Path(run["output_dir"] or "")
@@ -245,7 +203,7 @@ def poll_preprocessing_once(settings: Settings) -> int:
         job_id = str(step.get("job_id") or "")
         if not job_id:
             continue
-        local_log = out / f"preprocessing_{step['name']}.log"
+        local_log = path_for(PathKind.PREPROCESSING_STEP_LOG, out, step=step["name"])
         _copy_remote_log(settings, step.get("log_path", ""), local_log)
         status, exit_code, note = _local_log_status(Path(step.get("local_log_path") or local_log))
         if not status:
@@ -254,17 +212,9 @@ def poll_preprocessing_once(settings: Settings) -> int:
         if status in {"queued", "running"}:
             step["status"] = status
             save_state(out, state)
-            with tx(settings) as conn:
-                conn.execute("UPDATE analysis_runs SET status=? WHERE id=?", (status, run["id"]))
-                conn.execute(
-                    "UPDATE preprocessing_steps SET status=?,started_at=COALESCE(started_at,?) WHERE run_id=? AND step_name=?",
-                    (
-                        status,
-                        datetime.now().isoformat(timespec="seconds") if status == "running" else None,
-                        run["id"],
-                        step["name"],
-                    ),
-                )
+            run_repository.mark_preprocessing_step_active(
+                settings, run["id"], step["name"], status, datetime.now().isoformat(timespec="seconds") if status == "running" else None
+            )
             changed += 1
             continue
         if status == "failed":
@@ -273,104 +223,34 @@ def poll_preprocessing_once(settings: Settings) -> int:
             step["message"] = note
             save_state(out, state)
             manifest = output_manifest(out)
-            with tx(settings) as conn:
-                conn.execute(
-                    """
-                    UPDATE preprocessing_steps SET status='failed',ended_at=?,exit_code=1,message=?
-                    WHERE run_id=? AND step_name=?
-                    """,
-                    (step["ended_at"], note[-1000:], run["id"], step["name"]),
-                )
-                conn.execute(
-                    """
-                    UPDATE analysis_runs SET status='failed',ended_at=?,exit_code=1,output_manifest_json=?,review_note=?
-                    WHERE id=?
-                    """,
-                    (step["ended_at"], json.dumps(manifest), note[-1000:], run["id"]),
-                )
-                conn.execute(
-                    """
-                    UPDATE experiments
-                    SET workflow_stage='preprocessing_failed',
-                        updated_at=CURRENT_TIMESTAMP
-                    WHERE id=?
-                    """,
-                    (run["experiment_id"],),
-                )
+            run_repository.fail_preprocessing_step(settings, run["id"], run["experiment_id"], step["name"], step["ended_at"], note[-1000:], manifest)
             changed += 1
             continue
         if status == "completed":
             step["status"] = "completed"
             step["ended_at"] = datetime.now().isoformat(timespec="seconds")
             save_state(out, state)
-            with tx(settings) as conn:
-                conn.execute(
-                    """
-                    UPDATE preprocessing_steps SET status='completed',ended_at=?,exit_code=0
-                    WHERE run_id=? AND step_name=?
-                    """,
-                    (step["ended_at"], run["id"], step["name"]),
-                )
+            run_repository.complete_preprocessing_step(settings, run["id"], step["name"], step["ended_at"])
             next_index = index + 1
             if next_index < len(steps):
                 next_step = steps[next_index]
-                if not _claim_preprocessing_step(settings, int(run["id"]), str(next_step["name"])):
+                if not run_repository.claim_preprocessing_step(settings, int(run["id"]), str(next_step["name"])):
                     changed += 1
                     continue
                 next_step["status"] = "submitting"
                 save_state(out, state)
                 try:
                     submit_preprocessing_step(settings, out, state, next_index)
-                    with tx(settings) as conn:
-                        conn.execute("UPDATE analysis_runs SET status='queued' WHERE id=?", (run["id"],))
-                except Exception as exc:
-                    with tx(settings) as conn:
-                        conn.execute(
-                            "UPDATE analysis_runs SET status='failed',ended_at=?,exit_code=1,review_note=? WHERE id=?",
-                            (datetime.now().isoformat(timespec="seconds"), str(exc)[:1000], run["id"]),
-                        )
+                    run_repository.set_run_status(settings, run["id"], "queued")
+                except CLUSTER_ERRORS as exc:
+                    run_repository.fail_run_with_note(settings, run["id"], datetime.now().isoformat(timespec="seconds"), str(exc)[:1000])
                 changed += 1
                 continue
             manifest = output_manifest(out)
             finished = datetime.now().isoformat(timespec="seconds")
-            with tx(settings) as conn:
-                conn.execute(
-                    """
-                    UPDATE analysis_runs
-                    SET status='completed',ended_at=?,exit_code=0,output_manifest_json=?
-                    WHERE id=?
-                    """,
-                    (finished, json.dumps(manifest), run["id"]),
-                )
-                replace_artifacts(conn, run["id"], manifest)
-                conn.execute(
-                    """
-                    UPDATE experiments
-                    SET workflow_stage='preprocessing_review',
-                        preprocessing_review_state='unreviewed',
-                        updated_at=CURRENT_TIMESTAMP
-                    WHERE id=?
-                    """,
-                    (run["experiment_id"],),
-                )
+            run_repository.complete_preprocessing_run(settings, run["id"], run["experiment_id"], finished, manifest)
             changed += 1
     return changed
-
-
-def _claim_preprocessing_step(settings: Settings, run_id: int, step_name: str) -> bool:
-    with tx(settings) as conn:
-        updated = conn.execute(
-            """
-            UPDATE preprocessing_steps
-            SET status='submitting'
-            WHERE run_id=?
-              AND step_name=?
-              AND status='pending'
-              AND COALESCE(slurm_job_id, '')=''
-            """,
-            (run_id, step_name),
-        ).rowcount
-    return updated == 1
 
 
 def start_slurm_monitor(settings: Settings) -> threading.Thread | None:
@@ -382,7 +262,7 @@ def start_slurm_monitor(settings: Settings) -> threading.Thread | None:
         while True:
             try:
                 poll_slurm_once(settings)
-            except Exception as exc:
+            except (sqlite3.Error, *CLUSTER_ERRORS) as exc:
                 print(f"[slurm monitor warning] {type(exc).__name__}: {exc}")
             time.sleep(interval)
 

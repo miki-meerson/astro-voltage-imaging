@@ -6,78 +6,50 @@ import json
 from pathlib import Path
 
 import numpy as np
+import tifffile
+from PIL import Image
 
 from app.services import caches, polarity
+from utils.movie_utils import read_frame_rate
+from utils.paths_utils import PathKind, path_for
+
 
 def experiment_fps(source_path: str | Path) -> float:
-    """Frame rate of the experiment's movies, from its Experiment.xml."""
-    from utils.movie_utils import get_movie_parameters
-
-    return float(get_movie_parameters(f"{Path(source_path).as_posix()}/", is_dir=True)["fps"])
+    """Frame rate of the experiment's movies, from its Experiment.xml (raises a ValueError that says so when it cannot be read; no default)."""
+    return read_frame_rate(source_path)
 
 
 def pb_movie_path(source_path: str | Path | None, kind: str) -> Path | None:
     if not source_path:
         return None
-    names = {
-        "astro": "astro_photobleaching_corrected.tif",
-        "neuron": "neuron_photobleaching_corrected.tif",
-    }
-    name = names.get(kind)
-    if name is None:
+    path_kinds = {"astro": PathKind.ASTRO_PB_MOVIE, "neuron": PathKind.NEURON_PB_MOVIE}
+    if kind not in path_kinds:
         return None
-    return Path(source_path) / "pipeline_results" / "pb_corrected" / name
+    return path_for(path_kinds[kind], source_path)
+
+
+PB_KINDS = ("astro", "neuron")
 
 
 def pb_qc_metrics(source_path: str | Path | None, kind: str) -> dict:
+    """Photobleaching QC numbers of `kind`; {} when the QC file was not written (the photobleaching step produces it)."""
     if not source_path:
         return {}
-    path = Path(source_path) / "pipeline_results" / "qc" / f"photobleaching_qc_{kind}.json"
-    if not path.exists():
+    path = path_for(PathKind.PB_QC_METRICS, source_path, pb_kind=kind)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def pb_qc_plot_path(source_path: str | Path | None, kind: str) -> Path | None:
-    if kind not in {"astro", "neuron"} or not source_path:
-        return None
-    return Path(source_path) / "pipeline_results" / "qc" / f"photobleaching_qc_plot_{kind}.png"
-
-
-def latest_preprocessing_params(conn, experiment_id: int) -> dict:
-    run = conn.execute(
-        """
-        SELECT output_dir,parameters_json
-        FROM analysis_runs
-        WHERE experiment_id=? AND step='preprocessing' AND is_test=0
-        ORDER BY id DESC LIMIT 1
-        """,
-        (experiment_id,),
-    ).fetchone()
-    if run is None:
-        return {}
-    state_path = Path(run["output_dir"] or "") / "preprocessing_state.json"
-    if state_path.exists():
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            params_path = Path(state.get("params_path") or "")
-            if params_path.exists():
-                return json.loads(params_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    try:
-        return json.loads(run["parameters_json"] or "{}")
-    except json.JSONDecodeError:
-        return {}
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"The photobleaching QC file {path} is not valid JSON ({exc}); rerun the photobleaching correction step.") from exc
 
 
 def pb_qc_trace(source_path: str | Path | None, kind: str, max_points: int) -> dict | None:
     if not source_path:
         return None
-    path = Path(source_path) / "pipeline_results" / "qc" / f"photobleaching_qc_trace_{kind}.npz"
+    path = path_for(PathKind.PB_QC_TRACE, source_path, pb_kind=kind)
     if not path.exists():
         return None
     with np.load(path, allow_pickle=False) as data:
@@ -126,8 +98,6 @@ def movie_metadata(path: Path, fps: float) -> dict:
     cached = caches.MOVIE_META.get(cache_key)
     if cached is not None:
         return dict(cached)
-    import tifffile
-
     with tifffile.TiffFile(path) as tif:
         series = tif.series[0]
         n_frames, height, width = movie_series_shape(series)
@@ -139,7 +109,7 @@ def movie_metadata(path: Path, fps: float) -> dict:
         "height": int(height),
         "width": int(width),
         "fps": float(fps),
-        "duration_s": float(n_frames / max(fps, 1e-9)),
+        "duration_s": float(n_frames / fps),
         "dtype": dtype,
         "axes": axes,
         "mtime_ns": stat_key,
@@ -150,8 +120,6 @@ def movie_metadata(path: Path, fps: float) -> dict:
 
 
 def movie_array_payload(path: Path, invert_sign: bool = False) -> dict:
-    import tifffile
-
     stat_key = int(path.stat().st_mtime_ns)
     cache_key = (str(path), stat_key, bool(invert_sign))
     cached = caches.MOVIE_ARRAY.get(cache_key)
@@ -161,7 +129,7 @@ def movie_array_payload(path: Path, invert_sign: bool = False) -> dict:
     try:
         movie = np.asarray(tifffile.memmap(path))
         axes = ""
-    except Exception:
+    except ValueError:  # tifffile cannot memory-map this file (e.g. compressed or not contiguous): read it through its series
         with tifffile.TiffFile(path) as tif:
             series = tif.series[0]
             axes = str(getattr(series, "axes", "") or "").upper()
@@ -215,8 +183,6 @@ def read_movie_frame(path: Path, frame_index: int, invert_sign: bool = False) ->
 
 
 def movie_frame_jpeg(path: Path, frame_index: int, max_size: int, contrast: str, invert_sign: bool = False):
-    from PIL import Image
-
     frame, mtime_ns, contrast_limits = read_movie_frame(path, frame_index, invert_sign)
     cache_key = (str(path), mtime_ns, int(frame_index), int(max_size), str(contrast), bool(invert_sign))
     cached = caches.MOVIE_JPEG.get(cache_key)
@@ -266,7 +232,7 @@ def _mean_series(path: Path, fps: float, max_points: int) -> dict:
         "frames": n_frames,
         "display_step": int(step),
         "frame": frame_idx.astype(int).tolist(),
-        "time_s": (frame_idx / max(fps, 1e-9)).astype(float).tolist(),
+        "time_s": (frame_idx / fps).astype(float).tolist(),
         "mean": values.astype(float).tolist(),
         "min": float(np.min(finite)) if finite.size else None,
         "max": float(np.max(finite)) if finite.size else None,
@@ -274,7 +240,7 @@ def _mean_series(path: Path, fps: float, max_points: int) -> dict:
 
 
 def mean_intensity_payload(source_path: str | Path | None, fps: float, max_points: int = 350) -> dict:
-    paths = {kind: pb_movie_path(source_path, kind) for kind in ("astro", "neuron")}
+    paths = {kind: pb_movie_path(source_path, kind) for kind in PB_KINDS}
     existing = [path for path in paths.values() if path is not None and path.exists()]
     if not existing:
         return {"available": False, "message": "Photobleaching corrected movies were not found."}

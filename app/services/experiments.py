@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-import json
 import re
 import shutil
-import sqlite3
 
 import numpy as np
 
-from app.db.core import tx
-from app.services.spikes import suite2p_plane0, suite2p_stat_cells
+from app.db import experiment_repository as repo
+from app.services.runs import STEPS, create_run, launch_run
+from utils.suite2p_utils import suite2p_stat_cells
 from app.settings import Settings
 from utils.thorsync_utils import find_ts_h5_files, list_h5_datasets
+from utils.paths_utils import PathKind, path_for
+from utils import globals_utils as g
+
+PREPROCESSING_STEP = "preprocessing"
+ANALYSIS_STEPS = tuple(step for step in STEPS if step != PREPROCESSING_STEP)  # the steps that need the confirmed Suite2p cells
+STEPS_LAUNCHED_ON_REGISTRATION = {"spike", "behavior", "anatomy"}  # what a processed experiment starts with (STA is started by hand)
+EXPECTED_ERRORS = (ValueError, OSError)  # a bad experiment folder: wrong name, missing or unreadable file
 
 DATE_BEHAVIOR_RE = re.compile(r"^(?P<date>\d{2}-\d{2}-\d{4})[_-](?P<behavior>.+)$")
 Z_RE = re.compile(r"^z(?P<z>-?[^-\\\/]+)-x(?P<zoom>.+)$", re.IGNORECASE)
@@ -42,16 +49,16 @@ def parse_experiment_path(path: str | Path) -> ParsedExperiment:
 def validate_experiment(path: str | Path):
     p = Path(path)
     parsed = parse_experiment_path(p)
-    raw_movie = _raw_movie_path(p)
-    required = {"experiment_folder": p, "raw_movie": raw_movie, "experiment_xml": p / "Experiment.xml"}
+    required = {"experiment_folder": p, "raw_movie": path_for(PathKind.RAW_MOVIE, p), "experiment_xml": path_for(PathKind.EXPERIMENT_XML, p)}
+    plane0 = path_for(PathKind.SUITE2P_PLANE0, p)
     analysis_required = {
-        "pipeline_results": p / "pipeline_results",
-        "suite2p_iscell": p / "pipeline_results/for_suite2p/suite2p/plane0/iscell.npy",
-        "suite2p_stat": p / "pipeline_results/for_suite2p/suite2p/plane0/stat.npy",
-        "suite2p_F": p / "pipeline_results/for_suite2p/suite2p/plane0/F.npy",
-        "suite2p_ops": p / "pipeline_results/for_suite2p/suite2p/plane0/ops.npy",
-        "pb_astro_movie": p / "pipeline_results/pb_corrected/astro_photobleaching_corrected.tif",
-        "pb_neuron_movie": p / "pipeline_results/pb_corrected/neuron_photobleaching_corrected.tif",
+        "pipeline_results": path_for(PathKind.PIPELINE_RESULTS, p),
+        "suite2p_iscell": path_for(PathKind.SUITE2P_ISCELL, plane0),
+        "suite2p_stat": path_for(PathKind.SUITE2P_STAT, plane0),
+        "suite2p_F": path_for(PathKind.SUITE2P_F, plane0),
+        "suite2p_ops": path_for(PathKind.SUITE2P_OPS, plane0),
+        "pb_astro_movie": path_for(PathKind.ASTRO_PB_MOVIE, p),
+        "pb_neuron_movie": path_for(PathKind.NEURON_PB_MOVIE, p),
     }
     checks, missing = {}, []
     for key, rp in {**required, **analysis_required}.items():
@@ -59,10 +66,10 @@ def validate_experiment(path: str | Path):
         checks[key] = {"path": str(rp), "exists": ok}
         if key in required and not ok:
             missing.append(key)
-    behavior = sorted(p.glob("imaging_*.csv"))
+    behavior = sorted(p.glob(g.IMAGING_CSV_GLOB))
     ts_h5 = find_ts_h5_files(p)
-    ts_dirs = sorted([x for x in p.iterdir() if x.is_dir() and x.name.lower().startswith("ts")])
-    ts_xml = sorted([x / "ThorRealTimeDataSettings.xml" for x in ts_dirs if (x / "ThorRealTimeDataSettings.xml").exists()])
+    ts_dirs = sorted([x for x in p.iterdir() if x.is_dir() and x.name.lower().startswith(g.TS_DIR_PREFIX)])
+    ts_xml = sorted([x / g.THOR_SETTINGS_XML for x in ts_dirs if (x / g.THOR_SETTINGS_XML).exists()])
     checks["behavior_csv"] = {"count": len(behavior), "paths": [str(x) for x in behavior]}
     checks["behavior_ts"] = {
         "count": len(ts_h5),
@@ -74,7 +81,7 @@ def validate_experiment(path: str | Path):
     if ts_h5:
         try:
             checks["behavior_ts"]["datasets"] = list_h5_datasets(ts_h5[0])
-        except Exception as exc:
+        except OSError as exc:  # h5py: the file is locked, truncated or not an HDF5 file
             checks["behavior_ts"]["datasets_error"] = str(exc)
     if len(ts_h5) > 1:
         missing.append("exactly_one_ts_h5")
@@ -91,101 +98,42 @@ def validate_experiment(path: str | Path):
     return parsed, {"state": state, "checks": checks, "analysis_ready": analysis_ready}
 
 
-def _raw_movie_path(path: Path) -> Path:
-    for name in ("Image_scan_1_region_0_0.tif", "Image_scan_1_region_0_0.raw", "raw_video.tif"):
-        candidate = path / name
-        if candidate.exists():
-            return candidate
-    raw_candidates = sorted(path.glob("*.raw")) + sorted(path.glob("*.tif")) + sorted(path.glob("*.tiff"))
-    return raw_candidates[0] if raw_candidates else path / "Image_scan_1_region_0_0.tif"
-
-
 def discover_neurons(path: str | Path) -> list[dict]:
     out = []
     for idx, roi in enumerate(suite2p_stat_cells(path)):
         ypix, xpix = np.asarray(roi.get("ypix", [])), np.asarray(roi.get("xpix", []))
-        out.append({"pipeline_neuron_id": str(idx), "roi_source": str(suite2p_plane0(path)), "roi_summary": {"n_pixels": int(len(ypix)), "mean_y": float(np.mean(ypix)) if len(ypix) else None, "mean_x": float(np.mean(xpix)) if len(xpix) else None}})
+        out.append({"pipeline_neuron_id": str(idx), "roi_source": str(path_for(PathKind.SUITE2P_PLANE0, path)), "roi_summary": {"n_pixels": int(len(ypix)), "mean_y": float(np.mean(ypix)) if len(ypix) else None, "mean_x": float(np.mean(xpix)) if len(xpix) else None}})
     return out
-
-
-def _insert_neurons(conn, experiment_id: int, neurons: list[dict]) -> None:
-    for n in neurons:
-        conn.execute(
-            "INSERT INTO neurons(experiment_id,pipeline_neuron_id,roi_source,roi_summary) VALUES(?,?,?,?)",
-            (experiment_id, n["pipeline_neuron_id"], n["roi_source"], json.dumps(n["roi_summary"])),
-        )
 
 
 def add_experiment(path: str | Path, settings: Settings) -> int:
     p = Path(path)
     parsed, report = validate_experiment(path)
-    with tx(settings) as conn:
-        removed = conn.execute(
-            "SELECT 1 FROM removed_experiments WHERE source_path=? OR canonical_id=? LIMIT 1",
-            (str(p), parsed.canonical_id),
-        ).fetchone()
-        if removed is not None:
-            raise ValueError("This experiment was removed from the registry and is blocked from being re-added.")
-        existing = conn.execute(
-            "SELECT id FROM experiments WHERE source_path=? OR canonical_id=?",
-            (str(p), parsed.canonical_id),
-        ).fetchone()
-        if existing is not None:
-            return int(existing["id"])
+    if repo.is_removed_from_registry(settings, str(p), parsed.canonical_id):
+        raise ValueError("This experiment was removed from the registry and is blocked from being re-added.")
+    existing = repo.registered_experiment_id(settings, str(p), parsed.canonical_id)
+    if existing is not None:
+        return existing
     analysis_ready = bool(report.get("analysis_ready"))
     neurons = discover_neurons(path) if analysis_ready else []
-    workflow_stage = "analysis_ready" if analysis_ready else "preprocessing_pending"
-    preprocessing_review_state = "confirmed" if analysis_ready else "unreviewed"
-    suite2p_review_state = "confirmed" if analysis_ready else "unreviewed"
-    with tx(settings) as conn:
-        try:
-            cur = conn.execute(
-                """
-                INSERT INTO experiments(
-                  canonical_id,source_path,cage,mouse_name,recording_date,behavior,fov,z_plane,zoom,
-                  validation_state,validation_report,workflow_stage,preprocessing_review_state,suite2p_review_state
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    parsed.canonical_id,
-                    str(p),
-                    parsed.cage,
-                    parsed.mouse_name,
-                    parsed.recording_date,
-                    parsed.behavior,
-                    parsed.fov,
-                    parsed.z_plane,
-                    parsed.zoom,
-                    report["state"],
-                    json.dumps(report),
-                    workflow_stage,
-                    preprocessing_review_state,
-                    suite2p_review_state,
-                ),
-            )
-        except sqlite3.IntegrityError:
-            existing = conn.execute(
-                "SELECT id FROM experiments WHERE source_path=? OR canonical_id=?",
-                (str(p), parsed.canonical_id),
-            ).fetchone()
-            if existing is None:
-                raise
-            return int(existing["id"])
-        exp_id = int(cur.lastrowid)
-        _insert_neurons(conn, exp_id, neurons)
-    return exp_id
+    review_state = repo.REVIEW_CONFIRMED if analysis_ready else repo.REVIEW_UNREVIEWED
+    return repo.insert_experiment(
+        settings,
+        {"canonical_id": parsed.canonical_id, "source_path": str(p), "cage": parsed.cage, "mouse_name": parsed.mouse_name, "recording_date": parsed.recording_date,
+         "behavior": parsed.behavior, "fov": parsed.fov, "z_plane": parsed.z_plane, "zoom": parsed.zoom},
+        report,
+        repo.STAGE_ANALYSIS_READY if analysis_ready else repo.STAGE_PREPROCESSING_PENDING,
+        review_state,
+        review_state,
+        neurons,
+    )
 
 
 def scan_parent(parent: str | Path, settings: Settings) -> dict:
-    from datetime import datetime
     parent = Path(parent)
     summary = {"added": [], "existing": [], "skipped_removed": [], "invalid": []}
-    started = datetime.now().isoformat(timespec="seconds")
-    with tx(settings) as conn:
-        scan_id = conn.execute("INSERT INTO scan_history(parent_path,started_at) VALUES(?,?)", (str(parent), started)).lastrowid
-        existing = {r["source_path"] for r in conn.execute("SELECT source_path FROM experiments")}
-        removed_paths = {r["source_path"] for r in conn.execute("SELECT source_path FROM removed_experiments")}
-        removed_ids = {r["canonical_id"] for r in conn.execute("SELECT canonical_id FROM removed_experiments")}
+    scan_id = repo.start_scan(settings, str(parent), datetime.now().isoformat(timespec="seconds"))
+    existing, removed_paths, removed_ids = repo.registry_snapshot(settings)
     for candidate in parent.rglob("z*-x*"):
         if candidate.is_dir():
             if str(candidate) in existing:
@@ -199,12 +147,9 @@ def scan_parent(parent: str | Path, settings: Settings) -> dict:
                         summary["skipped_removed"].append(str(candidate))
                     else:
                         summary["added"].append({"path": str(candidate), "experiment_id": add_experiment(candidate, settings)})
-                except Exception as exc:
+                except EXPECTED_ERRORS as exc:
                     summary["invalid"].append({"path": str(candidate), "reason": str(exc)})
-    completed = datetime.now().isoformat(timespec="seconds")
-    with tx(settings) as conn:
-        conn.execute("UPDATE scan_history SET completed_at=?,summary_json=? WHERE id=?", (completed, json.dumps(summary), scan_id))
-        conn.execute("INSERT OR REPLACE INTO app_settings(key,value) VALUES('last_scan_time',?)", (completed,))
+    repo.finish_scan(settings, scan_id, datetime.now().isoformat(timespec="seconds"), summary)
     for item in summary["added"]:
         launch_default_steps(settings, int(item["experiment_id"]))
     return summary
@@ -212,23 +157,18 @@ def scan_parent(parent: str | Path, settings: Settings) -> dict:
 
 def launch_default_steps(settings: Settings, experiment_id: int) -> None:
     """Start what a newly registered experiment needs: cluster preprocessing for a raw one, spike / behavior / anatomy for a processed one."""
-    from app.services.runs import create_run, launch_run
-
-    with tx(settings) as conn:
-        exp = conn.execute("SELECT workflow_stage FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-    if exp is not None and exp["workflow_stage"] == "preprocessing_pending":
-        params = settings.raw.get("defaults", {}).get("preprocessing", {})
-        launch_run(settings, create_run(settings, experiment_id, "preprocessing", params, backend="cluster"))
-    elif exp is not None and exp["workflow_stage"] == "analysis_ready":
+    stage = repo.workflow_stage_of(settings, experiment_id)
+    if stage == repo.STAGE_PREPROCESSING_PENDING:
+        params = settings.raw.get("defaults", {}).get(PREPROCESSING_STEP, {})
+        launch_run(settings, create_run(settings, experiment_id, PREPROCESSING_STEP, params, backend="cluster"))
+    elif stage == repo.STAGE_ANALYSIS_READY:
         launch_analysis_defaults(settings, experiment_id)
 
 
 def launch_analysis_defaults(settings: Settings, experiment_id: int) -> list[int]:
-    from app.services.runs import create_run, launch_run
-
     created = []
     for step, params in settings.raw.get("defaults", {}).items():
-        if step in {"spike", "behavior", "anatomy"}:
+        if step in STEPS_LAUNCHED_ON_REGISTRATION:
             rid = create_run(settings, experiment_id, step, params, backend="local")
             launch_run(settings, rid)
             created.append(rid)
@@ -236,55 +176,18 @@ def launch_analysis_defaults(settings: Settings, experiment_id: int) -> list[int
 
 
 def confirm_preprocessing(settings: Settings, experiment_id: int) -> None:
-    with tx(settings) as conn:
-        conn.execute(
-            """
-            UPDATE experiments
-            SET preprocessing_review_state='confirmed',
-                workflow_stage='awaiting_suite2p',
-                updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (experiment_id,),
-        )
+    repo.confirm_preprocessing(settings, experiment_id)
 
 
 def confirm_suite2p(settings: Settings, experiment_id: int) -> int:
-    with tx(settings) as conn:
-        exp = conn.execute("SELECT * FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-        if exp is None:
-            raise ValueError("Experiment not found.")
+    exp = repo.experiment_row(settings, experiment_id)
+    if exp is None:
+        raise ValueError("Experiment not found.")
     parsed, report = validate_experiment(exp["source_path"])
     if not report.get("analysis_ready"):
         raise ValueError("Suite2p/manual outputs are not complete yet.")
     neurons = discover_neurons(exp["source_path"])
-    with tx(settings) as conn:
-        conn.execute(
-            """
-            UPDATE analysis_runs
-            SET status='cancelled',
-                ended_at=CURRENT_TIMESTAMP,
-                review_note='Cancelled because Suite2p cells were refreshed.'
-            WHERE experiment_id=?
-              AND step IN ('spike','behavior','anatomy','sta')
-              AND status IN ('pending','queued','running','completed','failed','blocked')
-            """,
-            (experiment_id,),
-        )
-        conn.execute("DELETE FROM neurons WHERE experiment_id=?", (experiment_id,))
-        _insert_neurons(conn, experiment_id, neurons)
-        conn.execute(
-            """
-            UPDATE experiments
-            SET validation_state='valid',
-                validation_report=?,
-                suite2p_review_state='confirmed',
-                workflow_stage='analysis_ready',
-                updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (json.dumps(report), experiment_id),
-        )
+    repo.confirm_suite2p(settings, experiment_id, neurons, report, ANALYSIS_STEPS)
     return len(neurons)
 
 
@@ -296,7 +199,7 @@ def _runtime_owned(path: Path, settings: Settings) -> bool:
     roots = [
         settings.output_root.resolve(),
         settings.test_output_root.resolve(),
-        (settings.project_root / "runtime" / "scientific_database").resolve(),
+        path_for(PathKind.SCIENTIFIC_DATABASE_ROOT, settings.project_root).resolve(),
     ]
     return any(target == root or root in target.parents for root in roots)
 
@@ -330,7 +233,7 @@ def _remove_run_outputs(run_rows, canonical_id: str, settings: Settings) -> list
             targets.append(Path(run["output_dir"]))
         elif run["stdout_path"]:
             targets.append(Path(run["stdout_path"]).parent)
-    targets.append(settings.project_root / "runtime" / "scientific_database" / canonical_id)
+    targets.append(path_for(PathKind.SCIENTIFIC_DATABASE_EXPERIMENT, settings.project_root, canonical_id=canonical_id))
     cleaned, seen = [], set()
     for target in targets:
         if str(target) not in seen:
@@ -340,73 +243,27 @@ def _remove_run_outputs(run_rows, canonical_id: str, settings: Settings) -> list
 
 
 def remove_experiment_from_registry(experiment_id: int, settings: Settings) -> dict:
-    with tx(settings) as conn:
-        exp = conn.execute("SELECT * FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-        if exp is None:
-            raise ValueError("Experiment not found.")
-        run_rows = list(conn.execute("SELECT * FROM analysis_runs WHERE experiment_id=?", (experiment_id,)))
-        canonical_id = exp["canonical_id"]
-        source_path = exp["source_path"]
-        conn.execute(
-            "INSERT OR REPLACE INTO removed_experiments(canonical_id,source_path,note) VALUES(?,?,?)",
-            (canonical_id, source_path, "Removed from GUI experiment list."),
-        )
-        conn.execute("DELETE FROM experiments WHERE id=?", (experiment_id,))
-
-    cleaned = _remove_run_outputs(run_rows, canonical_id, settings)
-    return {"canonical_id": canonical_id, "source_path": source_path, "cleaned": cleaned}
+    exp, run_rows = repo.remove_experiment(settings, experiment_id, "Removed from GUI experiment list.")
+    cleaned = _remove_run_outputs(run_rows, exp["canonical_id"], settings)
+    return {"canonical_id": exp["canonical_id"], "source_path": exp["source_path"], "cleaned": cleaned}
 
 
 def reset_experiment_app_data(experiment_id: int, settings: Settings) -> dict:
-    with tx(settings) as conn:
-        exp = conn.execute("SELECT * FROM experiments WHERE id=?", (experiment_id,)).fetchone()
-        if exp is None:
-            raise ValueError("Experiment not found.")
-        run_rows = list(conn.execute("SELECT * FROM analysis_runs WHERE experiment_id=?", (experiment_id,)))
-        canonical_id = exp["canonical_id"]
-        source_path = exp["source_path"]
-        try:
-            _, report = validate_experiment(source_path)
-        except Exception as exc:
-            report = {"state": "invalid", "checks": {}, "analysis_ready": False, "reset_validation_error": str(exc)}
-        analysis_ready = bool(report.get("analysis_ready"))
-        workflow_stage = "awaiting_suite2p" if analysis_ready else "preprocessing_pending"
-        preprocessing_review_state = "confirmed" if analysis_ready else "unreviewed"
-
-        counts = {
-            "runs": conn.execute("SELECT COUNT(*) AS n FROM analysis_runs WHERE experiment_id=?", (experiment_id,)).fetchone()["n"],
-            "neurons": conn.execute("SELECT COUNT(*) AS n FROM neurons WHERE experiment_id=?", (experiment_id,)).fetchone()["n"],
-            "confirmed_neurons": conn.execute("SELECT COUNT(*) AS n FROM confirmed_neurons WHERE experiment_id=?", (experiment_id,)).fetchone()["n"],
-            "metadata_overrides": conn.execute("SELECT COUNT(*) AS n FROM metadata_overrides WHERE experiment_id=?", (experiment_id,)).fetchone()["n"],
-        }
-        conn.execute("DELETE FROM confirmed_neurons WHERE experiment_id=?", (experiment_id,))
-        conn.execute("DELETE FROM metadata_overrides WHERE experiment_id=?", (experiment_id,))
-        conn.execute("DELETE FROM analysis_runs WHERE experiment_id=?", (experiment_id,))
-        conn.execute("DELETE FROM neurons WHERE experiment_id=?", (experiment_id,))
-        conn.execute(
-            """
-            UPDATE experiments
-            SET validation_state=?,
-                validation_report=?,
-                workflow_stage=?,
-                preprocessing_review_state=?,
-                suite2p_review_state='unreviewed',
-                updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-            """,
-            (
-                report["state"],
-                json.dumps(report),
-                workflow_stage,
-                preprocessing_review_state,
-                experiment_id,
-            ),
-        )
-
-    cleaned = _remove_run_outputs(run_rows, canonical_id, settings)
+    exp = repo.experiment_row(settings, experiment_id)
+    if exp is None:
+        raise ValueError("Experiment not found.")
+    try:
+        _, report = validate_experiment(exp["source_path"])
+    except EXPECTED_ERRORS as exc:
+        report = {"state": "invalid", "checks": {}, "analysis_ready": False, "reset_validation_error": str(exc)}
+    analysis_ready = bool(report.get("analysis_ready"))
+    workflow_stage = repo.STAGE_AWAITING_SUITE2P if analysis_ready else repo.STAGE_PREPROCESSING_PENDING
+    preprocessing_review_state = repo.REVIEW_CONFIRMED if analysis_ready else repo.REVIEW_UNREVIEWED
+    counts, run_rows = repo.reset_experiment(settings, experiment_id, report, workflow_stage, preprocessing_review_state)
+    cleaned = _remove_run_outputs(run_rows, exp["canonical_id"], settings)
     return {
-        "canonical_id": canonical_id,
-        "source_path": source_path,
+        "canonical_id": exp["canonical_id"],
+        "source_path": exp["source_path"],
         "counts": counts,
         "cleaned": cleaned,
         "workflow_stage": workflow_stage,

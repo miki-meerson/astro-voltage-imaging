@@ -49,7 +49,6 @@ MOVIE_META = LRUCache(16, "movie_meta")                 # key: (path, mtime_ns)
 MOVIE_ARRAY = LRUCache(3, "movie_array")                # holds np.memmap objects (open file handles): keep it tiny
 MOVIE_JPEG = LRUCache(160, "movie_jpeg")                # key: (path, mtime_ns, frame, max_size, contrast, ...) -> bytes
 MEAN_INTENSITY = LRUCache(8, "mean_intensity")
-ANATOMY_CROP_INFO = LRUCache(16, "anatomy_crop_info")
 STA_STACK = LRUCache(6, "sta_stack")                    # key -> binary payload of the cropped STA movie
 CELL_REVIEW = LRUCache(16, "cell_review")               # key: (experiment, spike run, max mtime of label files and iscell.npy)
 STA_SUMMARY_PNG = LRUCache(80, "sta_summary_png")       # rendered cell-page STA summary images, bytes
