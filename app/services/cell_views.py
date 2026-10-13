@@ -17,12 +17,13 @@ from app.db import experiment_repository, run_repository
 from app.services import caches, polarity
 from app.services.runs import run_dir
 from app.services.sta_results import anatomy_clusters_in_crop
+from app.services.suite2p_data import experiment_stat_cells, experiment_suite2p_context
 from utils import globals_utils as g
 from utils.movie_utils import read_frame_rate
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for, run_dir_of_sta_dir, sta_dir_of_run
 from utils.sta_trace_utils import event_triggered_mean
-from utils.suite2p_utils import load_suite2p_context, roi_pixels_in_crop, suite2p_stat_cells, suite2p_trace_dff
+from utils.suite2p_utils import roi_pixels_in_crop, suite2p_trace_dff
 from utils.tif_export import saved_run_name
 
 
@@ -91,7 +92,7 @@ def _read_anatomy_header(anatomy_npz: Path) -> dict:
 def _roi_outline(source_path, pipeline_neuron_id, crop: dict) -> list:
     """The cell's Suite2p ROI pixels inside the crop (an optional marker: [] when the Suite2p files cannot be read)."""
     try:
-        return roi_pixels_in_crop(suite2p_stat_cells(source_path)[int(pipeline_neuron_id)], crop)
+        return roi_pixels_in_crop(experiment_stat_cells(source_path)[int(pipeline_neuron_id)], crop)
     except (OSError, IndexError, KeyError):
         return []
 
@@ -100,7 +101,7 @@ def _neuron_trace(source_path, pipeline_neuron_id, peaks: np.ndarray, pre: int, 
     """The neuron's own dF/F (neuron movie, Suite2p) averaged around the same spikes as the astro movie (an optional marker)."""
     neuron = {"trace": [], "trace_label": "", "trace_peak": None}
     try:
-        ctx = load_suite2p_context(path_for(PathKind.SUITE2P_PLANE0, source_path))
+        ctx = experiment_suite2p_context(source_path)
         dff = np.asarray(suite2p_trace_dff(int(pipeline_neuron_id), suite2p_ctx=ctx), dtype=float)
     except (OSError, IndexError, KeyError, ValueError):
         return neuron

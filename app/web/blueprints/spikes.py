@@ -13,11 +13,12 @@ from app.services.spikes import (
     spike_detection_params,
     stale_suite2p_cell_message,
 )
+from app.services.suite2p_data import experiment_suite2p_context
 from app.web.common import FlatBlueprint, get_settings
 from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
 from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
-from utils.suite2p_utils import load_suite2p_context, suite2p_trace_dff
+from utils.suite2p_utils import suite2p_trace_dff
 
 bp = FlatBlueprint("spikes", __name__)
 
@@ -44,7 +45,7 @@ def spike_data(neuron_id):
         return jsonify({"error": "Cell not found"}), 404
     if spike_run is None:
         return jsonify({"error": "No completed spike run."}), 400
-    suite2p_ctx = load_suite2p_context(path_for(PathKind.SUITE2P_PLANE0, n["source_path"]))
+    suite2p_ctx = experiment_suite2p_context(n["source_path"])
     cell_id = int(n["pipeline_neuron_id"])
     if cell_id < 0 or cell_id >= int(suite2p_ctx["n_cells"]):
         stale_message = stale_suite2p_cell_message(n["source_path"], n["pipeline_neuron_id"])
@@ -82,7 +83,7 @@ def detect_spike_data(neuron_id):
         return jsonify({"error": "Cell not found"}), 404
     if spike_run is None:
         return jsonify({"error": "No completed spike run."}), 400
-    suite2p = load_suite2p_context(path_for(PathKind.SUITE2P_PLANE0, n["source_path"]))
+    suite2p = experiment_suite2p_context(n["source_path"])
     cell_id = int(n["pipeline_neuron_id"])
     try:
         fps = int(read_frame_rate(n["source_path"]))

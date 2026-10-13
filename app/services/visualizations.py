@@ -10,12 +10,13 @@ from scipy.ndimage import binary_erosion
 from app.db import neuron_repository
 from app.services import caches, polarity
 from app.services.runs import run_dir
-from utils.suite2p_utils import suite2p_stat_cells
+from app.services.suite2p_data import experiment_stat_cells
 from app.settings import Settings
 from utils.cluster_result import load_cluster_result
 from utils.db_utils import collect_cluster_result_metadata
 from utils.movie_utils import get_mean_images
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths, sta_dir_of_run
+from utils.suite2p_utils import suite2p_roi_mask
 
 RESULT_ORDER = {
     "all": 0,
@@ -218,15 +219,6 @@ def _load_cluster_result(path: Path):
     return result
 
 
-def _neuron_mask(cell_id: int, shape: tuple[int, int], spatial_bin: int, stat_cells) -> np.ndarray:
-    roi = stat_cells[int(cell_id)]
-    yb = np.clip(np.floor_divide(np.asarray(roi["ypix"], dtype=int), spatial_bin), 0, shape[0] - 1)
-    xb = np.clip(np.floor_divide(np.asarray(roi["xpix"], dtype=int), spatial_bin), 0, shape[1] - 1)
-    mask = np.zeros(shape, dtype=bool)
-    mask[yb, xb] = True
-    return mask
-
-
 def _display_cluster_mask(
     mask: np.ndarray,
     full_shape: tuple[int, int],
@@ -309,7 +301,7 @@ def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
 
     paths = resolve_sta_paths(source_path, path_for(PathKind.STA_ALGORITHM_HOME, sta_run_dir))
     try:
-        stat_cells = suite2p_stat_cells(source_path)
+        stat_cells = experiment_stat_cells(source_path)
     except (OSError, ValueError, IndexError, KeyError) as exc:
         return _message("STA Maps", f"Could not read Suite2p outlines: {exc}")
 
@@ -344,7 +336,7 @@ def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
             ImageDraw.Draw(image_tile).text((tile_w // 2, image_h // 2), "missing mean image", fill=MUTED, font=_font(17), anchor="mm")
             traces = []
         else:
-            neuron = _neuron_mask(cell_id, mean_img.shape, int(meta["spatial_bin"]), stat_cells)
+            neuron = suite2p_roi_mask(cell_id, stat_cells, mean_img.shape, int(meta["spatial_bin"]))
             crop = meta["anatomy_crop_bounds"] if str(row.result_type) == "anatomy" else None
             shown_img, shown_neuron, shown_clusters = mean_img, neuron, clusters
             if crop is not None:

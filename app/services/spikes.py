@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 
 from app.services.runs import run_dir
+from app.services.suite2p_data import experiment_stat_cells
 from utils.paths_utils import PathKind, path_for
-from utils.suite2p_utils import load_suite2p_context
 
 def spikes_edited_after_sta(settings, spike_run, sta_run, pipeline_neuron_id) -> datetime | None:
     """When the cell's spike labels were last written, if that is after the STA run started (so the STA used older spikes)."""
@@ -29,7 +29,7 @@ def suite2p_cell_count(source_path: str | Path | None) -> int | None:
     if not source_path:
         return None
     try:
-        return int(load_suite2p_context(path_for(PathKind.SUITE2P_PLANE0, source_path))["n_cells"])
+        return len(experiment_stat_cells(source_path))
     except (OSError, ValueError, IndexError):
         return None
 

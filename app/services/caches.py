@@ -34,6 +34,10 @@ class LRUCache:
             while len(self._data) > self.max_entries:
                 self._data.popitem(last=False)
 
+    def discard(self, key) -> None:
+        with self._lock:
+            self._data.pop(key, None)
+
     def clear(self) -> None:
         with self._lock:
             self._data.clear()
@@ -53,6 +57,8 @@ STA_STACK = LRUCache(6, "sta_stack")                    # key -> binary payload 
 CELL_REVIEW = LRUCache(16, "cell_review")               # key: (experiment, spike run, max mtime of label files and iscell.npy)
 STA_SUMMARY_PNG = LRUCache(80, "sta_summary_png")       # rendered cell-page STA summary images, bytes
 CLUSTER_RESULT = LRUCache(240, "cluster_result")        # key: (npz path, mtime_ns) -> parsed cluster result
+SUITE2P_STAT = LRUCache(16, "suite2p_stat")             # key: experiment folder -> ROI stats of the accepted cells (small); see suite2p_data.py
+SUITE2P_CONTEXT = LRUCache(3, "suite2p_context")        # key: experiment folder -> stats + fluorescence matrices (tens of MB): only the last 3 experiments
 
 
 def clear_movie_caches() -> None:

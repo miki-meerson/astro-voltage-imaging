@@ -6,12 +6,11 @@ from pathlib import Path
 import re
 import shutil
 
-import numpy as np
-
 from app.db import experiment_repository as repo
 from app.services.runs import STEPS, create_run, launch_run
-from utils.suite2p_utils import suite2p_stat_cells
+from app.services.suite2p_data import experiment_stat_cells, forget_suite2p
 from app.settings import Settings
+from utils.suite2p_utils import roi_center
 from utils.thorsync_utils import find_ts_h5_files, list_h5_datasets
 from utils.paths_utils import PathKind, path_for
 from utils import globals_utils as g
@@ -100,9 +99,9 @@ def validate_experiment(path: str | Path):
 
 def discover_neurons(path: str | Path) -> list[dict]:
     out = []
-    for idx, roi in enumerate(suite2p_stat_cells(path)):
-        ypix, xpix = np.asarray(roi.get("ypix", [])), np.asarray(roi.get("xpix", []))
-        out.append({"pipeline_neuron_id": str(idx), "roi_source": str(path_for(PathKind.SUITE2P_PLANE0, path)), "roi_summary": {"n_pixels": int(len(ypix)), "mean_y": float(np.mean(ypix)) if len(ypix) else None, "mean_x": float(np.mean(xpix)) if len(xpix) else None}})
+    for idx, roi in enumerate(experiment_stat_cells(path)):
+        mean_y, mean_x = roi_center(roi)
+        out.append({"pipeline_neuron_id": str(idx), "roi_source": str(path_for(PathKind.SUITE2P_PLANE0, path)), "roi_summary": {"n_pixels": len(roi["ypix"]), "mean_y": mean_y, "mean_x": mean_x}})
     return out
 
 
@@ -186,6 +185,7 @@ def confirm_suite2p(settings: Settings, experiment_id: int) -> int:
     parsed, report = validate_experiment(exp["source_path"])
     if not report.get("analysis_ready"):
         raise ValueError("Suite2p/manual outputs are not complete yet.")
+    forget_suite2p(exp["source_path"])  # the user says the extraction is done: read the Suite2p files again
     neurons = discover_neurons(exp["source_path"])
     repo.confirm_suite2p(settings, experiment_id, neurons, report, ANALYSIS_STEPS)
     return len(neurons)
