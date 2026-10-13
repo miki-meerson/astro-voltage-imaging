@@ -98,6 +98,8 @@
         <span class="failed">failed: {{ step_labels[e.job_step] if step_labels and e.job_step in step_labels else e.job_step|title }}</span>
         {% elif e.job_status == "completed" %}
         <span class="completed">completed</span>
+        {% elif e.job_status == "partial" %}
+        <span class="muted">{{ e.completed_steps }} of {{ e.total_steps }} steps completed</span>
         {% else %}
         <span class="muted">no runs</span>
         {% endif %}
