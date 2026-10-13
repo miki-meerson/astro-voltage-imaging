@@ -45,9 +45,49 @@ def suite2p_stat_cells(source_dir: str | Path) -> np.ndarray:
     return np.load(path_for(PathKind.SUITE2P_STAT, plane0), allow_pickle=True)[iscell]
 
 
+def roi_pixels(stat_cell) -> tuple[np.ndarray, np.ndarray]:
+    """(ypix, xpix) of one ROI, full-resolution pixels."""
+    return np.asarray(stat_cell["ypix"], dtype=int), np.asarray(stat_cell["xpix"], dtype=int)
+
+
 def roi_center(stat_cell) -> tuple[float, float]:
     """Centre (y, x) of one ROI as the mean of its pixels, in full-resolution pixels."""
-    return float(np.mean(stat_cell["ypix"])), float(np.mean(stat_cell["xpix"]))
+    ys, xs = roi_pixels(stat_cell)
+    return float(ys.mean()), float(xs.mean())
+
+
+def roi_pixels_in_crop(stat_cell, crop: dict) -> list:
+    """The ROI pixels [[y, x], ...] that fall inside a crop box {y0, x0, height, width}, in the crop's own coordinates."""
+    ys, xs = roi_pixels(stat_cell)
+    ys, xs = ys - int(crop["y0"]), xs - int(crop["x0"])
+    keep = (ys >= 0) & (ys < int(crop["height"])) & (xs >= 0) & (xs < int(crop["width"]))
+    return np.stack([ys[keep], xs[keep]], axis=1).tolist()
+
+
+def suite2p_trace_dff(
+    neuron_id: int,
+    *,
+    suite2p_ctx: dict | None = None,
+    suite2p_path=None,
+    F_raw: np.ndarray | None = None,
+    baseline_percentile: float = 10.0,
+) -> np.ndarray:
+    """Convert a raw Suite2p fluorescence trace to dF/F using a robust per-neuron baseline."""
+    if F_raw is None:
+        if suite2p_ctx is None:
+            if suite2p_path is None:
+                raise ValueError("Pass suite2p_ctx, suite2p_path, or F_raw to suite2p_trace_dff.")
+            suite2p_ctx = load_suite2p_context(suite2p_path)
+        F_raw = np.asarray(suite2p_ctx["F"], dtype=np.float32)
+    else:
+        F_raw = np.asarray(F_raw, dtype=np.float32)
+    trace = np.asarray(F_raw[int(neuron_id)], dtype=np.float32).ravel()
+    f0 = float(np.nanpercentile(trace, baseline_percentile))
+    if not np.isfinite(f0) or abs(f0) <= 1e-6:
+        f0 = float(np.nanmedian(trace))
+    if not np.isfinite(f0) or abs(f0) <= 1e-6:
+        return np.full_like(trace, np.nan, dtype=np.float32)
+    return ((trace - f0) / (abs(f0) + 1e-6)).astype(np.float32)
 
 
 def neuron_centroid_binned(cell_id, spatial_bin, map_shape, suite2p_ctx):
@@ -69,8 +109,7 @@ def get_neuron_outline(neuron_id, suite2p_path, image_shape, spatial_bin):
 
 def suite2p_roi_mask(neuron_id, stat_cells, image_shape, spatial_bin=1, exclude_overlap=False):
     s = stat_cells[int(neuron_id)]
-    ypix = np.asarray(s["ypix"], dtype=int)
-    xpix = np.asarray(s["xpix"], dtype=int)
+    ypix, xpix = roi_pixels(s)
     if exclude_overlap and "overlap" in s:
         keep = ~np.asarray(s["overlap"], dtype=bool)
         ypix = ypix[keep]

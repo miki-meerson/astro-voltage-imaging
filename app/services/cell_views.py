@@ -1,194 +1,149 @@
-"""Cell page data: the cropped STA movie (the anatomy STA result of the STA run, saved once as a tif) and its single-response stack."""
+"""Cell page data: the cropped STA movie of a cell and its single-response stack.
+
+The movie is a saved file (sta_anatomy_bin1.tif in the experiment folder, written by the STA Maps step); this module only reads it. When a
+file is missing it raises an error that says which step writes it (utils/output_errors.py); nothing is made here on first view.
+"""
 from __future__ import annotations
 
 import json
+import struct
+from dataclasses import dataclass
 from pathlib import Path
-import re
-import threading
 
 import numpy as np
+import tifffile
 
-from app.db.core import connect
+from app.db import experiment_repository, run_repository
 from app.services import caches, polarity
-from app.services.movies import experiment_fps
-from app.services.run_views import latest_completed_run
 from app.services.runs import run_dir
-from app.services.spikes import suite2p_plane0, suite2p_stat_cells
 from app.services.sta_results import anatomy_clusters_in_crop
-from utils.tif_export import fiji_cell_dir, sta_note, write_imagej_stack
+from utils import globals_utils as g
+from utils.movie_utils import read_frame_rate
+from utils.output_errors import missing_output_message
+from utils.paths_utils import PathKind, path_for, run_dir_of_sta_dir, sta_dir_of_run
+from utils.sta_trace_utils import event_triggered_mean
+from utils.suite2p_utils import load_suite2p_context, roi_pixels_in_crop, suite2p_stat_cells, suite2p_trace_dff
+from utils.tif_export import saved_run_name
 
-def latest_anatomy_npz(settings, conn, experiment_id: int, pipeline_neuron_id: str | int) -> Path:
-    """The anatomy STA result of this cell in the latest completed STA run: it holds the cropped, full-resolution STA movie."""
-    run = latest_completed_run(conn, experiment_id, "sta")
+
+@dataclass(frozen=True)
+class CellMovieFiles:
+    """Where the saved files of one cell's cropped STA movie are (the latest completed STA run of its experiment)."""
+    movie_tif: Path
+    anatomy_npz: Path
+    source_path: str
+    pipeline_neuron_id: int
+    sta_run_id: int
+
+
+def cell_movie_files(settings, neuron_id: int) -> CellMovieFiles:
+    """Look up the cell and its experiment's latest completed STA run and return the paths of the saved files (nothing is read from them)."""
+    cell = experiment_repository.neuron_with_experiment(settings, neuron_id)
+    if cell is None:
+        raise ValueError("Cell not found.")
+    run = run_repository.latest_completed_run_row(settings, int(cell["experiment_id"]), "sta")
     if run is None:
-        raise FileNotFoundError("No completed STA run was found.")
-    path = (
-        run_dir(settings, int(run["id"]), bool(run["is_test"]))
-        / "sta_algorithm_home"
-        / "sta-analysis"
-        / f"cell_{int(pipeline_neuron_id)}"
-        / "astro_sta_cluster_permutation_anatomy.npz"
+        raise FileNotFoundError("No completed STA run was found for this experiment: run STA Maps first.")
+    sta_dir = sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))
+    number = int(cell["pipeline_neuron_id"])
+    return CellMovieFiles(
+        movie_tif=path_for(PathKind.STA_MOVIE_TIF, cell["source_path"], cell=number, group=g.ANATOMY_GROUP, bin=1),
+        anatomy_npz=path_for(PathKind.ANATOMY_RESULT, sta_dir, cell=number),
+        source_path=cell["source_path"],
+        pipeline_neuron_id=number,
+        sta_run_id=int(run["id"]),
     )
-    if not path.exists():
-        raise FileNotFoundError(f"This cell has no anatomy STA result in STA run {int(run['id'])} (the run needs the 'anatomy' result type): {path}")
-    return path
 
 
-def sta_crop_path(source_path: str | Path, pipeline_neuron_id: str | int, spatial_bin: int = 1) -> Path:
-    """The ONE saved copy of the cropped STA movie: sta_anatomy_bin<B>.tif in the experiment folder (Fiji-readable, biological sign).
-    The STA job writes it when it creates the movie; for older runs the app writes it once from the run's anatomy result."""
-    return fiji_cell_dir(source_path, pipeline_neuron_id) / f"sta_anatomy_bin{int(spatial_bin)}.tif"
+def _check_saved_files(movie_tif: Path, anatomy_npz: Path, cell: int) -> None:
+    """The cropped movie and the anatomy result must exist, and the movie must come from the same STA run as the result."""
+    run_name = run_dir_of_sta_dir(anatomy_npz.parent.parent).name  # <run>/sta_algorithm_home/sta-analysis/cell_<N>/<file>
+    if not anatomy_npz.exists():
+        raise FileNotFoundError(
+            f"The anatomy STA result of cell {cell} is missing for STA run {run_name} ({anatomy_npz}). The STA Maps step writes it when the "
+            "'anatomy' result type is chosen: rerun STA Maps with that result type."
+        )
+    if not movie_tif.exists():
+        raise FileNotFoundError(missing_output_message(f"The cropped STA movie of cell {cell} ({movie_tif.name})", run_name))
+    found = saved_run_name(movie_tif)
+    if found != run_name:
+        raise ValueError(
+            f"The cropped STA movie of cell {cell} is from another STA run ({found or 'no run tag'}), not from STA run {run_name}. "
+            "Rerun STA Maps for this experiment."
+        )
 
 
-def _saved_run_name(tif: Path) -> str | None:
-    """Name of the STA run folder a saved tif was made from (kept in its ImageJ info text); None when missing or unreadable."""
-    try:
-        import tifffile
-
-        with tifffile.TiffFile(tif) as t:
-            info = (t.imagej_metadata or {}).get("Info", "")
-    except Exception:
-        return None
-    m = re.search(r"run=(\S+)", str(info))
-    return m.group(1) if m else None
-
-
-_BUILD_LOCKS: dict[int, threading.Lock] = {}
-_BUILD_LOCKS_GUARD = threading.Lock()
-
-
-def _build_lock(neuron_id: int) -> threading.Lock:
-    """One lock per cell: concurrent requests for the same cell wait for one conversion instead of each doing it."""
-    with _BUILD_LOCKS_GUARD:
-        return _BUILD_LOCKS.setdefault(int(neuron_id), threading.Lock())
-
-
-def ensure_saved_cropped_sta_movie(settings, neuron_id: int) -> dict:
-    """The cropped STA movie of a cell and where it is saved. It is the observed STA movie the STA job already computed for the cell's
-    anatomy result (the same grid as the clusters, relative change vs the pre-spike baseline, biological sign): a small file, not a rebuild
-    from the astro movie. Written to the experiment folder once (older runs) or by the STA job itself (new runs)."""
-    with connect(settings) as conn:
-        n = conn.execute(
-            """
-            SELECT n.*,e.source_path,e.canonical_id,e.id AS experiment_id
-            FROM neurons n
-            JOIN experiments e ON e.id=n.experiment_id
-            WHERE n.id=?
-            """,
-            (neuron_id,),
-        ).fetchone()
-        if n is None:
-            raise ValueError("Cell not found.")
-        anat = latest_anatomy_npz(settings, conn, int(n["experiment_id"]), n["pipeline_neuron_id"])
-    key = (int(neuron_id), str(anat), int(anat.stat().st_mtime_ns))
-    cached = caches.ANATOMY_CROP_INFO.get(key)
-    if cached is not None:
-        return dict(cached)
-    with _build_lock(neuron_id):
-        cached = caches.ANATOMY_CROP_INFO.get(key)
-        if cached is not None:
-            return dict(cached)
-        try:
-            fps = experiment_fps(n["source_path"])
-        except Exception:
-            fps = 1.0
-        with np.load(anat, allow_pickle=True) as d:
-            spatial_bin = int(np.asarray(d["spatial_bin"]).item()) if "spatial_bin" in d.files else 1
-            if spatial_bin != 1:
-                raise ValueError(f"The cropped STA movie is shown for anatomy results at spatial bin 1 (this one is bin {spatial_bin}).")
-            pre_frames = int(np.asarray(d["pre_frames"]).item())
-            post_frames = int(np.asarray(d["post_frames"]).item())
-            peaks = np.asarray(d["peaks"], dtype=np.int32)
-            y0, y1, x0, x1 = (int(v) for v in np.asarray(d["anatomy_crop_bounds"]).ravel())
-            run_name = anat.parents[3].name  # <run folder>/sta_algorithm_home/sta-analysis/cell_<N>/<file>
-            out_tif = sta_crop_path(n["source_path"], n["pipeline_neuron_id"], spatial_bin)
-            if _saved_run_name(out_tif) != run_name:  # missing, or made from another STA run
-                movie = np.asarray(d["observed_sta_movie"], dtype=np.float32)
-                write_imagej_stack(out_tif, movie, fps, pre_frames, sta_note(n["pipeline_neuron_id"], peaks.size, "anatomy spatial bin 1 (relative change)", run=run_name))
-        info = {
-            "available": True,
-            "movie_path": out_tif,
-            "source_sta_npz": str(anat),
-            "pipeline_neuron_id": int(n["pipeline_neuron_id"]),
-            "frames": int(pre_frames + post_frames + 1),
-            "fps": fps,
-            "relative_frames": np.arange(-pre_frames, post_frames + 1, dtype=int).tolist(),
-            "pre_frames": pre_frames,
-            "post_frames": post_frames,
-            "n_peaks": int(peaks.size),
+def _read_anatomy_header(anatomy_npz: Path) -> dict:
+    """The small keys of the anatomy result that describe its movie (never the permutations)."""
+    with np.load(anatomy_npz, allow_pickle=True) as d:
+        spatial_bin = int(np.asarray(d["spatial_bin"]).item())
+        if spatial_bin != 1:
+            raise ValueError(f"The cropped STA movie is shown for anatomy results at spatial bin 1 (this one is bin {spatial_bin}).")
+        y0, y1, x0, x1 = (int(v) for v in np.asarray(d["anatomy_crop_bounds"]).ravel())
+        return {
+            "pre_frames": int(np.asarray(d["pre_frames"]).item()),
+            "post_frames": int(np.asarray(d["post_frames"]).item()),
+            "peaks": np.asarray(d["peaks"], dtype=np.int32),
             "crop": {"y0": y0, "y1": y1, "x0": x0, "x1": x1, "width": x1 - x0, "height": y1 - y0},
-            "spatial_bin": spatial_bin,
-            "units": "relative_change",
         }
-        caches.ANATOMY_CROP_INFO.put(key, dict(info))
-        return info
 
 
-def suite2p_roi_pixels(source_path: str | Path, pipeline_neuron_id: str | int) -> tuple[np.ndarray, np.ndarray]:
-    roi = suite2p_stat_cells(source_path)[int(pipeline_neuron_id)]
-    return np.asarray(roi["ypix"], dtype=int), np.asarray(roi["xpix"], dtype=int)
+def _roi_outline(source_path, pipeline_neuron_id, crop: dict) -> list:
+    """The cell's Suite2p ROI pixels inside the crop (an optional marker: [] when the Suite2p files cannot be read)."""
+    try:
+        return roi_pixels_in_crop(suite2p_stat_cells(source_path)[int(pipeline_neuron_id)], crop)
+    except (OSError, IndexError, KeyError):
+        return []
 
 
-def sta_crop_stack_payload(settings, neuron_id: int):
-    """The whole cropped STA movie as ONE binary payload (bytes): [u32 header length][json header][uint16 frames], plus the markers.
+def _neuron_trace(source_path, pipeline_neuron_id, peaks: np.ndarray, pre: int, post: int, rel: np.ndarray) -> dict:
+    """The neuron's own dF/F (neuron movie, Suite2p) averaged around the same spikes as the astro movie (an optional marker)."""
+    neuron = {"trace": [], "trace_label": "", "trace_peak": None}
+    try:
+        ctx = load_suite2p_context(path_for(PathKind.SUITE2P_PLANE0, source_path))
+        dff = np.asarray(suite2p_trace_dff(int(pipeline_neuron_id), suite2p_ctx=ctx), dtype=float)
+    except (OSError, IndexError, KeyError, ValueError):
+        return neuron
+    ok = peaks[(peaks >= pre) & (peaks + post < len(dff))]
+    if ok.size:
+        sta_trace = event_triggered_mean(dff, ok, rel)
+        neuron["trace"] = sta_trace.round(6).tolist()
+        neuron["trace_label"] = "Neuron dF/F (neuron movie), spike-triggered average"
+        neuron["trace_peak"] = float(sta_trace[rel == 0][0]) if (rel == 0).any() else None
+    return neuron
 
-    One request instead of one JPEG per frame; contrast is applied in the browser.
+
+def sta_crop_stack_payload(movie_tif: Path, anatomy_npz: Path, source_path: str | Path, pipeline_neuron_id: int) -> bytes:
+    """The whole cropped STA movie as ONE binary payload: [u32 header length][json header][uint16 frames], plus the markers.
+
+    One request instead of one JPEG per frame; contrast is applied in the browser. Reads the saved tif (movie_tif) and the cell's anatomy
+    result (anatomy_npz), both from utils/paths_utils.py; no database. Raises FileNotFoundError (what is missing and which step writes it), ValueError (the movie is from another STA run, or the fps
+    cannot be read from Experiment.xml).
     """
-    import struct
-
-    import tifffile
-
-    info = ensure_saved_cropped_sta_movie(settings, neuron_id)
-    path = Path(info["movie_path"])
-    anat = Path(info["source_sta_npz"])
-    key = (int(neuron_id), str(path), path.stat().st_mtime_ns, anat.stat().st_mtime_ns if anat.exists() else 0, 6)
+    _check_saved_files(movie_tif, anatomy_npz, int(pipeline_neuron_id))
+    key = (int(pipeline_neuron_id), str(movie_tif), movie_tif.stat().st_mtime_ns, anatomy_npz.stat().st_mtime_ns, 7)
     hit = caches.STA_STACK.get(key)
     if hit is not None:
         return hit
 
-    movie = np.asarray(tifffile.imread(path), dtype=np.float32)  # relative change, already in the biological sign (brighter = depolarised)
+    head = _read_anatomy_header(anatomy_npz)
+    pre, post, crop = head["pre_frames"], head["post_frames"], head["crop"]
+    fps = read_frame_rate(source_path)
+    movie = np.asarray(tifffile.imread(movie_tif), dtype=np.float32)  # relative change, already in the biological sign (brighter = depolarised)
     lo, hi = (float(v) for v in np.nanpercentile(movie[:: max(1, movie.shape[0] // 40)], [0.05, 99.95]))
     if not hi > lo:
         hi = lo + 1.0
-    q = np.clip((movie - lo) / (hi - lo), 0, 1)
-    q = (q * 65535 + 0.5).astype("<u2")
-    crop = info["crop"]
-    rel = np.asarray(info["relative_frames"], dtype=int)
-    with connect(settings) as conn:
-        src = conn.execute("SELECT e.source_path FROM neurons n JOIN experiments e ON e.id=n.experiment_id WHERE n.id=?", (neuron_id,)).fetchone()["source_path"]
-    neuron = {"pixels": [], "trace": [], "trace_label": "", "trace_peak": None}
-    try:  # ROI outline (optional marker only)
-        ys, xs = suite2p_roi_pixels(src, info["pipeline_neuron_id"])
-        ys, xs = ys - int(crop["y0"]), xs - int(crop["x0"])
-        keep = (ys >= 0) & (ys < movie.shape[1]) & (xs >= 0) & (xs < movie.shape[2])
-        if keep.any():
-            neuron["pixels"] = np.stack([ys[keep], xs[keep]], axis=1).tolist()
-    except Exception:
-        pass
-    try:  # the neuron's own dF/F (neuron movie, Suite2p), averaged around the same spikes as the astro movie
-        from utils.suite2p_utils import load_suite2p_context
-        from utils.spikes_utils import _suite2p_trace_dff
-
-        ctx = load_suite2p_context(suite2p_plane0(src))
-        dff = np.asarray(_suite2p_trace_dff(int(info["pipeline_neuron_id"]), suite2p_ctx=ctx), dtype=float)
-        with np.load(anat, allow_pickle=True) as d:
-            peaks = np.asarray(d["peaks"], dtype=int)
-        pre, post = int(info["pre_frames"]), int(info["post_frames"])
-        ok = peaks[(peaks >= pre) & (peaks + post < len(dff))]
-        if ok.size:
-            sta_trace = np.mean([dff[q - pre: q + post + 1] for q in ok], axis=0)
-            neuron["trace"] = sta_trace.round(6).tolist()
-            neuron["trace_label"] = "Neuron dF/F (neuron movie), spike-triggered average"
-            neuron["trace_peak"] = float(sta_trace[rel == 0][0]) if (rel == 0).any() else None
-    except Exception:
-        pass
+    q = (np.clip((movie - lo) / (hi - lo), 0, 1) * 65535 + 0.5).astype("<u2")
+    rel = np.arange(-pre, post + 1, dtype=int)
+    neuron = {"pixels": _roi_outline(source_path, int(pipeline_neuron_id), crop),
+              **_neuron_trace(source_path, int(pipeline_neuron_id), head["peaks"], pre, post, rel)}
     header = {
         "frames": int(movie.shape[0]), "height": int(movie.shape[1]), "width": int(movie.shape[2]),
-        "lo": lo, "hi": hi, "relative_frames": rel.tolist(), "fps": float(info["fps"]),
-        "n_peaks": int(info["n_peaks"]), "crop": crop, "neuron": neuron, "gevi_flipped": polarity.RAW_SIGN_IS_INVERTED,
-        "units": info["units"], "anatomy_clusters": anatomy_clusters_in_crop(anat, crop),
+        "lo": lo, "hi": hi, "relative_frames": rel.tolist(), "fps": fps,
+        "n_peaks": int(head["peaks"].size), "crop": crop, "neuron": neuron, "gevi_flipped": polarity.RAW_SIGN_IS_INVERTED,
+        "units": "relative_change", "anatomy_clusters": anatomy_clusters_in_crop(anatomy_npz, crop),
     }
-    hb = json.dumps(header).encode("utf-8")
-    payload = struct.pack("<I", len(hb)) + hb + q.tobytes()
+    header_bytes = json.dumps(header).encode("utf-8")
+    payload = struct.pack("<I", len(header_bytes)) + header_bytes + q.tobytes()
     caches.STA_STACK.put(key, payload)
     return payload

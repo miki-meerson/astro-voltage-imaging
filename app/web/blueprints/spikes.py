@@ -16,8 +16,8 @@ from app.services.spikes import (
 )
 from app.web.common import FlatBlueprint, get_settings
 from utils.paths_utils import PathKind, path_for
-from utils.spikes_utils import _suite2p_trace_dff, classify_spikes, detect_peaks_mad, highpass_traces
-from utils.suite2p_utils import load_suite2p_context
+from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
+from utils.suite2p_utils import load_suite2p_context, suite2p_trace_dff
 
 bp = FlatBlueprint("spikes", __name__)
 
@@ -49,7 +49,7 @@ def spike_data(neuron_id):
     if cell_id < 0 or cell_id >= int(suite2p_ctx["n_cells"]):
         stale_message = stale_suite2p_cell_message(n["source_path"], n["pipeline_neuron_id"])
         return jsonify({"error": stale_message or f"Cell {cell_id} is outside Suite2p traces."}), 400
-    trace = np.asarray(_suite2p_trace_dff(cell_id, suite2p_ctx=suite2p_ctx), dtype=float)
+    trace = np.asarray(suite2p_trace_dff(cell_id, suite2p_ctx=suite2p_ctx), dtype=float)
     try:
         fps = experiment_fps(n["source_path"])
     except ValueError as exc:  # no frame rate in Experiment.xml

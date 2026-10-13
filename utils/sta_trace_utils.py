@@ -64,6 +64,11 @@ def crop_mask_to_fullres(mask_crop: np.ndarray, crop: tuple[int, int, int, int],
     return np.repeat(np.repeat(full_binned, spatial_bin, axis=0), spatial_bin, axis=1)[: image_shape[0], : image_shape[1]]
 
 
+def event_triggered_mean(x: np.ndarray, centers: np.ndarray, rels: np.ndarray) -> np.ndarray:
+    """x: (T,), centers: (K,) frame indices, rels: relative frames -> mean over the centers of x[center + rel]."""
+    return x[centers[:, None] + rels[None, :]].mean(axis=0)
+
+
 def spike_triggered_dff_trace(trace: np.ndarray, peaks: np.ndarray, pre: int, post: int, baseline_frames: int | None = None) -> np.ndarray:
     y = np.asarray(trace, dtype=float)
     baseline_frames = max(1, int(pre // 2 if baseline_frames is None else baseline_frames))

@@ -64,11 +64,6 @@ def build_motion_series(shifts: np.ndarray, reg_corr: np.ndarray | None = None) 
     return series
 
 
-def _event_triggered(x: np.ndarray, centers: np.ndarray, rels: np.ndarray) -> np.ndarray:
-    """x: (T,), centers: (K,) frame indices -> (rels,) mean of x[centers + rel]."""
-    return x[centers[:, None] + rels[None, :]].mean(axis=0)
-
-
 def motion_sta_stats(
     series: dict[str, np.ndarray],
     peaks: np.ndarray,
