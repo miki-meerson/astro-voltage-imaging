@@ -29,7 +29,7 @@ def _resolve(root: Path, value: str) -> Path:
 
 def load_secrets() -> dict:
     """The cluster credentials, from the one git-ignored secrets.yml (or ASTRO_SECRETS_FILE). Empty dict when the file is absent;
-    the ASTRO_CLUSTER_* environment variables are still honoured by app.services.cluster_ssh."""
+    the ASTRO_CLUSTER_* environment variables are still honoured by app.cluster.client."""
     path = Path(os.environ.get("ASTRO_SECRETS_FILE") or PROJECT_ROOT / "secrets.yml")
     if not path.exists():
         return {}

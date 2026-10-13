@@ -6,10 +6,8 @@ import sqlite3
 import threading
 import time
 
-import paramiko
-
+from app.cluster import client
 from app.db import run_repository
-from app.services.cluster_ssh import run_ssh_command
 from app.services.preprocessing import load_state, save_state, submit_preprocessing_step
 from app.services.runs import output_manifest
 from app.settings import Settings
@@ -19,15 +17,16 @@ from utils.paths_utils import PathKind, path_for
 FAILED_STATES = ("FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL")
 RUNNING_STATES = ("RUNNING", "COMPLETING", "CONFIGURING", "RESIZING", "STAGE_OUT")
 QUEUED_STATES = ("PENDING", "REQUEUED", "REQUEUE_FED", "REQUEUE_HOLD", "SUSPENDED")
-# what a Slurm lookup or a job submission over SSH can raise: no/incomplete credentials or a broken connection (OSError), an SSH protocol error,
-# an unreadable answer (ValueError, KeyError), a refused submission (RuntimeError)
-CLUSTER_ERRORS = (OSError, paramiko.SSHException, ValueError, KeyError, RuntimeError)
+CLUSTER_ERRORS = client.CLUSTER_ERRORS
+MONITOR_TIMEOUT_SECONDS = 8
 
 
-def _ssh_command(settings: Settings, command: str) -> tuple[str, str, int]:
-    cluster = dict(settings.raw.get("cluster", {}))
-    timeout = int(cluster.get("monitor_command_timeout_seconds") or 8)
-    return run_ssh_command(cluster, command, command_timeout_seconds=timeout)
+def _cluster(settings: Settings) -> dict:
+    return settings.raw.get("cluster", {})
+
+
+def _monitor_timeout(settings: Settings) -> int:
+    return int(_cluster(settings).get("monitor_command_timeout_seconds") or MONITOR_TIMEOUT_SECONDS)
 
 
 def _job_id(output_dir: str | None) -> str | None:
@@ -77,19 +76,9 @@ def _status_from_slurm_states(states: list[str]) -> tuple[str | None, int | None
 
 
 def _slurm_status(settings: Settings, job_id: str) -> tuple[str | None, int | None, str]:
-    cluster = settings.raw.get("cluster", {})
-    squeue = str(cluster.get("squeue_command") or "/usr/bin/squeue")
-    sacct = str(cluster.get("sacct_command") or "/usr/bin/sacct")
-    sq_out, _, sq_code = _ssh_command(settings, f"{squeue} -h -j {job_id} -o '%T'")
-    if sq_code == 0 and sq_out.strip():
-        states = [line.strip() for line in sq_out.splitlines() if line.strip()]
-        return _status_from_slurm_states(states)
-    acct_out, acct_err, acct_code = _ssh_command(settings, f"{sacct} -n -j {job_id} --format=State,ExitCode -P")
-    if acct_code != 0:
-        return None, None, (acct_err or acct_out).strip()
-    states = [line.split("|", 1)[0].strip() for line in acct_out.splitlines() if line.strip()]
+    states, note = client.job_state(_cluster(settings), job_id, _monitor_timeout(settings))
     if not states:
-        return None, None, ""
+        return None, None, note
     return _status_from_slurm_states(states)
 
 
@@ -148,9 +137,7 @@ def _copy_remote_log(settings: Settings, remote_log_path: str, local_path: Path)
         if text:
             local_path.write_text(text, encoding="utf-8", errors="replace")
         return
-    cluster_log = remote_log_path.replace("\\", "/")
-    out, err, code = _ssh_command(settings, f"tail -n 4000 {cluster_log!r}")
-    text = out if code == 0 else (err or out)
+    text = client.tail_remote_file(_cluster(settings), remote_log_path, timeout=_monitor_timeout(settings))
     if text:
         local_path.write_text(text, encoding="utf-8", errors="replace")
 

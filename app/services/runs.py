@@ -218,13 +218,8 @@ def _sta_command(settings: Settings, run, out: Path) -> list[str]:
         found = _latest_completed_output(settings, experiment_id, step)
         if found is not None:
             params[key] = str(found)
-    cluster = settings.raw.get("cluster", {})
-    params["cluster_submit_command"] = cluster.get("submit_command", "sbatch")
-    params["cluster_script"] = cluster.get("sta_script", path_for(PathKind.STA_JOB_SCRIPT, "").as_posix())
-    params["cluster_submission_method"] = cluster.get("submission_method", "paramiko")
-    params["cluster_paramiko_timeout_seconds"] = cluster.get("paramiko_timeout_seconds", 600)
-    params["cluster_paramiko_attempts"] = cluster.get("paramiko_attempts", 5)
-    params["cluster_path_map"] = cluster.get("path_map", {})
+    # the cluster settings once, without the credentials: those reach the adapter through the environment (_process_env)
+    params["cluster"] = {key: value for key, value in settings.raw.get("cluster", {}).items() if key not in CLUSTER_ENV_VARS}
     return _adapter_command(run, out, json.dumps(params))
 
 

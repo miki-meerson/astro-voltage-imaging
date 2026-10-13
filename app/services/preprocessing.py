@@ -3,10 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
-import shlex
 
+from app.cluster import client
 from app.db import preprocessing_repository as repo
-from app.services.cluster_ssh import run_ssh_command
 from app.settings import Settings
 from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
@@ -23,22 +22,6 @@ RUNNER_SCRIPTS = {
     "motion_correction": "run_motion_correction.sh",
     "photobleaching_correction": "run_photobleaching_correction.sh",
 }
-
-
-def cluster_path(path: Path | str, settings_or_params) -> str:
-    value = str(path)
-    raw = settings_or_params.raw if hasattr(settings_or_params, "raw") else settings_or_params
-    mapping = (raw.get("cluster", {}) if "cluster" in raw else raw).get("path_map", {})
-    to_root = str(mapping.get("to_cluster") or "").rstrip("/")
-    from_roots = [
-        str(mapping.get("from_windows") or "").rstrip("\\/"),
-        str(mapping.get("from_windows_unc") or "").rstrip("\\/"),
-    ]
-    for from_root in [root for root in from_roots if root]:
-        if to_root and value.lower().startswith(from_root.lower()):
-            suffix = value[len(from_root):].lstrip("\\/")
-            return to_root + ("/" + suffix.replace("\\", "/") if suffix else "")
-    return value.replace("\\", "/")
 
 
 def default_preprocessing_params(settings: Settings, source_path: str | Path) -> dict:
@@ -64,13 +47,14 @@ def write_params_file(settings: Settings, run: dict, out: Path, params: dict) ->
     now = datetime.now().strftime("%d-%m-%Y___%H-%M-%S")
     raw_video = Path(params.get("raw_video_path") or path_for(PathKind.RAW_MOVIE, run["source_path"]))
     home = Path(run["source_path"])
+    cluster = settings.raw.get("cluster", {})
     payload = {
         **params,
         "gui_time": f"app_run_{run['id']}__{now}",
         "raw_video_path": str(raw_video),
-        "raw_video_path_linux": cluster_path(raw_video, settings),
+        "raw_video_path_linux": client.to_cluster_path(raw_video, cluster),
         "home_dir": str(home),
-        "home_dir_linux": cluster_path(home, settings),
+        "home_dir_linux": client.to_cluster_path(home, cluster),
         "is_2ch": bool(params.get("is_2ch", True)),
     }
     path_for(PathKind.PREPROCESSING_PARAMS_DIR, out).mkdir(parents=True, exist_ok=True)
@@ -126,40 +110,26 @@ def submit_preprocessing_step(settings: Settings, out: Path, state: dict, index:
     if not script.exists():
         raise FileNotFoundError(f"Missing preprocessing runner script: {script}")
     cluster = settings.raw.get("cluster", {})
-    submit = str(cluster.get("submit_command") or "/usr/bin/sbatch")
-    params_path = Path(state["params_path"])
     log_path = out / f"preprocessing_{step['name']}_%j.log"
-    cmd = " ".join(
-        [
-            shlex.quote(submit),
-            f"--chdir={shlex.quote(cluster_path(path_for(PathKind.PREPROCESSING_SOURCE, settings.project_root), settings))}",
-            f"--output={shlex.quote(cluster_path(log_path, settings))}",
-            shlex.quote(cluster_path(script, settings)),
-            shlex.quote(cluster_path(params_path, settings)),
-        ]
+    job_id = client.submit_job(
+        cluster, script, [Path(state["params_path"])], path_for(PathKind.PREPROCESSING_SOURCE, settings.project_root), log_path
     )
-    stdout, stderr, code = run_ssh_command(cluster, cmd)
-    if code != 0:
-        raise RuntimeError(f"Failed to submit {step['name']}: {(stderr or stdout).strip()}")
-    job_id = next((token for token in stdout.replace(".", " ").split() if token.isdigit()), "")
-    if not job_id:
-        raise RuntimeError(f"Could not parse Slurm job id from sbatch output: {stdout!r}")
     real_log_path = str(log_path).replace("%j", job_id)
-    remote_log_path = cluster_path(Path(real_log_path), settings)
+    message = f"Submitted batch job {job_id}"
     step.update(
         {
             "status": "queued",
             "job_id": job_id,
-            "log_path": remote_log_path,
+            "log_path": client.to_cluster_path(real_log_path, cluster),
             "local_log_path": real_log_path,
             "submitted_at": datetime.now().isoformat(timespec="seconds"),
-            "message": stdout.strip(),
+            "message": message,
         }
     )
     state["current_index"] = index
     save_state(out, state)
     path_for(PathKind.CLUSTER_JOB_ID, out).write_text(job_id + "\n", encoding="utf-8")
-    repo.mark_step_queued(settings, state["run_id"], step["name"], job_id, real_log_path, step["submitted_at"], stdout.strip())
+    repo.mark_step_queued(settings, state["run_id"], step["name"], job_id, real_log_path, step["submitted_at"], message)
     return state
 
 
