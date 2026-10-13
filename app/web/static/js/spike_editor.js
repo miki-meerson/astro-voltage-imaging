@@ -8,21 +8,12 @@
   let initialDetectionParams = {}, detectTimer = null, detectRequestId = 0;
   const colors = {simple: "#4fa3ff", complex: "#f0a33a", exclude: "#e05260"};
   const plot = {left: 76, right: 22, top: 28, bottom: 62};
-  const paramDefaults = {
-    mad_factor: 3.5,
-    min_amplitude: 0.30,
-    min_width: 18.0,
-    min_subthreshold: 0.10,
-    min_ratio: 0.30,
-    min_distance: 0,
-  };
+  // the detector settings (and their defaults) come from the server with the cell's data; nothing is defined here
   const paramFormat = {
     mad_factor: v => Number(v).toFixed(1),
     min_amplitude: v => Number(v).toFixed(2),
     min_width: v => Math.round(Number(v)).toString(),
     min_subthreshold: v => Number(v).toFixed(2),
-    min_ratio: v => Number(v).toFixed(2),
-    min_distance: v => Math.round(Number(v)).toString(),
   };
 
   function resizeCanvas() {
@@ -209,15 +200,14 @@
     const params = {};
     document.querySelectorAll("[data-detect-param]").forEach(input => {
       const key = input.dataset.detectParam;
-      params[key] = key === "min_distance" ? Math.round(Number(input.value)) : Number(input.value);
+      params[key] = Number(input.value);
     });
     return params;
   }
   function setDetectionParams(params) {
-    const merged = {...paramDefaults, ...(params || {})};
     document.querySelectorAll("[data-detect-param]").forEach(input => {
       const key = input.dataset.detectParam;
-      input.value = merged[key];
+      input.value = params[key];
       updateParamOutput(input);
     });
   }
@@ -349,7 +339,7 @@
     fps = Number(data.fps || 1);
     peaks = data.peaks || [];
     labels = data.labels || [];
-    initialDetectionParams = {...paramDefaults, ...(data.params || {})};
+    initialDetectionParams = data.params;
     setDetectionParams(initialDetectionParams);
     updateDetectionStats();
     start = 0;

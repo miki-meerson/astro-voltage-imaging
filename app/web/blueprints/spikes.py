@@ -101,7 +101,6 @@ def detect_spike_data(neuron_id):
         mad_factor=params["mad_factor"],
         duplicate_window_frames=params["duplicate_window_frames"],
         align_radius_frames=params["align_radius_frames"],
-        min_distance=params["min_distance"],
     )
     labels, features = classify_spikes(
         trace,
@@ -110,7 +109,6 @@ def detect_spike_data(neuron_id):
         min_amplitude=params["min_amplitude"],
         min_width=params["min_width"],
         min_subthreshold=params["min_subthreshold"],
-        min_ratio=params["min_ratio"],
         subthreshold_window_seconds=0.2,
         baseline_window_seconds=1.5,
     )

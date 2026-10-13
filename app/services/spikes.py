@@ -10,6 +10,7 @@ import numpy as np
 from app.services.runs import run_dir
 from app.services.suite2p_data import experiment_stat_cells
 from utils.paths_utils import PathKind, path_for
+from utils.spike_params import SPIKE_PARAM_SPECS, spike_params_with_defaults
 
 def spikes_edited_after_sta(settings, spike_run, sta_run, pipeline_neuron_id) -> datetime | None:
     """When the cell's spike labels were last written, if that is after the STA run started (so the STA used older spikes)."""
@@ -98,20 +99,6 @@ def load_spike_payload(path: Path) -> dict:
     return {"peaks_all": peaks[order], "labels": labels[order]}
 
 
-# name -> (kind, default, lo, hi): the nine detector settings of the spike editor, with the limits the server enforces
-SPIKE_PARAM_SPECS = {
-    "mad_factor": (float, 3.5, 0.5, 8.0),
-    "min_amplitude": (float, 0.30, 0.0, 2.0),
-    "min_width": (float, 18.0, 1.0, 120.0),
-    "min_subthreshold": (float, 0.10, 0.0, 1.0),
-    "min_ratio": (float, 0.30, 0.0, 2.0),
-    "duplicate_window_frames": (int, 30, 1, 240),
-    "align_radius_frames": (int, 5, 0, 80),
-    "min_distance": (int, 0, 0, 500),
-    "highpass_cutoff_hz": (float, 0.07, 0.0, 1.0),
-}
-
-
 def bounded_spike_params(data: dict) -> dict:
     """The detector settings found in `data`, each clamped to its limits (missing ones get the default)."""
     return {
@@ -126,7 +113,7 @@ def spike_detection_params(run_row, params_path: Path | None = None) -> dict:
         params = json.loads(run_row["parameters_json"] or "{}") if run_row is not None else {}
     except json.JSONDecodeError:
         params = {}
-    result = {name: kind(params.get(name, default)) for name, (kind, default, _, _) in SPIKE_PARAM_SPECS.items()}
+    result = spike_params_with_defaults(params)
     if params_path is not None:
         try:
             saved = np.load(params_path, allow_pickle=True)

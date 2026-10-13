@@ -117,6 +117,7 @@ ANATOMY_CROP_PREVIEW_PNG = "anatomy_crop_preview.png"  # <anatomy run>/
 STA_JOB_PARAMS_EFFECTIVE = "sta_maps_job_params.effective.json"  # <STA run>/: the parameters file the cluster job reads
 GROUP_TEST_STDOUT_LOG = "group_test_stdout.log"  # <STA run>/: log of the anatomy group test job
 GROUP_TEST_JOB_ID_FILE = "cluster_group_test_job_id.txt"  # <STA run>/: Slurm job id of the anatomy group test
+DATA_SHARE_NAME = "Adam-Lab-Shared"  # the folder of the lab share that the cluster mounts at cluster.path_map.to_cluster
 CLUSTER_CODE_DIR = "cluster-code"  # under the project folder: the scripts the Slurm jobs run
 STA_JOB_SCRIPT = "run_sta_maps.sh"  # in CLUSTER_CODE_DIR: the sbatch script of the STA Maps job
 STA_ALGORITHM_SCRIPT = "sta_maps_sparse.py"  # in CLUSTER_CODE_DIR: the STA Maps algorithm

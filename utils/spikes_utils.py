@@ -62,10 +62,8 @@ def detect_peaks_mad(
     mad_factor: float,
     duplicate_window_frames: int,
     align_radius_frames: int,
-    min_distance: int = 0,
 ) -> np.ndarray:
-    distance = None if int(min_distance) <= 0 else int(min_distance)
-    peaks, _ = find_peaks(detection_trace, height=mad_threshold(detection_trace, mad_factor), distance=distance)
+    peaks, _ = find_peaks(detection_trace, height=mad_threshold(detection_trace, mad_factor))
     peaks = collapse_nearby_peaks(detection_trace, peaks, duplicate_window_frames)
     return align_peaks_to_trace(original_trace, peaks, align_radius_frames)
 
@@ -115,7 +113,6 @@ def classify_spikes(
     min_amplitude: float,
     min_width: float,
     min_subthreshold: float,
-    min_ratio: float,
     subthreshold_window_seconds: float = 0.2,
     baseline_window_seconds: float = 1.5,
 ) -> tuple[PeakLabels, dict[str, np.ndarray]]:
@@ -129,21 +126,13 @@ def classify_spikes(
         amplitude = features["amplitude"]
         width = features["width"]
         subthreshold = features["subthreshold_depolarization"]
-        ratio = subthreshold / (amplitude + 1e-12)
-        complex_mask = (
-            (amplitude >= min_amplitude)
-            & (width >= min_width)
-            & (subthreshold >= min_subthreshold)
-            & (ratio >= min_ratio)
-        )
+        complex_mask = (amplitude >= min_amplitude) & (width >= min_width) & (subthreshold >= min_subthreshold)
         labels[complex_mask] = "complex"
-        features["subthreshold_ratio"] = ratio.astype(np.float32)
         features["score"] = np.minimum.reduce(
             [
                 amplitude / min_amplitude,
                 width / min_width,
                 subthreshold / min_subthreshold,
-                ratio / min_ratio,
             ]
         ).astype(np.float32)
 
