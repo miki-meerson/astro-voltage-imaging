@@ -18,6 +18,7 @@ from app.services.experiments import (
     remove_experiment_from_registry,
     reset_experiment_app_data,
     scan_parent,
+    start_analysis,
     validate_experiment,
 )
 from app.services.movies import pb_movie_path
@@ -27,11 +28,12 @@ from app.services.run_views import (
     build_validation_rows,
     validation_all_ok,
 )
-from app.services.runs import create_run, launch_run, pipeline_status
+from app.services.runs import ACTIVE_STATUSES, create_run, default_sta_step, launch_run, pipeline_status, sta_steps
 from app.services.spikes import current_suite2p_neurons, review_cache_key, spike_review_info, spikes_edited_after_sta
 from app.services.sta_results import STA_RESULT_TYPES, sta_significant_summary
 from app.web.common import FlatBlueprint, get_settings, movie_frame_response, movie_meta_response
 from app.web.security import safe_next
+from utils.hypotheses import is_sta_step
 
 bp = FlatBlueprint("experiments", __name__)
 
@@ -44,7 +46,8 @@ def index():
     for e in experiments:
         e.update(pipeline_status(statuses.get(int(e["id"]), {})))
     active = any(e.get("job_status") in {"running", "pending"} for e in experiments)
-    return render_template("index.html", experiments=experiments, settings=settings, last_scan=last, active=active, favorites_only=favorites_only, step_labels=STEP_LABELS)
+    return render_template("index.html", experiments=experiments, settings=settings, last_scan=last, active=active, favorites_only=favorites_only, step_labels=STEP_LABELS,
+                           rerun_steps=ANALYSIS_STEPS)
 
 
 @bp.post("/experiments/add")
@@ -142,7 +145,7 @@ def experiment_analysis(experiment_id):
     notes = data["notes"]
     if selected_neuron_id and not any(str(n["id"]) == str(selected_neuron_id) for n in neurons):
         selected_neuron_id = ""
-    active = any(r["status"] in {"pending", "queued", "running"} for r in runs)
+    active = any(r["status"] in ACTIVE_STATUSES for r in runs)
     report = json.loads(exp["validation_report"] or "{}")
     validation_rows = build_validation_rows(report)
     return render_template(
@@ -155,6 +158,7 @@ def experiment_analysis(experiment_id):
         active=active,
         step_labels=STEP_LABELS,
         analysis_latest=analysis_latest,
+        sta_steps=sta_steps(),
         sta_result_types=STA_RESULT_TYPES,
         sta_defaults=dict(settings.raw.get("defaults", {}).get("sta", {})),
         notice=request.args.get("notice"),
@@ -206,34 +210,38 @@ def run_step(experiment_id):
         stage = repo.workflow_stage_of(settings, experiment_id)
         if stage is None:
             raise ValueError("Experiment not found.")
+        if is_sta_step(step):
+            raise ValueError("STA steps are started with Run analysis, which runs every hypothesis.")
         if step in ANALYSIS_STEPS and stage != repo.STAGE_ANALYSIS_READY:
             raise ValueError("Analysis steps can run only after preprocessing and Suite2p have been confirmed.")
         params = json.loads(request.form.get("params") or "{}") if request.form.get("params") else settings.raw.get("defaults", {}).get(step, {})
-        params = dict(params)
-        if step == "sta":
-            requested_types = request.form.getlist("result_types")
-            valid_types = {name for name, _ in STA_RESULT_TYPES}
-            result_types = [name for name in requested_types if name in valid_types]
-            if not result_types:
-                raise ValueError("Choose at least one STA result type.")
-            params["result_types"] = result_types
-            if request.form.get("spatial_bin"):
-                spatial_bin = int(request.form["spatial_bin"])
-                if spatial_bin < 1:
-                    raise ValueError("STA spatial bin must be at least 1.")
-                params["spatial_bin"] = spatial_bin
-            if request.form.get("anatomy_spatial_bin"):
-                anatomy_spatial_bin = int(request.form["anatomy_spatial_bin"])
-                if anatomy_spatial_bin < 1:
-                    raise ValueError("Anatomy spatial bin must be at least 1.")
-                params["anatomy_spatial_bin"] = anatomy_spatial_bin
-            # opt-in statistic option; the form checkbox is pre-ticked only when the config default has it on
-            params["per_sign_null"] = request.form.get("per_sign_null") == "1"
-        backend = "cluster" if step == "sta" else "local"
-        rid = create_run(settings, experiment_id, step, params, backend=backend); launch_run(settings, rid)
+        rid = create_run(settings, experiment_id, step, dict(params), backend="local")
+        launch_run(settings, rid)
         return redirect(url_for("experiment_analysis", experiment_id=experiment_id, new_run=rid) + "#runs")
     except (ValueError, OSError) as exc:
         return render_template("error.html", title="Run Failed", message=str(exc)), 400
+
+
+def _form_int(name: str) -> dict:
+    """{name: the integer of that form field} when the field is filled in (the field's own min attribute keeps it at 1 or more)."""
+    return {name: int(request.form[name])} if request.form.get(name) else {}
+
+
+def _sta_options_from_form() -> dict:
+    """The STA parameters the Run analysis form can set besides the result types."""
+    options = {**_form_int("spatial_bin"), **_form_int("anatomy_spatial_bin")}
+    options["per_sign_null"] = request.form.get("per_sign_null") == "1"  # opt-in statistic option; pre-ticked only when the config default has it on
+    return options
+
+
+@bp.post("/experiments/<int:experiment_id>/run-analysis")
+def run_analysis(experiment_id):
+    settings = get_settings()
+    try:
+        start_analysis(settings, experiment_id, request.form.getlist("result_types"), _sta_options_from_form())
+        return redirect(url_for("experiment_analysis", experiment_id=experiment_id) + "#runs")
+    except (ValueError, OSError) as exc:
+        return render_template("error.html", title="Run Analysis Failed", message=str(exc)), 400
 
 
 @bp.get("/experiments/<int:experiment_id>/behavior/data")
@@ -258,7 +266,7 @@ def sta_significant_cells_data(experiment_id):
     if not repo.experiment_exists(settings, experiment_id):
         return jsonify({"error": "Experiment not found"}), 404
     summary = dict(sta_significant_summary(settings, experiment_id))
-    sta_run, spike_run = repo.latest_completed_run(settings, experiment_id, "sta"), repo.latest_completed_run(settings, experiment_id, "spike")
+    sta_run, spike_run = repo.latest_completed_run(settings, experiment_id, default_sta_step()), repo.latest_completed_run(settings, experiment_id, "spike")
     stale = []
     if sta_run is not None and spike_run is not None:
         for pipeline_neuron_id in repo.pipeline_neuron_ids(settings, experiment_id):

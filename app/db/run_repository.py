@@ -33,12 +33,12 @@ def next_run_id(conn) -> int:
     return int(row["run_id"])
 
 
-def insert_run(settings: Settings, experiment_id: int, step: str, params: dict, backend: str, neuron_id: int | None, is_test: bool) -> int:
+def insert_run(settings: Settings, experiment_id: int, step: str, params: dict, backend: str, neuron_id: int | None, is_test: bool, status: str = "pending") -> int:
     with tx(settings) as conn:
         run_id = next_run_id(conn)
         conn.execute(
             "INSERT INTO analysis_runs(id,experiment_id,neuron_id,step,backend,status,is_test,parameters_json) VALUES(?,?,?,?,?,?,?,?)",
-            (run_id, experiment_id, neuron_id, step, backend, "pending", int(is_test), json.dumps(params)),
+            (run_id, experiment_id, neuron_id, step, backend, status, int(is_test), json.dumps(params)),
         )
         return run_id
 
@@ -108,7 +108,7 @@ def pending_run_ids(settings: Settings) -> list[int]:
 
 
 def latest_failed_runs(settings: Settings, step: str | None) -> list[dict]:
-    """The newest run of each experiment and step (real runs only) when it failed and no run of that step is pending, queued or running."""
+    """The newest run of each experiment and step (real runs only) when it failed and no run of that step is waiting, pending, queued or running."""
     params: list[object] = []
     step_filter = ""
     if step is not None:
@@ -134,7 +134,7 @@ def latest_failed_runs(settings: Settings, step: str | None) -> list[dict]:
                     WHERE active.experiment_id=r.experiment_id
                       AND active.step=r.step
                       AND active.is_test=0
-                      AND active.status IN ('pending','queued','running')
+                      AND active.status IN ('waiting','pending','queued','running')
                 )
                 {step_filter}
                 ORDER BY r.experiment_id,r.step
@@ -158,24 +158,26 @@ def latest_completed_run_row(settings: Settings, experiment_id: int, step: str):
         ).fetchone()
 
 
-def create_pending_run_if_ready(settings: Settings, experiment_id: int, step: str, backend: str, params: dict, required_steps: set[str]) -> int | None:
-    """Create a pending real run of `step` when all `required_steps` have a completed real run and no run of `step` exists yet. Returns its id or None."""
+def steps_with_status(settings: Settings, experiment_id: int, statuses: tuple[str, ...]) -> set[str]:
+    """The steps of an experiment that have a real (not test) run in one of `statuses`."""
+    marks = ",".join("?" for _ in statuses)
+    with connect(settings) as conn:
+        rows = conn.execute(f"SELECT DISTINCT step FROM analysis_runs WHERE experiment_id=? AND is_test=0 AND status IN ({marks})", (experiment_id, *statuses))
+        return {str(row["step"]) for row in rows}
+
+
+def waiting_runs(settings: Settings, experiment_id: int | None = None) -> list[dict]:
+    """The real runs that wait for the steps that feed them (id, experiment_id, step, parameters_json), oldest first; of one experiment, or of all."""
+    where, args = ("AND experiment_id=?", (experiment_id,)) if experiment_id is not None else ("", ())
+    with connect(settings) as conn:
+        rows = conn.execute(f"SELECT id,experiment_id,step,parameters_json FROM analysis_runs WHERE status='waiting' AND is_test=0 {where} ORDER BY id", args)
+        return [dict(row) for row in rows]
+
+
+def release_waiting_run(settings: Settings, run_id: int) -> bool:
+    """Turn a waiting run into a pending one; True when this call did it (so only one caller launches the run)."""
     with tx(settings) as conn:
-        completed = {r["step"] for r in conn.execute("SELECT step FROM analysis_runs WHERE experiment_id=? AND is_test=0 AND status='completed'", (experiment_id,))}
-        if not required_steps.issubset(completed):
-            return None
-        existing = conn.execute(
-            "SELECT id FROM analysis_runs WHERE experiment_id=? AND is_test=0 AND step=? AND status IN ('pending','queued','running','completed') LIMIT 1",
-            (experiment_id, step),
-        ).fetchone()
-        if existing is not None:
-            return None
-        run_id = next_run_id(conn)
-        conn.execute(
-            "INSERT INTO analysis_runs(id,experiment_id,step,backend,status,is_test,parameters_json) VALUES(?,?,?,?,?,0,?)",
-            (run_id, experiment_id, step, backend, "pending", json.dumps(params)),
-        )
-        return run_id
+        return conn.execute("UPDATE analysis_runs SET status='pending' WHERE id=? AND status='waiting'", (run_id,)).rowcount == 1
 
 
 def latest_step_statuses(settings: Settings) -> dict[int, dict[str, str]]:
@@ -195,14 +197,15 @@ def latest_step_statuses(settings: Settings) -> dict[int, dict[str, str]]:
 
 # ---- what the Slurm monitor (app/services/slurm_monitor.py) reads and writes -------------------------------------------------------------
 
-def active_cluster_runs(settings: Settings, step: str) -> list[dict]:
-    """The cluster runs of a step that are queued or running: id, status, output_dir, stderr_path, experiment_id (oldest first)."""
+def active_cluster_runs(settings: Settings, step_pattern: str) -> list[dict]:
+    """The cluster runs that are queued or running, of the steps matching `step_pattern` (a step name, or a prefix ending in %):
+    id, status, output_dir, stderr_path, experiment_id (oldest first)."""
     with connect(settings) as conn:
         return [
             dict(row)
             for row in conn.execute(
-                "SELECT id,status,output_dir,stderr_path,experiment_id FROM analysis_runs WHERE step=? AND backend='cluster' AND status IN ('queued','running') ORDER BY id",
-                (step,),
+                "SELECT id,status,output_dir,stderr_path,experiment_id FROM analysis_runs WHERE step LIKE ? AND backend='cluster' AND status IN ('queued','running') ORDER BY id",
+                (step_pattern,),
             )
         ]
 

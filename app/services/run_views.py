@@ -4,12 +4,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.services.runs import run_dir
+from app.services.runs import STEPS, run_dir
 from utils import globals_utils as g
+from utils.hypotheses import hypothesis_name, is_sta_step
 from utils.paths_utils import PathKind, path_for
 
-STEP_LABELS = {"preprocessing": "Preprocessing", "spike": "Spike Detection", "behavior": "Behavior Split", "anatomy": "Anatomy Crop", "sta": "STA Maps"}
+BASE_STEP_LABELS = {"preprocessing": "Preprocessing", "spike": "Spike Detection", "behavior": "Behavior Split", "anatomy": "Anatomy Crop"}
+
+
+def step_label(step: str) -> str:
+    """The name of a step in the pages; an STA step shows its hypothesis: 'STA Maps (fast)'."""
+    return f"STA Maps ({hypothesis_name(step)})" if is_sta_step(step) else BASE_STEP_LABELS.get(step, step)
+
+
+STEP_LABELS = {step: step_label(step) for step in STEPS}  # the steps of the pipeline (what the templates look up)
 STATUS_PROGRESS = {
+    "waiting": 4,
     "pending": 8,
     "queued": 18,
     "running": 55,
@@ -23,7 +33,7 @@ STATUS_PROGRESS = {
 
 def run_view(row, settings):
     run = dict(row)
-    run["label"] = STEP_LABELS[run["step"]]
+    run["label"] = step_label(run["step"])
     run["progress"] = STATUS_PROGRESS.get(run["status"], 0)
     run["output_dir"] = str(run_dir(settings, int(run["id"]), bool(run["is_test"])))
     run["output_name"] = Path(run["output_dir"]).name

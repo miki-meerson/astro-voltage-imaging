@@ -20,7 +20,7 @@ REVIEW_UNREVIEWED = "unreviewed"
 REVIEW_CONFIRMED = "confirmed"
 
 # the run statuses a run can be cancelled/reset from (analysis_runs.status)
-RUN_CANCELLABLE_STATUSES = ("pending", "queued", "running", "completed", "failed", "blocked")
+RUN_CANCELLABLE_STATUSES = ("waiting", "pending", "queued", "running", "completed", "failed", "blocked")
 
 
 def _in_list(values) -> str:

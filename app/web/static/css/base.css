@@ -261,7 +261,7 @@ pre {
 
 .valid, .completed { color: var(--ok); }
 .failed { color: var(--danger); }
-.running, .pending { color: var(--warning); }
+.running, .pending, .waiting { color: var(--warning); }
 .cancelled, .blocked { color: var(--muted); }
 
 .run-form {

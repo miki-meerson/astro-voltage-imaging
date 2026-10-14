@@ -6,8 +6,9 @@ from pathlib import Path
 import re
 import shutil
 
-from app.db import experiment_repository as repo
-from app.services.runs import STEPS, create_run, launch_run
+from app.db import experiment_repository as repo, run_repository
+from app.services.runs import ACTIVE_STATUSES, STEPS, create_run, feeding_steps, hypothesis_for, launch_run, sta_steps
+from app.services.sta_results import STA_RESULT_TYPES
 from app.services.suite2p_data import experiment_stat_cells, forget_suite2p
 from app.settings import Settings
 from utils.suite2p_utils import roi_center
@@ -17,7 +18,7 @@ from utils import globals_utils as g
 
 PREPROCESSING_STEP = "preprocessing"
 ANALYSIS_STEPS = tuple(step for step in STEPS if step != PREPROCESSING_STEP)  # the steps that need the confirmed Suite2p cells
-STEPS_LAUNCHED_ON_REGISTRATION = {"spike", "behavior", "anatomy"}  # what a processed experiment starts with (STA is started by hand)
+FEEDING_STEP_ORDER = ("spike", "behavior", "anatomy")  # the steps start_analysis may create, in the order they are created
 EXPECTED_ERRORS = (ValueError, OSError)  # a bad experiment folder: wrong name, missing or unreadable file
 
 DATE_BEHAVIOR_RE = re.compile(r"^(?P<date>\d{2}-\d{2}-\d{4})[_-](?P<behavior>.+)$")
@@ -155,23 +156,60 @@ def scan_parent(parent: str | Path, settings: Settings) -> dict:
 
 
 def launch_default_steps(settings: Settings, experiment_id: int) -> None:
-    """Start what a newly registered experiment needs: cluster preprocessing for a raw one, spike / behavior / anatomy for a processed one."""
-    stage = repo.workflow_stage_of(settings, experiment_id)
-    if stage == repo.STAGE_PREPROCESSING_PENDING:
+    """Start what a newly registered experiment needs: cluster preprocessing for a raw one. A processed one starts nothing: every analysis
+    after preprocessing starts when the user asks for it (start_analysis)."""
+    if repo.workflow_stage_of(settings, experiment_id) == repo.STAGE_PREPROCESSING_PENDING:
         params = settings.raw.get("defaults", {}).get(PREPROCESSING_STEP, {})
         launch_run(settings, create_run(settings, experiment_id, PREPROCESSING_STEP, params, backend="cluster"))
-    elif stage == repo.STAGE_ANALYSIS_READY:
-        launch_analysis_defaults(settings, experiment_id)
 
 
-def launch_analysis_defaults(settings: Settings, experiment_id: int) -> list[int]:
-    created = []
-    for step, params in settings.raw.get("defaults", {}).items():
-        if step in STEPS_LAUNCHED_ON_REGISTRATION:
-            rid = create_run(settings, experiment_id, step, params, backend="local")
-            launch_run(settings, rid)
-            created.append(rid)
-    return created
+def _marked_result_types(result_types) -> list[str]:
+    """The marked result types, once each in the order of STA_RESULT_TYPES. The page only offers known types and cannot submit none (form_rules.js)."""
+    marked = set(result_types)
+    return [name for name, _ in STA_RESULT_TYPES if name in marked]
+
+
+def _sta_run_params(settings: Settings, step: str, result_types: list[str], options: dict) -> dict:
+    """The parameters of one hypothesis run: the STA defaults, the options of the request, the settings of the hypothesis, the marked result types."""
+    params = dict(settings.raw.get("defaults", {}).get("sta", {}))
+    params.setdefault("anatomy_spatial_bin", 1)
+    return {**params, **options, **hypothesis_for(step).settings(), "result_types": result_types}
+
+
+def start_analysis(settings: Settings, experiment_id: int, result_types, sta_options: dict | None = None) -> list[int]:
+    """Start the analysis of ONE experiment for the marked result types (and only those); returns the ids of the runs it created.
+
+    Needs the analysis-ready stage. Creates the feeding steps (spike, behavior, and anatomy when marked) that have no completed run and no run in
+    progress yet: a completed run is never replaced (edited spike labels must stay). Then creates one STA run per hypothesis (not for a hypothesis
+    that already has a run in progress), with the hypothesis settings and the marked result types: 'pending' and launched at once when every
+    feeding step has completed, else 'waiting' (_launch_sta_if_ready in runs.py starts it when the last feeding step completes).
+    sta_options: extra STA parameters of the request (for example the spatial bins); the hypothesis settings win over them."""
+    stage = repo.workflow_stage_of(settings, experiment_id)
+    if stage is None:
+        raise ValueError("Experiment not found.")
+    if stage != repo.STAGE_ANALYSIS_READY:
+        raise ValueError("Analysis can run only after preprocessing and Suite2p have been confirmed.")
+    types = _marked_result_types(result_types)
+    needed = feeding_steps(types)
+    completed = run_repository.steps_with_status(settings, experiment_id, ("completed",))
+    in_progress = run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES)
+    feeding = _create_feeding_runs(settings, experiment_id, needed - completed - in_progress)
+    ready = needed <= completed
+    sta = _create_sta_runs(settings, experiment_id, types, sta_options or {}, "pending" if ready else "waiting", in_progress)
+    for run_id in feeding + (sta if ready else []):  # every STA run exists before a feeding run starts, so one that completes at once finds the waiting runs
+        launch_run(settings, run_id)
+    return feeding + sta
+
+
+def _create_feeding_runs(settings: Settings, experiment_id: int, steps: set[str]) -> list[int]:
+    defaults = settings.raw.get("defaults", {})
+    return [create_run(settings, experiment_id, step, defaults.get(step, {}), backend="local") for step in FEEDING_STEP_ORDER if step in steps]
+
+
+def _create_sta_runs(settings: Settings, experiment_id: int, result_types: list[str], options: dict, status: str, in_progress: set[str]) -> list[int]:
+    """One run per hypothesis that has no run in progress yet."""
+    return [create_run(settings, experiment_id, step, _sta_run_params(settings, step, result_types, options), backend="cluster", status=status)
+            for step in sta_steps() if step not in in_progress]
 
 
 def confirm_preprocessing(settings: Settings, experiment_id: int) -> None:

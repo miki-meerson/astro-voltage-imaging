@@ -99,14 +99,6 @@ def load_spike_payload(path: Path) -> dict:
     return {"peaks_all": peaks[order], "labels": labels[order]}
 
 
-def bounded_spike_params(data: dict) -> dict:
-    """The detector settings found in `data`, each clamped to its limits (missing ones get the default)."""
-    return {
-        name: (bounded_int if kind is int else bounded_float)(data, name, default, lo, hi)
-        for name, (kind, default, lo, hi) in SPIKE_PARAM_SPECS.items()
-    }
-
-
 def spike_detection_params(run_row, params_path: Path | None = None) -> dict:
     """Detector settings of a spike run; the ones saved with the cell (params_path, written by the editor's save) win."""
     try:
@@ -122,22 +114,10 @@ def spike_detection_params(run_row, params_path: Path | None = None) -> dict:
         with saved as d:
             if "mad_threshold_factor" in d:
                 result["mad_factor"] = float(np.asarray(d["mad_threshold_factor"]).item())
-            for name, (kind, _, _, _) in SPIKE_PARAM_SPECS.items():
+            for name, (kind, _) in SPIKE_PARAM_SPECS.items():
                 if name != "mad_factor" and name in d:
                     result[name] = kind(np.asarray(d[name]).item())
     return result
-
-
-def bounded_float(data: dict, name: str, default: float, lo: float, hi: float) -> float:
-    value = float(data.get(name, default))
-    if not np.isfinite(value):
-        value = default
-    return float(min(hi, max(lo, value)))
-
-
-def bounded_int(data: dict, name: str, default: int, lo: int, hi: int) -> int:
-    value = int(data.get(name, default))
-    return int(min(hi, max(lo, value)))
 
 
 def save_spike_payload(spike_run_folder: Path, pipeline_neuron_id: str, peaks: np.ndarray, labels: np.ndarray, params: dict | None = None) -> None:
@@ -166,7 +146,7 @@ def save_spike_payload(spike_run_folder: Path, pipeline_neuron_id: str, peaks: n
         np.savez_compressed(path_for(kind, spike_run_folder, cell=pipeline_neuron_id), **payload)
     saved_params = dict(params or {})
     if saved_params:
-        full = bounded_spike_params(saved_params)  # one default per setting, as in the editor
+        full = spike_params_with_defaults(saved_params)  # one default per setting, as in the editor
         np.savez(
             path_for(PathKind.SPIKE_PEAK_PARAMS, spike_run_folder, cell=pipeline_neuron_id),
             threshold_method="mad",

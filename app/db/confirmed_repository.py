@@ -21,9 +21,10 @@ PEAKS_COLUMNS = (
 )
 
 
-def confirmation_inputs(settings: Settings, neuron_id: int) -> dict | None:
-    """What confirming a cell needs from the database: the cell with its experiment's metadata and the id of the latest completed spike /
-    behavior / STA run ({'neuron': {...}, 'spike_run': row or None, 'behavior_run': ..., 'sta_run': ...}); None when the cell is unknown."""
+def confirmation_inputs(settings: Settings, neuron_id: int, sta_step: str) -> dict | None:
+    """What confirming a cell needs from the database: the cell with its experiment's metadata and the latest completed spike / behavior run and
+    the latest completed run of the STA step `sta_step` ({'neuron': {...}, 'spike_run': row or None, 'behavior_run': ..., 'sta_run': ...});
+    None when the cell is unknown."""
     with connect(settings) as conn:
         neuron = conn.execute(
             """
@@ -37,7 +38,7 @@ def confirmation_inputs(settings: Settings, neuron_id: int) -> dict | None:
         if neuron is None:
             return None
         runs = {}
-        for step in ("spike", "behavior", "sta"):
+        for step, key in (("spike", "spike_run"), ("behavior", "behavior_run"), (sta_step, "sta_run")):
             row = conn.execute(
                 """
                 SELECT * FROM analysis_runs
@@ -46,7 +47,7 @@ def confirmation_inputs(settings: Settings, neuron_id: int) -> dict | None:
                 """,
                 (int(neuron["experiment_id"]), step),
             ).fetchone()
-            runs[f"{step}_run"] = dict(row) if row is not None else None
+            runs[key] = dict(row) if row is not None else None
     return {"neuron": dict(neuron), **runs}
 
 

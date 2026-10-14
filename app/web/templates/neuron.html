@@ -48,7 +48,7 @@
 </div>
 {% endif %}
 
-{% for step in ["spike", "sta"] %}
+{% for step in ["spike", sta_step] %}
 {% set r = runs_by_step.get(step) %}
 <section class="panel">
   <div class="page-head">
@@ -62,7 +62,7 @@
     </div>
     <div class="toolbar">
       {% if step == "spike" and r %}<a class="button secondary" href="/neurons/{{ neuron.id }}/spikes{% if embedded %}?embedded=1{% endif %}">Edit Spikes</a>{% endif %}
-      {% if step == "sta" and r %}<a class="button secondary" href="/neurons/{{ neuron.id }}/sta-summary.png?run={{ r.id }}">Open Full Size</a>{% endif %}
+      {% if step == sta_step and r %}<a class="button secondary" href="/neurons/{{ neuron.id }}/sta-summary.png?run={{ r.id }}">Open Full Size</a>{% endif %}
       {% if r %}<a class="button secondary" href="/runs/{{ r.id }}">Open Logs</a>{% endif %}
     </div>
   </div>
@@ -74,7 +74,7 @@
     <span class="muted" style="font-size:12px">{{ r.output_name }}</span>
     {% if r.failure_reason %}<span class="failed">{{ r.failure_reason }}</span>{% endif %}
   </div>
-  {% if step == "sta" and sta_stale %}<div style="margin-top:6px; padding:6px 10px; border:1px solid #b8860b; border-radius:6px; color:#f0c040; font-size:13px">&#9888; {{ sta_stale }}</div>{% endif %}
+  {% if step == sta_step and sta_stale %}<div style="margin-top:6px; padding:6px 10px; border:1px solid #b8860b; border-radius:6px; color:#f0c040; font-size:13px">&#9888; {{ sta_stale }}</div>{% endif %}
 
   {% if step == "spike" %}
   <div class="spk-wrap">
@@ -96,7 +96,7 @@
   </div>
   {% endif %}
 
-  {% if step == "sta" %}
+  {% if step == sta_step %}
   <div class="sta-tabs" data-neuron="{{ neuron.id }}" data-run="{{ r.id }}">
     <div class="tabbar" role="tablist">
       <button type="button" class="tab active" data-tab="maps">STA maps + movie</button>

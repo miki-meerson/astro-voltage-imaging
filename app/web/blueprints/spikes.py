@@ -7,7 +7,6 @@ import numpy as np
 from app.db import neuron_repository
 from app.services.runs import run_dir
 from app.services.spikes import (
-    bounded_spike_params,
     load_spike_payload,
     save_spike_payload,
     spike_detection_params,
@@ -17,6 +16,7 @@ from app.services.suite2p_data import experiment_suite2p_context
 from app.web.common import FlatBlueprint, get_settings
 from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
+from utils.spike_params import spike_params_with_defaults
 from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
 from utils.suite2p_utils import suite2p_trace_dff
 
@@ -77,7 +77,7 @@ def spike_data(neuron_id):
 def detect_spike_data(neuron_id):
     settings = get_settings()
     data = request.get_json(force=True) or {}
-    params = bounded_spike_params(data)
+    params = spike_params_with_defaults(data)
     n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, "spike")
     if n is None:
         return jsonify({"error": "Cell not found"}), 404
@@ -132,7 +132,7 @@ def save_spike_data(neuron_id):
     peaks = np.asarray(data.get("peaks", []), dtype=np.int32)
     labels = np.asarray(data.get("labels", [])).astype("<U8")
     raw_params = data.get("params") or {}
-    params = bounded_spike_params(raw_params)
+    params = spike_params_with_defaults(raw_params)
     if peaks.size != labels.size:
         return jsonify({"error": "peaks and labels must have the same length"}), 400
     keep = labels != "delete"

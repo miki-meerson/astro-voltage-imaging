@@ -32,22 +32,12 @@
     <h2>Rerun Failed</h2>
     <div class="toolbar">
       <form method="post" action="/runs/rerun-failed"><button>All Failed</button></form>
+      {% for step in rerun_steps %}
       <form method="post" action="/runs/rerun-failed">
-        <input type="hidden" name="step" value="spike">
-        <button class="secondary">Spike</button>
+        <input type="hidden" name="step" value="{{ step }}">
+        <button class="secondary">{{ step_labels[step] }}</button>
       </form>
-      <form method="post" action="/runs/rerun-failed">
-        <input type="hidden" name="step" value="behavior">
-        <button class="secondary">Behavior</button>
-      </form>
-      <form method="post" action="/runs/rerun-failed">
-        <input type="hidden" name="step" value="anatomy">
-        <button class="secondary">Anatomy</button>
-      </form>
-      <form method="post" action="/runs/rerun-failed">
-        <input type="hidden" name="step" value="sta">
-        <button class="secondary">STA Maps</button>
-      </form>
+      {% endfor %}
     </div>
     <p class="muted">Creates a fresh run for each experiment whose latest failed step has no active rerun.</p>
   </section>

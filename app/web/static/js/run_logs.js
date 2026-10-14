@@ -11,7 +11,7 @@
       stderr.textContent = data.stderr || "No stderr yet.";
       stdout.scrollTop = stdout.scrollHeight;
       stderr.scrollTop = stderr.scrollHeight;
-      if (!["pending", "queued", "running"].includes(data.status)) {
+      if (!["waiting", "pending", "queued", "running"].includes(data.status)) {
         window.location.reload();
       }
     } catch (_) {}

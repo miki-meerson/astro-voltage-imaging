@@ -7,7 +7,7 @@ from flask import jsonify, redirect, render_template, request, send_file, url_fo
 
 from app.db import preprocessing_repository as repo
 from app.services import caches
-from app.services.experiments import confirm_preprocessing, confirm_suite2p, launch_analysis_defaults
+from app.services.experiments import confirm_preprocessing, confirm_suite2p
 from app.services.movies import (
     mean_intensity_payload,
     PB_KINDS,
@@ -101,7 +101,6 @@ def confirm_suite2p_route(experiment_id):
     try:
         n = confirm_suite2p(settings, experiment_id)
         caches.clear_experiment_result_caches()
-        launch_analysis_defaults(settings, experiment_id)
         return redirect(url_for("experiment_analysis", experiment_id=experiment_id, notice=f"suite2p_confirmed_{n}"))
     except Exception as exc:
         return render_template("error.html", title="Suite2p Confirm Failed", message=str(exc)), 400

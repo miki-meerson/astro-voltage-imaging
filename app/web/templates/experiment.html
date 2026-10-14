@@ -101,16 +101,27 @@
 
   <section class="panel">
     <h2>Run Analysis</h2>
-    {% for step in ["spike","behavior","anatomy","sta"] %}
+    {% for step in ["spike","behavior","anatomy"] %}
     {% set latest = analysis_latest.get(step) %}
     <form method="post" action="/experiments/{{ exp.id }}/run" class="run-form">
       <input type="hidden" name="step" value="{{ step }}">
       <span class="chip">{{ step_labels[step] }}</span>
       <span class="muted">
-        {{ "Cluster" if step == "sta" else "Local" }}
+        Local
         {% if latest %}| latest run {{ latest.id }}: {{ latest.status }}{% endif %}
       </span>
-      {% if step == "sta" %}
+      <span></span>
+      <button>{{ "Run Again" if latest else "Run" }}</button>
+    </form>
+    {% endfor %}
+    <form method="post" action="/experiments/{{ exp.id }}/run-analysis" class="run-form" data-require-one="result_types" data-require-message="Tick at least one result type">
+      <span class="chip">Run analysis</span>
+      <span class="muted">
+        Cluster. Runs every hypothesis for the marked result types; spike, behavior and anatomy are run first only when they have no completed run.
+        {% for step in sta_steps %}{% set latest = analysis_latest.get(step) %}
+        <br>{{ step_labels[step] }}{% if latest %}: latest run {{ latest.id }}, <span class="chip {{ latest.status }}">{{ latest.status }}</span>{% else %}: not run{% endif %}
+        {% endfor %}
+      </span>
       <div class="checkbox-strip">
         {% for value, label in sta_result_types %}
         <label class="check">
@@ -131,12 +142,8 @@
         <input type="checkbox" name="per_sign_null" value="1" {% if sta_defaults.get('per_sign_null', False) %}checked{% endif %}>
         Separate null per sign
       </label>
-      {% else %}
-      <span></span>
-      {% endif %}
-      <button>{{ "Run Again" if latest else "Run" }}</button>
+      <button>Run analysis</button>
     </form>
-    {% endfor %}
   </section>
 </div>
 
@@ -251,4 +258,5 @@
 <script src="{{ url_for('static', filename='js/experiment_review.js') }}"></script>
 <script src="{{ url_for('static', filename='js/experiment_movie.js') }}"></script>
 <script src="{{ url_for('static', filename='js/experiment_behavior.js') }}"></script>
+<script src="{{ url_for('static', filename='js/form_rules.js') }}"></script>
 {% endblock %}

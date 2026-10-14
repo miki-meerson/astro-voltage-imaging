@@ -87,6 +87,8 @@ class PathKind(Enum):
     RAW_MOVIE = auto()  # anchor: experiment
     EXPERIMENT_XML = auto()  # anchor: experiment
     SCIENTIFIC_DATABASE_ROOT = auto()  # anchor: project
+    HYPOTHESES_FILE = auto()  # anchor: project
+    HYPOTHESES_EXAMPLE_FILE = auto()  # anchor: project
     SCIENTIFIC_DATABASE_EXPERIMENT = auto()  # anchor: project; fields: canonical_id
     # area 4: spike label files of a spike run (anchor: run; fields: cell) and the confirmed-cell folders (anchor: project)
     SPIKE_LABELS = auto()
@@ -180,6 +182,8 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.RAW_MOVIE: _Spec(_E, (g.RAW_MOVIE,)),
     PathKind.EXPERIMENT_XML: _Spec(_E, (g.EXPERIMENT_XML,)),
     PathKind.SCIENTIFIC_DATABASE_ROOT: _Spec(Anchor.PROJECT, (g.RUNTIME_DIR, g.SCIENTIFIC_DATABASE_DIR)),
+    PathKind.HYPOTHESES_FILE: _Spec(Anchor.PROJECT, (g.HYPOTHESES_FILE,)),
+    PathKind.HYPOTHESES_EXAMPLE_FILE: _Spec(Anchor.PROJECT, (g.HYPOTHESES_EXAMPLE_FILE,)),
     PathKind.SCIENTIFIC_DATABASE_EXPERIMENT: _Spec(Anchor.PROJECT, (g.RUNTIME_DIR, g.SCIENTIFIC_DATABASE_DIR, "{canonical_id}")),
     PathKind.SPIKE_LABELS: _Spec(_R, (_CELL, g.SPIKE_LABELS)),
     PathKind.SPIKE_PEAKS: _Spec(_R, (_CELL, g.SPIKE_PEAKS)),

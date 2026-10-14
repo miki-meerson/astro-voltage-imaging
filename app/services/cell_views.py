@@ -15,7 +15,7 @@ import tifffile
 
 from app.db import experiment_repository, run_repository
 from app.services import caches, polarity
-from app.services.runs import run_dir
+from app.services.runs import default_sta_step, run_dir
 from app.services.sta_results import anatomy_clusters_in_crop
 from app.services.suite2p_data import experiment_stat_cells, experiment_suite2p_context
 from utils import globals_utils as g
@@ -42,7 +42,7 @@ def cell_movie_files(settings, neuron_id: int) -> CellMovieFiles:
     cell = experiment_repository.neuron_with_experiment(settings, neuron_id)
     if cell is None:
         raise ValueError("Cell not found.")
-    run = run_repository.latest_completed_run_row(settings, int(cell["experiment_id"]), "sta")
+    run = run_repository.latest_completed_run_row(settings, int(cell["experiment_id"]), default_sta_step())
     if run is None:
         raise FileNotFoundError("No completed STA run was found for this experiment: run STA Maps first.")
     sta_dir = sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))

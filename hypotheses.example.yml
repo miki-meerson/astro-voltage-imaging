@@ -1,0 +1,23 @@
+# The hypothesis catalogue: every entry is one STA analysis of an experiment, with its own analysis window. Copy this file to hypotheses.yml to
+# make your own (the app uses hypotheses.yml when it exists, else this file). It is checked when read (utils/hypotheses.py): all settings are
+# required, names are lower case with underscores, windows must be consistent. It never chooses the result types: you mark those per run.
+#
+# All times are seconds relative to the spike peak (negative = before the spike).
+#   pre_seconds / post_seconds   the saved window around each spike
+#   baseline_window_seconds      [start, end] part of the saved window used as the baseline of the effect
+#   tested_window_seconds        [start, end] part that is tested against the chance copies (must start after the baseline ends)
+#   f0_seconds                   stretch just before each spike whose median intensity normalizes that spike
+#   silence_before_seconds       a spike is used only if the cell has no other spike this close before it (0 = no condition)
+#   silence_after_seconds        ... and none this close after it (0 = no condition). The random frames of the chance copies follow the same rule.
+#   statistic                    baseline_subtracted (the effect is the average minus the baseline)
+hypotheses:
+  - name: fast
+    description: Fast, voltage-like changes within about +-0.35 s of the spike (the method used so far)
+    pre_seconds: 2.0
+    post_seconds: 3.0
+    baseline_window_seconds: [-2.0, -0.38]
+    tested_window_seconds: [-0.35, 0.35]
+    f0_seconds: 1.0
+    silence_before_seconds: 2.0
+    silence_after_seconds: 0.35
+    statistic: baseline_subtracted

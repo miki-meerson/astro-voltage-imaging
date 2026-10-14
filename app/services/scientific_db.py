@@ -7,7 +7,7 @@ import shutil
 import numpy as np
 
 from app.db import confirmed_repository
-from app.services.runs import run_dir
+from app.services.runs import default_sta_step, run_dir
 from app.settings import Settings
 from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
 from utils.db_utils import collect_cluster_result_metadata
@@ -240,7 +240,7 @@ def _sta_record(settings: Settings, row, canonical_id: str, cell: str) -> dict:
 
 def confirm_neuron(settings: Settings, neuron_id: int, reviewer_note: str = "") -> int:
     """Confirm a cell: copy its saved spike and STA result files into runtime/scientific_database and record their numbers in the database."""
-    inputs = confirmed_repository.confirmation_inputs(settings, neuron_id)
+    inputs = confirmed_repository.confirmation_inputs(settings, neuron_id, default_sta_step())
     if inputs is None:
         raise ValueError("Neuron not found.")
     neuron, spike_run, behavior_run, sta_run = inputs["neuron"], inputs["spike_run"], inputs["behavior_run"], inputs["sta_run"]

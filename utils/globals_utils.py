@@ -71,6 +71,9 @@ EXPERIMENT_XML = "Experiment.xml"  # the microscope's settings file of an experi
 IMAGING_CSV_GLOB = "imaging_*.csv"  # behavior recorded as a CSV next to the movie
 TS_DIR_PREFIX = "ts"  # ThorSync folders of the experiment (compared in lower case)
 THOR_SETTINGS_XML = "ThorRealTimeDataSettings.xml"  # inside a ThorSync folder
+STA_STEP_PREFIX = "sta:"  # the pipeline step of a hypothesis is STA_STEP_PREFIX + its name (for example "sta:fast"); see utils/hypotheses.py
+HYPOTHESES_FILE = "hypotheses.yml"  # <project folder>/: the hypothesis catalogue of the user
+HYPOTHESES_EXAMPLE_FILE = "hypotheses.example.yml"  # <project folder>/: the tracked catalogue that is used when there is no hypotheses.yml
 RUNTIME_DIR = "runtime"  # under the project folder: database, outputs, logs, confirmed-cell data
 SCIENTIFIC_DATABASE_DIR = "scientific_database"  # <runtime>/scientific_database/<canonical_id>/ : the confirmed-cell data of one experiment
 

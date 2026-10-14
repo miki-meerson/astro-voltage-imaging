@@ -8,7 +8,7 @@ from flask import jsonify, redirect, render_template, request, send_file, url_fo
 from app.db import neuron_repository
 from app.services.cell_views import cell_movie_files, sta_crop_stack_payload
 from app.services.run_views import STEP_LABELS, run_view_for_neuron
-from app.services.runs import run_dir
+from app.services.runs import ACTIVE_STATUSES, default_sta_step, run_dir
 from app.services.scientific_db import confirm_neuron, unconfirm_neuron
 from app.services.spikes import (
     load_spike_payload,
@@ -31,12 +31,13 @@ def neuron(neuron_id):
     if n is None:
         return render_template("error.html", title="Missing Cell", message="Cell not found"), 404
     runs = [run_view_for_neuron(r, settings, n["pipeline_neuron_id"]) for r in run_rows]
-    active = any(r["status"] in {"pending", "queued", "running"} for r in runs)
+    active = any(r["status"] in ACTIVE_STATUSES for r in runs)
     runs_by_step = {}
     for r in runs:
         runs_by_step.setdefault(r["step"], r)
     sta_stale = None
-    sta_view, spike_view = runs_by_step.get("sta"), runs_by_step.get("spike")
+    sta_step = default_sta_step()
+    sta_view, spike_view = runs_by_step.get(sta_step), runs_by_step.get("spike")
     if sta_view and spike_view and sta_view["status"] == "completed" and spike_view["status"] == "completed":
         edited = spikes_edited_after_sta(settings, spike_view, sta_view, n["pipeline_neuron_id"])
         if edited is not None:
@@ -46,6 +47,7 @@ def neuron(neuron_id):
         sta_stale=sta_stale,
         neuron=dict(n),
         runs_by_step=runs_by_step,
+        sta_step=sta_step,
         active=active,
         step_labels=STEP_LABELS,
         confirmed=confirmed,
