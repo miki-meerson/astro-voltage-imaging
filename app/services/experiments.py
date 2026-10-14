@@ -11,14 +11,14 @@ from app.services.runs import ACTIVE_STATUSES, STEPS, create_run, feeding_steps,
 from app.services.sta_results import STA_RESULT_TYPES
 from app.services.suite2p_data import experiment_stat_cells, forget_suite2p
 from app.settings import Settings
+from utils.file_utils import path_within
 from utils.suite2p_utils import roi_center
 from utils.thorsync_utils import find_ts_h5_files, list_h5_datasets
 from utils.paths_utils import PathKind, path_for
 from utils import globals_utils as g
 
-PREPROCESSING_STEP = "preprocessing"
-ANALYSIS_STEPS = tuple(step for step in STEPS if step != PREPROCESSING_STEP)  # the steps that need the confirmed Suite2p cells
-FEEDING_STEP_ORDER = ("spike", "behavior", "anatomy")  # the steps start_analysis may create, in the order they are created
+ANALYSIS_STEPS = tuple(step for step in STEPS if step != g.PREPROCESSING_STEP)  # the steps that need the confirmed Suite2p cells
+FEEDING_STEP_ORDER = (g.SPIKE_STEP, g.BEHAVIOR_STEP, g.ANATOMY_STEP)  # the steps start_analysis may create, in the order they are created
 EXPECTED_ERRORS = (ValueError, OSError)  # a bad experiment folder: wrong name, missing or unreadable file
 
 DATE_BEHAVIOR_RE = re.compile(r"^(?P<date>\d{2}-\d{2}-\d{4})[_-](?P<behavior>.+)$")
@@ -159,21 +159,8 @@ def launch_default_steps(settings: Settings, experiment_id: int) -> None:
     """Start what a newly registered experiment needs: cluster preprocessing for a raw one. A processed one starts nothing: every analysis
     after preprocessing starts when the user asks for it (start_analysis)."""
     if repo.workflow_stage_of(settings, experiment_id) == repo.STAGE_PREPROCESSING_PENDING:
-        params = settings.raw.get("defaults", {}).get(PREPROCESSING_STEP, {})
-        launch_run(settings, create_run(settings, experiment_id, PREPROCESSING_STEP, params, backend="cluster"))
-
-
-def _marked_result_types(result_types) -> list[str]:
-    """The marked result types, once each in the order of STA_RESULT_TYPES. The page only offers known types and cannot submit none (form_rules.js)."""
-    marked = set(result_types)
-    return [name for name, _ in STA_RESULT_TYPES if name in marked]
-
-
-def _sta_run_params(settings: Settings, step: str, result_types: list[str], options: dict) -> dict:
-    """The parameters of one hypothesis run: the STA defaults, the options of the request, the settings of the hypothesis, the marked result types."""
-    params = dict(settings.raw.get("defaults", {}).get("sta", {}))
-    params.setdefault("anatomy_spatial_bin", 1)
-    return {**params, **options, **hypothesis_for(step).settings(), "result_types": result_types}
+        params = settings.defaults.get(g.PREPROCESSING_STEP, {})
+        launch_run(settings, create_run(settings, experiment_id, g.PREPROCESSING_STEP, params, backend="cluster"))
 
 
 def start_analysis(settings: Settings, experiment_id: int, result_types, sta_options: dict | None = None) -> list[int]:
@@ -185,31 +172,26 @@ def start_analysis(settings: Settings, experiment_id: int, result_types, sta_opt
     feeding step has completed, else 'waiting' (_launch_sta_if_ready in runs.py starts it when the last feeding step completes).
     sta_options: extra STA parameters of the request (for example the spatial bins); the hypothesis settings win over them."""
     stage = repo.workflow_stage_of(settings, experiment_id)
-    if stage is None:
-        raise ValueError("Experiment not found.")
+    defaults = settings.defaults
+
     if stage != repo.STAGE_ANALYSIS_READY:
         raise ValueError("Analysis can run only after preprocessing and Suite2p have been confirmed.")
-    types = _marked_result_types(result_types)
+    # the marked result types, once each in the order of STA_RESULT_TYPES (the page only offers known types and cannot submit none: form_rules.js)
+    types = [name for name, _ in STA_RESULT_TYPES if name in set(result_types)]
     needed = feeding_steps(types)
     completed = run_repository.steps_with_status(settings, experiment_id, ("completed",))
     in_progress = run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES)
-    feeding = _create_feeding_runs(settings, experiment_id, needed - completed - in_progress)
+    steps_to_create = needed - completed - in_progress
+    feeding = [create_run(settings, experiment_id, step, defaults.get(step, {}), backend="local") for step in FEEDING_STEP_ORDER if step in steps_to_create]
     ready = needed <= completed
-    sta = _create_sta_runs(settings, experiment_id, types, sta_options or {}, "pending" if ready else "waiting", in_progress)
+    # the STA defaults, the options of the request, the settings of the hypothesis, the marked result types (the hypothesis settings win)
+    sta_defaults = {"anatomy_spatial_bin": 1, **defaults.get("sta", {}), **(sta_options or {})}
+    sta = [create_run(settings, experiment_id, step, {**sta_defaults, **hypothesis_for(step).settings(), "result_types": types},
+                      backend="cluster", status="pending" if ready else "waiting")
+           for step in sta_steps() if step not in in_progress]  # one run per hypothesis that has no run in progress yet
     for run_id in feeding + (sta if ready else []):  # every STA run exists before a feeding run starts, so one that completes at once finds the waiting runs
         launch_run(settings, run_id)
     return feeding + sta
-
-
-def _create_feeding_runs(settings: Settings, experiment_id: int, steps: set[str]) -> list[int]:
-    defaults = settings.raw.get("defaults", {})
-    return [create_run(settings, experiment_id, step, defaults.get(step, {}), backend="local") for step in FEEDING_STEP_ORDER if step in steps]
-
-
-def _create_sta_runs(settings: Settings, experiment_id: int, result_types: list[str], options: dict, status: str, in_progress: set[str]) -> list[int]:
-    """One run per hypothesis that has no run in progress yet."""
-    return [create_run(settings, experiment_id, step, _sta_run_params(settings, step, result_types, options), backend="cluster", status=status)
-            for step in sta_steps() if step not in in_progress]
 
 
 def confirm_preprocessing(settings: Settings, experiment_id: int) -> None:
@@ -229,23 +211,11 @@ def confirm_suite2p(settings: Settings, experiment_id: int) -> int:
     return len(neurons)
 
 
-def _runtime_owned(path: Path, settings: Settings) -> bool:
-    try:
-        target = path.resolve()
-    except OSError:
-        target = path.absolute()
-    roots = [
-        settings.output_root.resolve(),
-        settings.test_output_root.resolve(),
-        path_for(PathKind.SCIENTIFIC_DATABASE_ROOT, settings.project_root).resolve(),
-    ]
-    return any(target == root or root in target.parents for root in roots)
-
-
 def _delete_or_quarantine(path: Path, settings: Settings) -> str:
     if not path.exists():
         return "missing"
-    if not _runtime_owned(path, settings):
+    roots = [settings.output_root, settings.test_output_root, path_for(PathKind.SCIENTIFIC_DATABASE_ROOT, settings.project_root)]
+    if not path_within(path, *roots):
         raise ValueError(f"Refusing to remove non-runtime path: {path}")
     try:
         if path.is_dir():

@@ -3,6 +3,7 @@ import argparse, json
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
+from utils.file_utils import write_json
 from utils.movie_utils import read_frame_rate
 from utils.suite2p_utils import load_suite2p_context
 from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
@@ -52,7 +53,7 @@ def main() -> None:
         np.savez(path_for(PathKind.SPIKE_PEAK_PARAMS, out, cell=cell_id), threshold_method="mad", mad_threshold_factor=p["mad_factor"], highpass_cutoff_hz=p["highpass_cutoff_hz"])
         _save_review_png(path_for(PathKind.SPIKE_REVIEW_PNG, out, cell=cell_id), trace, labels.peaks_all, labels.labels)
         rows.append({"cell_id": cell_id, "all": int(labels.peaks_all.size), "simple": int(labels.simple_peaks.size), "complex": int(labels.complex_peaks.size)})
-    path_for(PathKind.RUN_METRICS_JSON, out).write_text(json.dumps({"cells": rows}, indent=2), encoding="utf-8")
+    write_json(path_for(PathKind.RUN_METRICS_JSON, out), {"cells": rows})
 
 
 if __name__ == "__main__": main()

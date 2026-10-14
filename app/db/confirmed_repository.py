@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from app.db.core import connect, tx
 from app.settings import Settings
+from utils import globals_utils as g
 
 # columns of one confirmed_sta_results row / confirmed_sta_clusters row, in insert order (the dicts passed to save_confirmed_cell use these names)
 STA_RESULT_COLUMNS = (
@@ -38,7 +39,7 @@ def confirmation_inputs(settings: Settings, neuron_id: int, sta_step: str) -> di
         if neuron is None:
             return None
         runs = {}
-        for step, key in (("spike", "spike_run"), ("behavior", "behavior_run"), (sta_step, "sta_run")):
+        for step, key in ((g.SPIKE_STEP, "spike_run"), (g.BEHAVIOR_STEP, "behavior_run"), (sta_step, "sta_run")):
             row = conn.execute(
                 """
                 SELECT * FROM analysis_runs

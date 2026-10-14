@@ -152,7 +152,10 @@ def run_remote(cluster: dict, command: str, timeout: int | None = None) -> tuple
     raise RuntimeError(f"Cluster command was not run: cluster.paramiko_attempts is {attempts}, it must be at least 1.")
 
 
-def _sbatch_parts(cluster: dict, script, args, chdir, log, dependency, kill_on_invalid_dep, error_log) -> list[str]:
+def submit_job(cluster: dict, script, args, chdir, log, dependency: str | None = None, kill_on_invalid_dep: bool = False,
+               error_log=None) -> str:
+    """sbatch the script with the args (local paths, mapped to cluster paths here); returns the Slurm job id.
+    error_log is omitted from the command when None (Slurm then writes stderr to the log). Raises RuntimeError with the sbatch output."""
     parts = shlex.split(str(cluster.get("submit_command") or DEFAULT_SBATCH))
     if dependency:
         parts.append(f"--dependency=afterok:{dependency}")
@@ -161,22 +164,11 @@ def _sbatch_parts(cluster: dict, script, args, chdir, log, dependency, kill_on_i
     parts += [f"--chdir={to_cluster_path(chdir, cluster)}", f"--output={to_cluster_path(log, cluster)}"]
     if error_log is not None:
         parts.append(f"--error={to_cluster_path(error_log, cluster)}")
-    return parts + [to_cluster_path(script, cluster)] + [to_cluster_path(arg, cluster) for arg in args]
-
-
-def _parse_job_id(text: str) -> str | None:
-    return next((token for token in text.replace(".", " ").split() if token.isdigit()), None)
-
-
-def submit_job(cluster: dict, script, args, chdir, log, dependency: str | None = None, kill_on_invalid_dep: bool = False,
-               error_log=None) -> str:
-    """sbatch the script with the args (local paths, mapped to cluster paths here); returns the Slurm job id.
-    error_log is omitted from the command when None (Slurm then writes stderr to the log). Raises RuntimeError with the sbatch output."""
-    command = shlex.join(_sbatch_parts(cluster, script, args, chdir, log, dependency, kill_on_invalid_dep, error_log))
-    stdout, stderr, code = run_remote(cluster, command)
+    parts += [to_cluster_path(script, cluster)] + [to_cluster_path(arg, cluster) for arg in args]
+    stdout, stderr, code = run_remote(cluster, shlex.join(parts))
     if code != 0:
         raise RuntimeError(f"Failed to submit {Path(str(script)).name} (sbatch exit {code}): {(stderr or stdout).strip()}")
-    job_id = _parse_job_id(stdout)
+    job_id = next((token for token in stdout.replace(".", " ").split() if token.isdigit()), None)
     if not job_id:
         raise RuntimeError(f"Could not parse Slurm job id from sbatch output: {stdout!r}")
     return job_id

@@ -11,6 +11,18 @@ def pixels_in_crop(ys: np.ndarray, xs: np.ndarray, crop: dict) -> list:
     return np.stack([ys[keep], xs[keep]], axis=1).tolist()
 
 
+def crop_bounds(center_yx: tuple[int, int], radius: int, image_shape: tuple[int, int]) -> tuple[int, int, int, int]:
+    """(y_min, y_max, x_min, x_max) of the square of half-size `radius` around a cell centre, cut at the image edges (max is exclusive)."""
+    y, x = center_yx
+    height, width = image_shape
+    return (
+        max(0, int(y) - int(radius)),
+        min(height, int(y) + int(radius) + 1),
+        max(0, int(x) - int(radius)),
+        min(width, int(x) + int(radius) + 1),
+    )
+
+
 def event_triggered_mean(x: np.ndarray, centers: np.ndarray, rels: np.ndarray) -> np.ndarray:
     """x: (T,), centers: (K,) frame indices, rels: relative frames -> mean over the centers of x[center + rel]."""
     return x[centers[:, None] + rels[None, :]].mean(axis=0)

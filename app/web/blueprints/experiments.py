@@ -33,6 +33,7 @@ from app.services.spikes import current_suite2p_neurons, review_cache_key, spike
 from app.services.sta_results import STA_RESULT_TYPES, sta_significant_summary
 from app.web.common import FlatBlueprint, get_settings, movie_frame_response, movie_meta_response
 from app.web.security import safe_next
+from utils import globals_utils as g
 from utils.hypotheses import is_sta_step
 
 bp = FlatBlueprint("experiments", __name__)
@@ -160,7 +161,7 @@ def experiment_analysis(experiment_id):
         analysis_latest=analysis_latest,
         sta_steps=sta_steps(),
         sta_result_types=STA_RESULT_TYPES,
-        sta_defaults=dict(settings.raw.get("defaults", {}).get("sta", {})),
+        sta_defaults=dict(settings.defaults.get("sta", {})),
         notice=request.args.get("notice"),
         confirmed_count=confirmed_count,
         selected_neuron_id=selected_neuron_id,
@@ -214,7 +215,7 @@ def run_step(experiment_id):
             raise ValueError("STA steps are started with Run analysis, which runs every hypothesis.")
         if step in ANALYSIS_STEPS and stage != repo.STAGE_ANALYSIS_READY:
             raise ValueError("Analysis steps can run only after preprocessing and Suite2p have been confirmed.")
-        params = json.loads(request.form.get("params") or "{}") if request.form.get("params") else settings.raw.get("defaults", {}).get(step, {})
+        params = json.loads(request.form.get("params") or "{}") if request.form.get("params") else settings.defaults.get(step, {})
         rid = create_run(settings, experiment_id, step, dict(params), backend="local")
         launch_run(settings, rid)
         return redirect(url_for("experiment_analysis", experiment_id=experiment_id, new_run=rid) + "#runs")
@@ -227,18 +228,13 @@ def _form_int(name: str) -> dict:
     return {name: int(request.form[name])} if request.form.get(name) else {}
 
 
-def _sta_options_from_form() -> dict:
-    """The STA parameters the Run analysis form can set besides the result types."""
-    options = {**_form_int("spatial_bin"), **_form_int("anatomy_spatial_bin")}
-    options["per_sign_null"] = request.form.get("per_sign_null") == "1"  # opt-in statistic option; pre-ticked only when the config default has it on
-    return options
-
-
 @bp.post("/experiments/<int:experiment_id>/run-analysis")
 def run_analysis(experiment_id):
     settings = get_settings()
     try:
-        start_analysis(settings, experiment_id, request.form.getlist("result_types"), _sta_options_from_form())
+        # the STA parameters the form can set besides the result types; per_sign_null is an opt-in statistic option, pre-ticked only when the config default has it on
+        sta_options = {**_form_int("spatial_bin"), **_form_int("anatomy_spatial_bin"), "per_sign_null": request.form.get("per_sign_null") == "1"}
+        start_analysis(settings, experiment_id, request.form.getlist("result_types"), sta_options)
         return redirect(url_for("experiment_analysis", experiment_id=experiment_id) + "#runs")
     except (ValueError, OSError) as exc:
         return render_template("error.html", title="Run Analysis Failed", message=str(exc)), 400
@@ -247,7 +243,7 @@ def run_analysis(experiment_id):
 @bp.get("/experiments/<int:experiment_id>/behavior/data")
 def behavior_data(experiment_id):
     settings = get_settings()
-    return jsonify(behavior_payload(settings, latest_run(settings, experiment_id, "behavior")))
+    return jsonify(behavior_payload(settings, latest_run(settings, experiment_id, g.BEHAVIOR_STEP)))
 
 
 @bp.get("/experiments/<int:experiment_id>/movie/meta")
@@ -266,7 +262,7 @@ def sta_significant_cells_data(experiment_id):
     if not repo.experiment_exists(settings, experiment_id):
         return jsonify({"error": "Experiment not found"}), 404
     summary = dict(sta_significant_summary(settings, experiment_id))
-    sta_run, spike_run = latest_run(settings, experiment_id, default_sta_step()), latest_run(settings, experiment_id, "spike")
+    sta_run, spike_run = latest_run(settings, experiment_id, default_sta_step()), latest_run(settings, experiment_id, g.SPIKE_STEP)
     stale = []
     if sta_run is not None and spike_run is not None:
         for pipeline_neuron_id in repo.pipeline_neuron_ids(settings, experiment_id):
@@ -282,7 +278,7 @@ def cell_review_data(experiment_id):
     source_path = repo.experiment_source_path(settings, experiment_id)
     if source_path is None:
         return jsonify({"error": "Experiment not found"}), 404
-    spike_run = latest_run(settings, experiment_id, "spike")
+    spike_run = latest_run(settings, experiment_id, g.SPIKE_STEP)
     neurons = repo.experiment_neurons(settings, experiment_id)
     # the answer only depends on the label files, the review marks and iscell.npy: reuse it while none of them changed (PERF-01)
     key = review_cache_key(settings, experiment_id, spike_run, neurons, source_path)

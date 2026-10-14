@@ -112,22 +112,23 @@ def _require(where: str, rules: list[tuple[bool, str]]) -> None:
         raise ValueError(f"{where}: " + "; ".join(problems) + ".")
 
 
-def _check_entry_keys(entry: dict, where: str) -> None:
+def _hypothesis(entry: object, index: int, source: Path) -> Hypothesis:
+    where = f"{source.name}, entry {index + 1}"
     missing = [key for key in SETTINGS if key not in entry]
     _require(where, [(not missing, f"missing setting(s) {', '.join(missing)}")])
-
-
-def _check_text_settings(entry: dict, where: str) -> None:
     name = entry["name"]
     _require(where, [
         (isinstance(name, str) and bool(NAME_PATTERN.match(name)),
          f"the name {name!r} must be lower case letters, digits and underscores, starting with a letter (at most 32 characters)"),
         (entry["statistic"] in STATISTICS, f"unknown statistic {entry['statistic']!r}. Available: {', '.join(STATISTICS)}"),
     ])
-
-
-def _check_numbers_and_windows(h: Hypothesis, where: str) -> None:
-    saved, base, tested = Window(-h.pre_seconds, h.post_seconds), Window(*h.baseline_window_seconds), Window(*h.tested_window_seconds)
+    where = f"{source.name}, hypothesis {entry['name']}"
+    hypothesis = Hypothesis(
+        name=entry["name"], description=str(entry["description"]).strip(), statistic=entry["statistic"],
+        **{key: _number(entry, key, where) for key in NUMBER_SETTINGS}, **{key: _window(entry, key, where) for key in WINDOW_SETTINGS},
+    )
+    saved = Window(-hypothesis.pre_seconds, hypothesis.post_seconds)
+    base, tested = Window(*hypothesis.baseline_window_seconds), Window(*hypothesis.tested_window_seconds)
     _require(where, [
         (base.start < base.end, f"baseline_window_seconds {base} must start before it ends"),
         (tested.start < tested.end, f"tested_window_seconds {tested} must start before it ends"),
@@ -135,20 +136,6 @@ def _check_numbers_and_windows(h: Hypothesis, where: str) -> None:
         (tested.inside(saved), f"tested_window_seconds {tested} must lie inside the saved window {saved}"),
         (base.ends_before(tested), f"the baseline window must end before the tested window starts (baseline {base}, tested {tested})"),
     ])
-
-
-def _hypothesis(entry: object, index: int, source: Path) -> Hypothesis:
-    where = f"{source.name}, entry {index + 1}"
-    if not isinstance(entry, dict):
-        raise ValueError(f"{where}: each hypothesis must be a mapping of settings.")
-    _check_entry_keys(entry, where)
-    _check_text_settings(entry, where)
-    where = f"{source.name}, hypothesis {entry['name']}"
-    hypothesis = Hypothesis(
-        name=entry["name"], description=str(entry["description"]).strip(), statistic=entry["statistic"],
-        **{key: _number(entry, key, where) for key in NUMBER_SETTINGS}, **{key: _window(entry, key, where) for key in WINDOW_SETTINGS},
-    )
-    _check_numbers_and_windows(hypothesis, where)
     return hypothesis
 
 
@@ -160,8 +147,8 @@ def load_hypotheses(source: str | Path) -> tuple[Hypothesis, ...]:
     except yaml.YAMLError as exc:
         raise ValueError(f"{source.name} is not valid yml: {exc}") from exc
     entries = data.get("hypotheses") if isinstance(data, dict) else None
-    if not isinstance(entries, list) or not entries:
-        raise ValueError(f"{source.name} must have a non-empty list called 'hypotheses'.")
+    if not isinstance(entries, list) or not entries or not all(isinstance(entry, dict) for entry in entries):
+        raise ValueError(f"{source.name} must have a non-empty list called 'hypotheses', each entry a mapping of settings.")
     hypotheses = tuple(_hypothesis(entry, i, source) for i, entry in enumerate(entries))
     names = [h.name for h in hypotheses]
     repeated = sorted({n for n in names if names.count(n) > 1})

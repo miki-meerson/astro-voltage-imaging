@@ -8,18 +8,6 @@ from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
 
 
-def _get_xml_camera_shape(xml_path):
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-
-    camera = root.find("Camera")
-    if camera is None or "width" not in camera.attrib or "height" not in camera.attrib:
-        raise ValueError(f"{xml_path} has no Camera element with width and height.")
-    width = int(float(camera.attrib["width"].replace(",", "")))
-    height = int(float(camera.attrib["height"].replace(",", "")))
-    return width, height
-
-
 def _reorder_tiff_to_thw(movie, axes):
     if movie.ndim != 3:
         return movie
@@ -39,17 +27,22 @@ def _reorder_tiff_to_thw(movie, axes):
     return movie
 
 
-def get_movie_parameters(path):
-    tree = ET.parse(path_for(PathKind.EXPERIMENT_XML, os.path.split(path)[0]))
-    root = tree.getroot()
-    # Find the LSM tag and get the frameRate attribute
-    lsm = root.find("LSM")
-    fps = int(float(lsm.attrib['frameRate'].replace(',', '')))
-    camera = root.find("Camera")
-    width = int(float(camera.attrib['width'].replace(',', '')))
-    height = int(float(camera.attrib['height'].replace(',', '')))
+def _xml_int(value: str) -> int:
+    return int(float(value.replace(',', '')))
 
-    return {'fps': fps, 'width': width, 'height': height}
+
+def read_experiment_xml(source_dir) -> dict:
+    """{'width', 'height', 'fps'} from the Experiment.xml in an experiment folder.
+    width/height come from the Camera element and are always there (a ValueError names the file when they are missing);
+    fps comes from the LSM frameRate (truncated to an integer) and is None when the LSM element has none."""
+    xml_path = path_for(PathKind.EXPERIMENT_XML, source_dir)
+    root = ET.parse(xml_path).getroot()
+    camera = root.find("Camera")
+    if camera is None or "width" not in camera.attrib or "height" not in camera.attrib:
+        raise ValueError(f"{xml_path} has no Camera element with width and height.")
+    lsm = root.find("LSM")
+    fps = None if lsm is None or "frameRate" not in lsm.attrib else _xml_int(lsm.attrib["frameRate"])
+    return {'fps': fps, 'width': _xml_int(camera.attrib["width"]), 'height': _xml_int(camera.attrib["height"])}
 
 
 @lru_cache(maxsize=None)
@@ -58,25 +51,15 @@ def read_frame_rate(source_dir) -> float:
     There is no default: when it cannot be read this raises a ValueError that names the file (a failure is not cached)."""
     xml_path = path_for(PathKind.EXPERIMENT_XML, source_dir)
     try:
-        fps = float(get_movie_parameters(xml_path)['fps'])
+        fps = read_experiment_xml(source_dir)['fps']
+        if fps is None:
+            raise ValueError("there is no LSM frameRate")
+        fps = float(fps)
         if not fps > 0:
             raise ValueError(f"frameRate is {fps}")
         return fps
     except (OSError, ET.ParseError, AttributeError, KeyError, ValueError) as exc:
         raise ValueError(f"The frame rate (fps) could not be read from {xml_path} ({type(exc).__name__}: {exc}). Check that {g.EXPERIMENT_XML} is there and has the LSM frameRate.") from exc
-
-
-def _read_raw_movie(path, dtype=np.uint16):
-    """ Read movie from a .raw path
-        First get size from the Experiment.xml file (assumed to be in the same folder)
-        Then use it to retrieve the movie
-    """
-    raw_movie_1d = np.fromfile(path, dtype)
-    xml_path = path_for(PathKind.EXPERIMENT_XML, os.path.split(path)[0])
-    width, height = _get_xml_camera_shape(xml_path)
-    movie_3d = np.reshape(raw_movie_1d, (-1, height, width))
-    print(f"Movie shape: {movie_3d.shape}")
-    return movie_3d
 
 
 def read_movie(path, dtype=np.uint16, as_memmap=False, is_negative_gevi=False):
@@ -97,7 +80,11 @@ def read_movie(path, dtype=np.uint16, as_memmap=False, is_negative_gevi=False):
                 movie = series.asarray()
         movie = _reorder_tiff_to_thw(movie, axes)
     elif movie_type == 'raw':
-        movie = _read_raw_movie(path, dtype=dtype)
+        # a .raw movie has no header: its size comes from the Experiment.xml in the same folder
+        raw_movie_1d = np.fromfile(path, dtype)
+        size = read_experiment_xml(os.path.split(path)[0])
+        movie = np.reshape(raw_movie_1d, (-1, size['height'], size['width']))
+        print(f"Movie shape: {movie.shape}")
     else:
         raise ValueError('Unknown movie type: {}'.format(movie_type))
 

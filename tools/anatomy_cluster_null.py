@@ -19,9 +19,10 @@ from pathlib import Path
 import pandas as pd
 
 from utils.anatomy_group_test import cell_records, group_test
+from utils.file_utils import write_json
 from utils import globals_utils as g
 from utils.motion_diagnostics import cell_motion_status
-from utils.paths_utils import PathKind, cell_dirs, path_for
+from utils.paths_utils import PathKind, cell_dirs, cells_with_anatomy_result, path_for
 from utils.suite2p_utils import roi_center, suite2p_stat_cells
 
 
@@ -48,9 +49,11 @@ def main() -> None:
         stat = suite2p_stat_cells(a.source_dir)
         jobs, skipped = [], {"motion_flagged": 0, "no_motion_diagnostics": 0, "no_anatomy_result": 0}
         status = cell_motion_status(pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta)))
-        for cid in cell_dirs(sta):
+        with_result = cells_with_anatomy_result(sta)
+        skipped["no_anatomy_result"] = len(cell_dirs(sta)) - len(with_result)
+        for cid in with_result:
             npz = path_for(PathKind.ANATOMY_RESULT, sta, cell=cid)
-            if not npz.exists() or cid >= len(stat):
+            if cid >= len(stat):
                 skipped["no_anatomy_result"] += 1
                 continue
             cell_status = status.get(cid, g.MOTION_NOT_TESTED)
@@ -77,7 +80,7 @@ def main() -> None:
         result["left_out"] = skipped_info
     out = path_for(PathKind.GROUP_TEST, sta)
     tmp = out.with_name(out.name + ".tmp")
-    tmp.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    write_json(tmp, result)
     tmp.replace(out)
     print(json.dumps(result["stats"], indent=1), flush=True)
 

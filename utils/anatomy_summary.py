@@ -33,36 +33,25 @@ from utils.suite2p_utils import roi_center, suite2p_stat_cells
 
 
 
-def _significant_anatomy_cells(df: pd.DataFrame) -> tuple[bool, list[int]]:
-    """(the run has anatomy rows at all, the cells with at least one significant anatomy cluster)."""
-    anatomy = df[df["spike_group"].astype(str) == g.ANATOMY_GROUP]
-    significant = anatomy[anatomy["n_significant_clusters"].fillna(0) > 0]
-    return not anatomy.empty, sorted(int(c) for c in significant["cell_id"].unique())
-
-
-def _run_id_of_folder(folder: str) -> int | None:
-    match = re.search(r"run_(\d+)$", folder)
-    return int(match.group(1)) if match else None
-
-
-def _cluster_record(cell: int, cluster: dict, mask: np.ndarray, meta: dict, roi_yx: tuple[float, float]) -> dict:
-    """One significant cluster: statistics, time span, offset from the ROI centre and its mean dF/F trace."""
-    spatial_bin = int(meta["spatial_bin"])
-    dy, dx = cluster_offset_from_roi(np.asarray(mask, dtype=bool), meta["anatomy_crop_bounds"], spatial_bin, roi_yx)
-    t, trace = cluster["wide_trace"]
-    return {
-        "cell": cell, **cluster_basic_fields(cluster, meta["tested_window"][0]),
-        "n_px": int(np.asarray(mask).sum()), "bin": spatial_bin,
-        "dx": float(dx), "dy": float(dy), "dist": float(np.hypot(dx, dy)),
-        "t": [int(v) for v in t], "trace": [round(float(v), 6) for v in trace],
-    }
-
-
 def _cell_clusters(sta_dir: Path, cell: int, stat_cell) -> list[dict]:
-    """The records of the significant anatomy clusters of one cell (only clusters that have a saved trace)."""
+    """The records of the significant anatomy clusters of one cell (only clusters that have a saved trace): statistics, time span, offset from
+    the ROI centre and the mean dF/F trace."""
     _, _, significant, meta = load_cluster_result(path_for(PathKind.ANATOMY_RESULT, sta_dir, cell=cell))
     roi_yx = roi_center(stat_cell)
-    return [_cluster_record(cell, cluster, mask, meta, roi_yx) for cluster, mask in significant if cluster.get("wide_trace") is not None]
+    spatial_bin = int(meta["spatial_bin"])
+    records = []
+    for cluster, mask in significant:
+        if cluster.get("wide_trace") is None:
+            continue
+        dy, dx = cluster_offset_from_roi(np.asarray(mask, dtype=bool), meta["anatomy_crop_bounds"], spatial_bin, roi_yx)
+        t, trace = cluster["wide_trace"]
+        records.append({
+            "cell": cell, **cluster_basic_fields(cluster, meta["tested_window"][0]),
+            "n_px": int(np.asarray(mask).sum()), "bin": spatial_bin,
+            "dx": float(dx), "dy": float(dy), "dist": float(np.hypot(dx, dy)),
+            "t": [int(v) for v in t], "trace": [round(float(v), 6) for v in trace],
+        })
+    return records
 
 
 def build_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, run_id: int | None = None, summary_csv: str | Path | None = None, log=None) -> dict:
@@ -75,14 +64,17 @@ def build_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, run_id: i
     log = log or (lambda m: None)
     sta_dir = Path(sta_dir)
     folder = run_dir_of_sta_dir(sta_dir).name
+    folder_match = re.search(r"run_(\d+)$", folder)
     summary = {
-        "run_folder": folder, "run_id": run_id if run_id is not None else _run_id_of_folder(folder),
+        "run_folder": folder, "run_id": run_id if run_id is not None else (int(folder_match.group(1)) if folder_match else None),
         "warning": None, "cells": [], "clusters": [],
         "excluded": {"motion_flagged": [], "no_motion_diagnostics": []},
     }
     table = pd.read_csv(Path(summary_csv) if summary_csv else path_for(PathKind.STA_SUMMARY_CSV, sta_dir))
-    has_anatomy, cell_ids = _significant_anatomy_cells(table)
-    if not has_anatomy:
+    anatomy = table[table["spike_group"].astype(str) == g.ANATOMY_GROUP]
+    significant = anatomy[anatomy["n_significant_clusters"].fillna(0) > 0]
+    cell_ids = sorted(int(c) for c in significant["cell_id"].unique())  # the cells with at least one significant anatomy cluster
+    if anatomy.empty:
         summary["warning"] = "this STA run has no anatomy results (run STA Maps with the 'anatomy' result type)"
     status = cell_motion_status(table)
     summary["excluded"] = {

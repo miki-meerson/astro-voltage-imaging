@@ -89,14 +89,6 @@ def _read_anatomy_header(anatomy_npz: Path) -> dict:
         }
 
 
-def _roi_outline(source_path, pipeline_neuron_id, crop: dict) -> list:
-    """The cell's Suite2p ROI pixels inside the crop (an optional marker: [] when the Suite2p files cannot be read)."""
-    try:
-        return roi_pixels_in_crop(experiment_stat_cells(source_path)[int(pipeline_neuron_id)], crop)
-    except (OSError, IndexError, KeyError):
-        return []
-
-
 def _neuron_trace(source_path, pipeline_neuron_id, peaks: np.ndarray, pre: int, post: int, rel: np.ndarray) -> dict:
     """The neuron's own dF/F (neuron movie, Suite2p) averaged around the same spikes as the astro movie (an optional marker)."""
     neuron = {"trace": [], "trace_label": "", "trace_peak": None}
@@ -136,7 +128,11 @@ def sta_crop_stack_payload(movie_tif: Path, anatomy_npz: Path, source_path: str 
         hi = lo + 1.0
     q = (np.clip((movie - lo) / (hi - lo), 0, 1) * 65535 + 0.5).astype("<u2")
     rel = np.arange(-pre, post + 1, dtype=int)
-    neuron = {"pixels": _roi_outline(source_path, int(pipeline_neuron_id), crop),
+    try:  # the cell's Suite2p ROI pixels inside the crop: an optional marker, [] when the Suite2p files cannot be read
+        roi_pixels = roi_pixels_in_crop(experiment_stat_cells(source_path)[int(pipeline_neuron_id)], crop)
+    except (OSError, IndexError, KeyError):
+        roi_pixels = []
+    neuron = {"pixels": roi_pixels,
               **_neuron_trace(source_path, int(pipeline_neuron_id), head["peaks"], pre, post, rel)}
     header = {
         "frames": int(movie.shape[0]), "height": int(movie.shape[1]), "width": int(movie.shape[2]),

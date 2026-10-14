@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.settings import load_settings
-from utils.movie_utils import get_mean_images, get_movie_parameters
+from utils.movie_utils import get_mean_images, read_frame_rate
 from utils.paths_utils import resolve_sta_paths
 from utils.suite2p_utils import load_suite2p_context
 
@@ -232,7 +232,7 @@ class ExperimentContext:
 def load_single_experiment_context(data: ConfirmedData) -> ExperimentContext:
     row = require_single_experiment(data)
     source_path = Path(_scalar_value(row["source_path"]))
-    fps = float(get_movie_parameters(f"{source_path.as_posix()}/", is_dir=True)["fps"])
+    fps = read_frame_rate(source_path)
     paths = resolve_sta_paths(source_path)
     suite2p_ctx = load_suite2p_context(paths.suite2p_path)
     astro_mean_img, neuron_mean_img = get_mean_images(paths.mc_dir)

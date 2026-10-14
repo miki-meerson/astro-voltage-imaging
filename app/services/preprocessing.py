@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime
 import json
+from datetime import datetime
 from pathlib import Path
 
 from app.cluster import client
 from app.db import preprocessing_repository as repo
 from app.db import run_repository
 from app.settings import Settings
-from utils.file_utils import read_json
+from utils import globals_utils as g
+from utils.file_utils import read_json, write_json
 from utils.paths_utils import PathKind, path_for
 
 
@@ -26,7 +27,7 @@ RUNNER_SCRIPTS = {
 
 
 def default_preprocessing_params(settings: Settings, source_path: str | Path) -> dict:
-    defaults = dict(settings.raw.get("defaults", {}).get("preprocessing", {}))
+    defaults = dict(settings.defaults.get(g.PREPROCESSING_STEP, {}))
     defaults.setdefault("is_2ch", True)
     defaults.setdefault("steps", list(PREPROCESSING_STEPS))
     defaults.setdefault("pw_rigid", False)
@@ -48,7 +49,7 @@ def write_params_file(settings: Settings, run: dict, out: Path, params: dict) ->
     now = datetime.now().strftime("%d-%m-%Y___%H-%M-%S")
     raw_video = Path(params.get("raw_video_path") or path_for(PathKind.RAW_MOVIE, run["source_path"]))
     home = Path(run["source_path"])
-    cluster = settings.raw.get("cluster", {})
+    cluster = settings.cluster
     payload = {
         **params,
         "gui_time": f"app_run_{run['id']}__{now}",
@@ -60,17 +61,16 @@ def write_params_file(settings: Settings, run: dict, out: Path, params: dict) ->
     }
     path_for(PathKind.PREPROCESSING_PARAMS_DIR, out).mkdir(parents=True, exist_ok=True)
     path = path_for(PathKind.PREPROCESSING_PARAMS, out, run_id=run["id"])
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_json(path, payload)
     return path
 
 
 def save_state(out: Path, state: dict) -> None:
-    path_for(PathKind.PREPROCESSING_STATE, out).write_text(json.dumps(state, indent=2), encoding="utf-8")
+    write_json(path_for(PathKind.PREPROCESSING_STATE, out), state)
 
 
 def initialize_preprocessing_run(settings: Settings, run: dict, out: Path) -> dict:
-    params = json.loads(run["parameters_json"] or "{}")
-    params = {**default_preprocessing_params(settings, run["source_path"]), **params}
+    params = {**default_preprocessing_params(settings, run["source_path"]), **json.loads(run["parameters_json"])}
     steps = [step for step in params.get("steps", PREPROCESSING_STEPS) if step in PREPROCESSING_STEPS]
     if not steps:
         raise ValueError("No preprocessing steps were selected.")
@@ -103,7 +103,7 @@ def submit_preprocessing_step(settings: Settings, out: Path, state: dict, index:
     script = path_for(PathKind.PREPROCESSING_RUNNER, settings.project_root, script=RUNNER_SCRIPTS[step["name"]])
     if not script.exists():
         raise FileNotFoundError(f"Missing preprocessing runner script: {script}")
-    cluster = settings.raw.get("cluster", {})
+    cluster = settings.cluster
     log_path = out / f"preprocessing_{step['name']}_%j.log"
     job_id = client.submit_job(
         cluster, script, [Path(state["params_path"])], path_for(PathKind.PREPROCESSING_SOURCE, settings.project_root), log_path
@@ -127,10 +127,6 @@ def submit_preprocessing_step(settings: Settings, out: Path, state: dict, index:
     return state
 
 
-def _save_params_file(path: Path, params: dict) -> None:
-    path.write_text(json.dumps(params, indent=2), encoding="utf-8")
-
-
 def _apply_step_rerun_params(state: dict, extra_params: dict | None) -> dict:
     params_path = Path(state["params_path"])
     params = read_json(params_path, "The preprocessing params file")
@@ -139,14 +135,14 @@ def _apply_step_rerun_params(state: dict, extra_params: dict | None) -> dict:
             params[key] = max(0, int(value))
         else:
             params[key] = value
-    _save_params_file(params_path, params)
+    write_json(params_path, params)
     return params
 
 
 def rerun_preprocessing_step(settings: Settings, experiment_id: int, step_name: str, extra_params: dict | None = None) -> dict:
     if step_name not in PREPROCESSING_STEPS:
         raise ValueError(f"Unknown preprocessing step: {step_name}")
-    run = run_repository.latest_run(settings, experiment_id, "preprocessing", status=None)
+    run = run_repository.latest_run(settings, experiment_id, g.PREPROCESSING_STEP, status=None)
     if run is None:
         raise ValueError("No preprocessing run exists for this experiment.")
     if repo.run_is_active(settings, run["id"]):
@@ -203,11 +199,11 @@ def rerun_preprocessing_step(settings: Settings, experiment_id: int, step_name: 
 
 def latest_preprocessing_params(settings: Settings, experiment_id: int) -> dict:
     """Parameters of the newest preprocessing run: the params file its state file points to, else the parameters saved with the run."""
-    run = run_repository.latest_run(settings, experiment_id, "preprocessing", status=None)
+    run = run_repository.latest_run(settings, experiment_id, g.PREPROCESSING_STEP, status=None)
     if run is None:
         return {}
     state = read_json(path_for(PathKind.PREPROCESSING_STATE, Path(run["output_dir"] or "")), "The preprocessing state file", default={})
     params_path = Path(state.get("params_path") or "")
     if state.get("params_path") and params_path.exists():
         return read_json(params_path, "The preprocessing params file")
-    return json.loads(run["parameters_json"] or "{}")
+    return json.loads(run["parameters_json"])

@@ -46,16 +46,16 @@ def cluster_mask2d_from_cluster(
     return None
 
 
+def mask_mean_trace(movie: np.ndarray, mask2d: np.ndarray) -> np.ndarray:
+    """Mean over the pixels of a 2D mask at every frame of a (T, Y, X) movie, as a float32 array of length T."""
+    return np.asarray(movie[:, mask2d].mean(axis=1), dtype=np.float32)
+
+
 def _cluster_spatial_centroid(mask3d: np.ndarray) -> tuple[float, float]:
     _, yy, xx = np.where(mask3d)
     if yy.size == 0:
         return 0.0, 0.0
     return float(np.mean(yy)), float(np.mean(xx))
-
-
-def _cluster_trace(effect_movie: np.ndarray, mask3d: np.ndarray) -> np.ndarray:
-    mask2d = cluster_mask2d_from_cluster({"mask3d": mask3d})
-    return np.asarray(effect_movie[:, mask2d].mean(axis=1), dtype=np.float32)
 
 
 def _merge_cluster_group(effect_movie: np.ndarray, group: list[dict]) -> dict:
@@ -114,7 +114,7 @@ def _merge_similar_clusters(
             parent[rb] = ra
 
     centroids = [_cluster_spatial_centroid(c["mask"]) for c in cluster_records]
-    traces = [_cluster_trace(effect_movie, c["mask"]) for c in cluster_records]
+    traces = [mask_mean_trace(effect_movie, cluster_mask2d_from_cluster({"mask3d": c["mask"]})) for c in cluster_records]
 
     for i in range(n):
         for j in range(i + 1, n):

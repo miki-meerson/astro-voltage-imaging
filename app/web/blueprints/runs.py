@@ -9,6 +9,7 @@ from app.db import run_repository
 from app.services.run_views import run_stderr, run_stdout, run_view
 from app.services.runs import rerun_failed_steps
 from app.web.common import FlatBlueprint, get_settings
+from utils.file_utils import path_within
 
 bp = FlatBlueprint("runs", __name__)
 
@@ -57,8 +58,7 @@ def artifact(run_id, rel_path):
         return render_template("error.html", title="Missing Run", message="Run not found"), 404
     root = settings.test_output_root if run["is_test"] else settings.output_root
     target = (root / rel_path).resolve()
-    allowed = root.resolve()
-    if allowed not in target.parents and target != allowed:
+    if not path_within(target, root):
         return render_template("error.html", title="Unsafe Path", message="Artifact path is outside the output root."), 400
     if not target.exists() or not target.is_file():
         return render_template("error.html", title="Missing Artifact", message=str(target)), 404

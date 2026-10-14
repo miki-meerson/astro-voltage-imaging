@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import multiprocessing as mp
 from pathlib import Path
 
@@ -35,7 +34,8 @@ from utils.sta_stats_utils import (
     standardize,
 )
 from utils.paths_utils import PathKind, cell_dirs, path_for, resolve_sta_paths, result_file_name
-from utils.file_utils import read_json
+from utils.file_utils import read_json, write_json
+from utils.sta_trace_utils import crop_bounds
 from utils.qc_utils import read_trimmed_frames
 from utils.tif_export import sta_note, write_imagej_stack
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
@@ -276,17 +276,6 @@ def load_anatomy_radius(target_spatial_bin: int) -> dict:
         "anatomy_source_spatial_bin": source_spatial_bin,
         "anatomy_fullres_radius_px": fullres_radius,
     }
-
-
-def crop_bounds(center_yx: tuple[int, int], radius: int, image_shape: tuple[int, int]) -> tuple[int, int, int, int]:
-    y, x = center_yx
-    height, width = image_shape
-    return (
-        max(0, int(y) - int(radius)),
-        min(height, int(y) + int(radius) + 1),
-        max(0, int(x) - int(radius)),
-        min(width, int(x) + int(radius) + 1),
-    )
 
 
 def ensure_binned_movie(paths, spatial_bin: int | None = None) -> np.memmap:
@@ -1043,7 +1032,7 @@ def sta_run_parameters(
 def save_sta_run_parameters(sta_dir: Path, params: dict) -> None:
     sta_dir.mkdir(parents=True, exist_ok=True)
     json_path = path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir)
-    json_path.write_text(json.dumps(params, indent=2), encoding="utf-8")
+    write_json(json_path, params)
     npz_payload = {}
     for key, value in params.items():
         if isinstance(value, dict):
@@ -1409,7 +1398,7 @@ def main() -> None:
             rows.extend(run_pool(process_cell_behavioral, behavioral_cfg, cells, paths.sta_dir, init_args))
         if skipped_groups:
             skipped_path = path_for(PathKind.STA_SKIPPED_BEHAVIORAL_GROUPS, paths.sta_dir)
-            skipped_path.write_text(json.dumps(skipped_groups, indent=2), encoding="utf-8")
+            write_json(skipped_path, skipped_groups)
             print(f"Behavioral subgroup skip report saved to {skipped_path}")
 
     summary_path = Path(SUMMARY_CSV) if SUMMARY_CSV else path_for(PathKind.STA_SUMMARY_CSV, paths.sta_dir)

@@ -9,9 +9,9 @@ import numpy as np
 from app.db import confirmed_repository
 from app.services.runs import default_sta_step, run_dir
 from app.settings import Settings
-from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
+from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, mask_mean_trace, saved_cluster_args
 from utils.db_utils import collect_cluster_result_metadata
-from utils.file_utils import read_npz_arrays
+from utils.file_utils import path_within, read_npz_arrays
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 
 
@@ -127,11 +127,9 @@ CONFIRMED_PARAMETER_KEYS = frozenset({
 
 
 def _remove_confirmed_artifacts(settings: Settings, canonical_id: str, pipeline_neuron_id: str) -> None:
-    base = path_for(PathKind.SCIENTIFIC_DATABASE_ROOT, settings.project_root).resolve()
-    target = path_for(PathKind.CONFIRMED_CELL_DIR, settings.project_root, canonical_id=canonical_id, cell=pipeline_neuron_id).resolve()
-    try:
-        target.relative_to(base)
-    except ValueError:
+    base = path_for(PathKind.SCIENTIFIC_DATABASE_ROOT, settings.project_root)
+    target = path_for(PathKind.CONFIRMED_CELL_DIR, settings.project_root, canonical_id=canonical_id, cell=pipeline_neuron_id)
+    if not path_within(target, base):
         return
     if target.exists():
         shutil.rmtree(target)
@@ -192,7 +190,7 @@ def _sta_record(settings: Settings, row, canonical_id: str, cell: str) -> dict:
             continue
         cluster_id = int(cluster.get("cluster_id", len(masks) + 1))
         masks[f"cluster_{cluster_id}_mask2d"] = np.asarray(mask, dtype=bool)
-        trace = np.asarray(trace_effect[:, mask].mean(axis=1), dtype=np.float32)
+        trace = mask_mean_trace(trace_effect, mask)
         yyxx = np.argwhere(mask)
         cluster_rows.append({
             "cluster_id": cluster_id,

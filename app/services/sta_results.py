@@ -19,10 +19,10 @@ from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 from utils.sta_trace_utils import pixels_in_crop
 
 STA_RESULT_TYPES = [
-    ("all", "All"),
+    (g.ALL_GROUP, "All"),
     ("simple", "Simple"),
     ("complex", "Complex"),
-    ("anatomy", "Anatomy"),
+    (g.ANATOMY_GROUP, "Anatomy"),
     ("behavioral", "Behavioral"),
 ]
 

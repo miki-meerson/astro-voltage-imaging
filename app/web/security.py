@@ -1,7 +1,6 @@
 """Small protective checks for the local web app: cross-origin POST rejection, /browse roots, redirect targets."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -22,24 +21,11 @@ def safe_next(target: str | None, default: str) -> str:
     return target if is_safe_next(target) else default
 
 
-def _norm(path: str | Path) -> str:
-    return os.path.normcase(os.path.abspath(str(path)))
-
-
 def browse_roots(settings) -> list[Path]:
     """Folders /browse may show: the data root, the scan parent and optional `browse_roots` from the config."""
     roots = [settings.source_data_root, settings.scan_parent]
     roots += [Path(p) for p in (settings.raw.get("browse_roots") or [])]
     return roots
-
-
-def path_within(path: str | Path, roots) -> bool:
-    target = _norm(path)
-    for root in roots:
-        base = _norm(root)
-        if target == base or target.startswith(base.rstrip(os.sep + "/") + os.sep):
-            return True
-    return False
 
 
 def wants_json() -> bool:

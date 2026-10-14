@@ -16,12 +16,12 @@ from utils import globals_utils as g
 from utils.hypotheses import Hypothesis, catalogue_file, hypothesis_name, is_sta_step, load_hypotheses, sta_step
 from utils.paths_utils import PathKind, path_for
 
-BASE_STEPS = ("preprocessing", "spike", "behavior", "anatomy")
+BASE_STEPS = (g.PREPROCESSING_STEP, g.SPIKE_STEP, g.BEHAVIOR_STEP, g.ANATOMY_STEP)
 BASE_ADAPTER_MODULES = {
-    "preprocessing": "preprocessing_adapter",
-    "spike": "spike_adapter",
-    "behavior": "behavior_adapter",
-    "anatomy": "anatomy_adapter",
+    g.PREPROCESSING_STEP: "preprocessing_adapter",
+    g.SPIKE_STEP: "spike_adapter",
+    g.BEHAVIOR_STEP: "behavior_adapter",
+    g.ANATOMY_STEP: "anatomy_adapter",
 }
 STA_ADAPTER_MODULE = "sta_adapter"  # the adapter of every hypothesis step
 
@@ -46,7 +46,7 @@ CLUSTER_ENV_VARS = {
     "ssh_password": "ASTRO_CLUSTER_PASSWORD",
     "ssh_key_filename": "ASTRO_CLUSTER_KEY",
 }
-STEPS_THAT_FEED_STA = {"spike", "behavior", "anatomy"}
+STEPS_THAT_FEED_STA = {g.SPIKE_STEP, g.BEHAVIOR_STEP, g.ANATOMY_STEP}
 ACTIVE_STATUSES = ("waiting", "pending", "queued", "running")  # a run in one of these is not finished and not failed
 _EXECUTOR_LOCK = threading.Lock()
 _EXECUTOR: ThreadPoolExecutor | None = None
@@ -77,7 +77,7 @@ def hypothesis_for(step: str) -> Hypothesis:
 
 def feeding_steps(result_types) -> set[str]:
     """The steps whose outputs an STA run of these result types reads: spike, behavior, and anatomy when that result type is marked."""
-    return {"spike", "behavior"} | ({"anatomy"} if g.ANATOMY_GROUP in result_types else set())
+    return {g.SPIKE_STEP, g.BEHAVIOR_STEP} | ({g.ANATOMY_STEP} if g.ANATOMY_GROUP in result_types else set())
 
 
 def pipeline_status(latest: dict[str, str], steps: tuple[str, ...] | None = None) -> dict:
@@ -185,32 +185,24 @@ def rerun_failed_steps(settings: Settings, step: str | None = None) -> list[int]
         raise ValueError(f"Unknown step: {step}")
     created: list[int] = []
     for run in run_repository.latest_failed_runs(settings, step):
-        try:
-            run_params = json.loads(run["parameters_json"] or "{}")
-        except json.JSONDecodeError:
-            run_params = {}
         backend = "cluster" if is_sta_step(run["step"]) else (run["backend"] or "local")
-        run_id = create_run(settings, int(run["experiment_id"]), str(run["step"]), run_params, backend=backend, neuron_id=run["neuron_id"], is_test=False)
+        run_id = create_run(settings, int(run["experiment_id"]), str(run["step"]), json.loads(run["parameters_json"]),backend=backend, neuron_id=run["neuron_id"], is_test=False)
         launch_run(settings, run_id)
         created.append(run_id)
     return created
 
 
 def launch_run(settings: Settings, run_id: int) -> None:
-    executor = _executor_for(settings)
-    executor.submit(_execute_run, settings, run_id)
-
-
-def _executor_for(settings: Settings) -> ThreadPoolExecutor:
     global _EXECUTOR, _EXECUTOR_SIZE
     local_workers = int(settings.raw.get("local", {}).get("max_workers", 1))
-    cluster_workers = int(settings.raw.get("cluster", {}).get("max_workers", 1))
+    cluster_workers = int(settings.cluster.get("max_workers", 1))
     size = max(1, local_workers + cluster_workers)
     with _EXECUTOR_LOCK:
         if _EXECUTOR is None or _EXECUTOR_SIZE != size:
             _EXECUTOR = ThreadPoolExecutor(max_workers=size, thread_name_prefix="astro-run")
             _EXECUTOR_SIZE = size
-        return _EXECUTOR
+        executor = _EXECUTOR
+    executor.submit(_execute_run, settings, run_id)
 
 
 # ---- one run -------------------------------------------------------------------------------------------------------------------------------
@@ -218,32 +210,26 @@ def _executor_for(settings: Settings) -> ThreadPoolExecutor:
 def _execute_run(settings: Settings, run_id: int) -> None:
     """Run one step: build its command, run it, record the outcome. A cluster run only submits the job here; the cluster monitor finishes it."""
     run = run_repository.run_for_execution(settings, run_id)
-    if run["backend"] == "cluster" and not settings.raw.get("cluster", {}).get("enabled", False):
+    if run["backend"] == "cluster" and not settings.cluster.get("enabled", False):
         run_repository.update_run(settings, run_id, {"status": "failed", "ended_at": _now(), "command_json": json.dumps({"error": "Cluster backend disabled."})})
         return
     out = _allocate_run_dir(settings, run)
     out.mkdir(parents=True, exist_ok=False)
     stdout, stderr = path_for(PathKind.RUN_STDOUT_LOG, out), path_for(PathKind.RUN_STDERR_LOG, out)
     where = {"stdout_path": str(stdout), "stderr_path": str(stderr), "log_path": str(stdout), "output_dir": str(out)}
-    warning = _missing_input_warning(settings, run)
-    if warning:
+    if is_sta_step(run["step"]) and run["backend"] == "cluster" and _latest_completed_output(settings, int(run["experiment_id"]), g.SPIKE_STEP) is None:
+        warning = "STA requires a completed spike run for the same experiment."
         stderr.write_text(f"{warning}\n", encoding="utf-8")
         now = _now()
         run_repository.update_run(settings, run_id, {"status": "failed", "started_at": now, "ended_at": now, "exit_code": 1, **where, "command_json": json.dumps({"error": warning})})
         return
-    cmd = _step_command(settings, run, out)
+    builder = _sta_command if is_sta_step(run["step"]) else _COMMAND_BUILDERS.get(run["step"])
+    cmd = builder(settings, run, out) if builder else _adapter_command(run, out, run["parameters_json"])
     run_repository.update_run(settings, run_id, {"status": "running", "started_at": _now(), **where, "command_json": json.dumps(cmd)})
     code = _run_process(settings, cmd, stdout, stderr)
     _record_outcome(settings, run, out, cmd, code, where)
     if code == 0 and run["step"] in STEPS_THAT_FEED_STA and not run["is_test"]:
         _launch_sta_if_ready(settings, int(run["experiment_id"]))
-
-
-def _missing_input_warning(settings: Settings, run) -> str | None:
-    """Text saying what the step needs and does not have yet, or None when it can start."""
-    if is_sta_step(run["step"]) and run["backend"] == "cluster" and _latest_completed_output(settings, int(run["experiment_id"]), "spike") is None:
-        return "STA requires a completed spike run for the same experiment."
-    return None
 
 
 def _adapter_command(run, out: Path, params_json: str, extra_args: tuple[str, ...] = ()) -> list[str]:
@@ -260,32 +246,27 @@ def _sta_command(settings: Settings, run, out: Path) -> list[str]:
     if run["backend"] != "cluster":
         return _adapter_command(run, out, run["parameters_json"])
     experiment_id = int(run["experiment_id"])
-    spike_run = _latest_completed_output(settings, experiment_id, "spike")
-    params =json.loads(run["parameters_json"] or "{}")
+    spike_run = _latest_completed_output(settings, experiment_id, g.SPIKE_STEP)
+    params = json.loads(run["parameters_json"])
     params["spike_run"] = str(spike_run)
-    for step, key in (("behavior", "behavior_run"), ("anatomy", "anatomy_run")):
+    for step, key in ((g.BEHAVIOR_STEP, "behavior_run"), (g.ANATOMY_STEP, "anatomy_run")):
         found = _latest_completed_output(settings, experiment_id, step)
         if found is not None:
             params[key] = str(found)
     # the cluster settings once, without the credentials: those reach the adapter through the environment (_process_env)
-    params["cluster"] = {key: value for key, value in settings.raw.get("cluster", {}).items() if key not in CLUSTER_ENV_VARS}
+    params["cluster"] = {key: value for key, value in settings.cluster.items() if key not in CLUSTER_ENV_VARS}
     return _adapter_command(run, out, json.dumps(params))
 
 
 # step -> function(settings, run, out) giving the command line; a step that is not listed is a plain adapter call
-_COMMAND_BUILDERS = {"preprocessing": _preprocessing_command}
-
-
-def _step_command(settings: Settings, run, out: Path) -> list[str]:
-    builder = _sta_command if is_sta_step(run["step"]) else _COMMAND_BUILDERS.get(run["step"])
-    return builder(settings, run, out) if builder else _adapter_command(run, out, run["parameters_json"])
+_COMMAND_BUILDERS = {g.PREPROCESSING_STEP: _preprocessing_command}
 
 
 def _process_env(settings: Settings) -> dict:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONPATH"] = str(settings.project_root) + os.pathsep + env.get("PYTHONPATH", "")
-    cluster = settings.raw.get("cluster", {})
+    cluster = settings.cluster
     for key, env_key in CLUSTER_ENV_VARS.items():
         value = cluster.get(key)
         if value not in (None, ""):
@@ -314,11 +295,7 @@ def _record_outcome(settings: Settings, run, out: Path, cmd: list[str], code: in
         "stdout_path": where["stdout_path"], "stderr_path": where["stderr_path"], "log_path": where["log_path"],
         "command_json": json.dumps(cmd), "output_manifest_json": json.dumps(manifest),
     }
-    run_repository.finish_run(settings, int(run["id"]), fields, manifest, int(run["experiment_id"]), mark_preprocessing_running=submitted and run["step"] == "preprocessing")
-
-
-def _result_types_of(run: dict) -> list[str]:
-    return list(json.loads(run["parameters_json"] or "{}").get("result_types", []))
+    run_repository.finish_run(settings, int(run["id"]), fields, manifest, int(run["experiment_id"]), mark_preprocessing_running=submitted and run["step"] == g.PREPROCESSING_STEP)
 
 
 def _launch_sta_if_ready(settings: Settings, experiment_id: int) -> list[int]:
@@ -331,7 +308,7 @@ def _launch_sta_if_ready(settings: Settings, experiment_id: int) -> list[int]:
     launched: list[int] = []
     for run in run_repository.waiting_runs(settings, experiment_id):
         run_id = int(run["id"])
-        if run["step"] in busy or not feeding_steps(_result_types_of(run)) <= completed:
+        if run["step"] in busy or not feeding_steps(list(json.loads(run["parameters_json"]).get("result_types", []))) <= completed:
             continue
         if run_repository.release_waiting_run(settings, run_id):
             launch_run(settings, run_id)

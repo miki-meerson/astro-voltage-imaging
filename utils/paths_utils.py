@@ -254,6 +254,11 @@ def cell_dirs(parent: str | Path) -> dict[int, Path]:
     return dict(sorted(found.items()))
 
 
+def cells_with_anatomy_result(sta_dir: str | Path) -> list[int]:
+    """The numbers of the cells of an STA analysis folder that have an anatomy result file, in order."""
+    return [cell for cell in cell_dirs(sta_dir) if path_for(PathKind.ANATOMY_RESULT, sta_dir, cell=cell).exists()]
+
+
 @dataclass(frozen=True)
 class STAPaths:
     home_dir: Path

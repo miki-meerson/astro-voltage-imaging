@@ -19,6 +19,7 @@ from app.services.spikes import (
 )
 from app.services.visualizations import render_motion_sta, render_sta_cell_summary
 from app.web.common import FlatBlueprint, get_settings
+from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
 
 bp = FlatBlueprint("neurons", __name__)
@@ -37,7 +38,7 @@ def neuron(neuron_id):
         runs_by_step.setdefault(r["step"], r)
     sta_stale = None
     sta_step = default_sta_step()
-    sta_view, spike_view = runs_by_step.get(sta_step), runs_by_step.get("spike")
+    sta_view, spike_view = runs_by_step.get(sta_step), runs_by_step.get(g.SPIKE_STEP)
     if sta_view and spike_view and sta_view["status"] == "completed" and spike_view["status"] == "completed":
         edited = spikes_edited_after_sta(settings, spike_view, sta_view, n["pipeline_neuron_id"])
         if edited is not None:
@@ -109,7 +110,7 @@ def unconfirm_cell(neuron_id):
 @bp.post("/neurons/<int:neuron_id>/review/mark")
 def mark_cell_reviewed(neuron_id):
     settings = get_settings()
-    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, "spike")
+    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, g.SPIKE_STEP)
     if n is None:
         return jsonify({"error": "Cell not found"}), 404
     if spike_run is None:

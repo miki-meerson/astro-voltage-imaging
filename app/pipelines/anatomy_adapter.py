@@ -8,7 +8,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from app.services.visualizations import _font, _gray_rgb
+from utils.file_utils import write_json
 from utils.movie_utils import read_astro_movie, spatial_bin_movie
+from utils.sta_trace_utils import crop_bounds
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths
 
@@ -28,17 +30,6 @@ def _sampled_mean_binned_movie(movie_path: Path, spatial_bin: int, max_frames: i
         acc += np.asarray(chunk, dtype=np.float64).sum(axis=0)
         count += int(chunk.shape[0])
     return (acc / max(count, 1)).astype(np.float32)
-
-
-def _crop_bounds(center_yx: tuple[int, int], radius: int, image_shape: tuple[int, int]) -> tuple[int, int, int, int]:
-    y, x = center_yx
-    h, w = image_shape
-    return (
-        max(0, int(y) - int(radius)),
-        min(h, int(y) + int(radius) + 1),
-        max(0, int(x) - int(radius)),
-        min(w, int(x) + int(radius) + 1),
-    )
 
 
 def _draw_preview(path: Path, mean_image: np.ndarray, suite2p_ctx: dict, radius: int, spatial_bin: int, max_cells: int = 8) -> None:
@@ -68,7 +59,7 @@ def _draw_preview(path: Path, mean_image: np.ndarray, suite2p_ctx: dict, radius:
         center = neuron_centroid_binned(cell_id, spatial_bin, mean_image.shape, suite2p_ctx)
         cy = oy + int(round(center[0] * scale))
         cx = ox + int(round(center[1] * scale))
-        y_min, y_max, x_min, x_max = _crop_bounds(center, radius, mean_image.shape)
+        y_min, y_max, x_min, x_max = crop_bounds(center, radius, mean_image.shape)
         rect = (
             ox + int(round(x_min * scale)),
             oy + int(round(y_min * scale)),
@@ -112,17 +103,14 @@ def main() -> None:
     )
     np.save(path_for(PathKind.MEAN_ASTRO_BINNED, sta_dir), mean_image.astype(np.float32))
     _draw_preview(path_for(PathKind.ANATOMY_CROP_PREVIEW_PNG, out), mean_image, suite2p_ctx, radius, spatial_bin)
-    path_for(PathKind.RUN_METRICS_JSON, out).write_text(
-        json.dumps(
-            {
-                "anatomy_radius_binned": radius,
-                "spatial_bin": spatial_bin,
-                "n_cells": int(suite2p_ctx["n_cells"]),
-                "output": path_for(PathKind.ANATOMY_CROP_PARAMS, "").as_posix(),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    write_json(
+        path_for(PathKind.RUN_METRICS_JSON, out),
+        {
+            "anatomy_radius_binned": radius,
+            "spatial_bin": spatial_bin,
+            "n_cells": int(suite2p_ctx["n_cells"]),
+            "output": path_for(PathKind.ANATOMY_CROP_PARAMS, "").as_posix(),
+        },
     )
 
 

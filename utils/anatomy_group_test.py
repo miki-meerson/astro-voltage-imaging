@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from utils.cluster_result import cluster_offset_from_roi
-from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
+from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, mask_mean_trace, saved_cluster_args
 
 MAX_SHIFT = 3
 STATS = ("cells_with_cluster", "one_sidedness", "similarity_same_time", "similarity_shift3", "distance_px")
@@ -41,7 +41,7 @@ def _rows_from_effect(effect, d, null_max, crop, spatial_bin, roi_center, null_m
         rows.append({
             "sign": 1 if str(c.get("sign", "")).lower() == "positive" else -1,  # +1 depolarizing, -1 hyperpolarizing
             "dist": float(np.hypot(dy, dx)),
-            "trace": effect[:, mask2d].mean(axis=1).astype(float).round(5).tolist(),
+            "trace": mask_mean_trace(effect, mask2d).astype(float).round(5).tolist(),
         })
     return rows
 

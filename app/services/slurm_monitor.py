@@ -23,12 +23,8 @@ CLUSTER_ERRORS = client.CLUSTER_ERRORS
 MONITOR_TIMEOUT_SECONDS = 8
 
 
-def _cluster(settings: Settings) -> dict:
-    return settings.raw.get("cluster", {})
-
-
 def _monitor_timeout(settings: Settings) -> int:
-    return int(_cluster(settings).get("monitor_command_timeout_seconds") or MONITOR_TIMEOUT_SECONDS)
+    return int(settings.cluster.get("monitor_command_timeout_seconds") or MONITOR_TIMEOUT_SECONDS)
 
 
 def _job_id(output_dir: str | None) -> str | None:
@@ -63,7 +59,10 @@ def _local_log_status(path: Path) -> tuple[str | None, int | None, str]:
     return "running", None, "running from local Slurm log"
 
 
-def _status_from_slurm_states(states: list[str]) -> tuple[str | None, int | None, str]:
+def _slurm_status(settings: Settings, job_id: str) -> tuple[str | None, int | None, str]:
+    states, error = client.job_state(settings.cluster, job_id, _monitor_timeout(settings))
+    if not states:
+        return None, None, error
     normalized = [state.split()[0].split("+")[0].strip().upper() for state in states if state.strip()]
     note = ", ".join(states)
     if any(state.startswith(FAILED_STATES) for state in normalized):
@@ -75,13 +74,6 @@ def _status_from_slurm_states(states: list[str]) -> tuple[str | None, int | None
     if any(state in QUEUED_STATES for state in normalized):
         return "queued", None, note
     return None, None, note
-
-
-def _slurm_status(settings: Settings, job_id: str) -> tuple[str | None, int | None, str]:
-    states, note = client.job_state(_cluster(settings), job_id, _monitor_timeout(settings))
-    if not states:
-        return None, None, note
-    return _status_from_slurm_states(states)
 
 
 def _cluster_log_failure(output_dir: str | None, stderr_path: str | None = None) -> tuple[str | None, int | None, str]:
@@ -139,7 +131,7 @@ def _copy_remote_log(settings: Settings, remote_log_path: str, local_path: Path)
         if text:
             local_path.write_text(text, encoding="utf-8", errors="replace")
         return
-    text = client.tail_remote_file(_cluster(settings), remote_log_path, timeout=_monitor_timeout(settings))
+    text = client.tail_remote_file(settings.cluster,remote_log_path, timeout=_monitor_timeout(settings))
     if text:
         local_path.write_text(text, encoding="utf-8", errors="replace")
 
@@ -176,7 +168,7 @@ def poll_slurm_once(settings: Settings) -> int:
 
 
 def poll_preprocessing_once(settings: Settings) -> int:
-    runs = run_repository.active_cluster_runs(settings, "preprocessing")
+    runs = run_repository.active_cluster_runs(settings, g.PREPROCESSING_STEP)
     changed = 0
     for run in runs:
         out = Path(run["output_dir"] or "")
@@ -243,9 +235,9 @@ def poll_preprocessing_once(settings: Settings) -> int:
 
 
 def start_slurm_monitor(settings: Settings) -> threading.Thread | None:
-    if not settings.raw.get("cluster", {}).get("enabled", False):
+    if not settings.cluster.get("enabled", False):
         return None
-    interval = max(15, int(settings.raw.get("cluster", {}).get("poll_interval_seconds", 30)))
+    interval = max(15, int(settings.cluster.get("poll_interval_seconds", 30)))
 
     def loop() -> None:
         while True:

@@ -12,7 +12,7 @@ from utils.thorsync_utils import (
 )
 from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
-from utils.file_utils import read_json, read_npz_arrays
+from utils.file_utils import read_json, read_npz_arrays, write_json
 
 
 def _save_speed_png(path: Path, speed, fps: float, threshold: float) -> None:
@@ -85,10 +85,6 @@ def _load_csv_speed(home: Path, raw_frames: int, frame_times: np.ndarray, params
     aligned = np.interp(frame_times, tv - offsets[chosen], speed, left=np.nan, right=np.nan)
     covered = np.flatnonzero((frame_times >= (tv - offsets[chosen])[0]) & (frame_times <= (tv - offsets[chosen])[-1]))
     return aligned, covered, chosen, {"behavior_source": "csv", "behavior_file": str(behavior_files[0])}
-
-
-def _has_single_csv_behavior(home: Path) -> bool:
-    return len(sorted(home.glob(g.IMAGING_CSV_GLOB))) == 1
 
 
 def _load_ts_speed(home: Path, raw_frames: int, kept: np.ndarray, params: dict, fps: float) -> tuple[np.ndarray, np.ndarray, str, dict]:
@@ -190,7 +186,7 @@ def _split_and_save(out: Path, params: dict, speed_trace: np.ndarray, covered: n
     )
     _save_speed_png(path_for(PathKind.BEHAVIOR_SPEED_PNG, out), speed_trace, fps, threshold)
     metrics = {"active_frames": int(active.sum()), "inactive_frames": int(inactive.sum()), **source_meta}
-    path_for(PathKind.RUN_METRICS_JSON, out).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    write_json(path_for(PathKind.RUN_METRICS_JSON, out), metrics)
 
 
 def main() -> None:
@@ -202,7 +198,7 @@ def main() -> None:
         try:
             speed_trace, covered, chosen, source_meta = _load_ts_speed(home, raw_frames, kept, params, fps)
         except (OSError, ValueError, KeyError) as exc:  # the ThorSync file is unreadable or does not hold the encoder signal
-            if not _has_single_csv_behavior(home):
+            if len(list(home.glob(g.IMAGING_CSV_GLOB))) != 1:
                 raise
             speed_trace, covered, chosen, source_meta = _load_csv_speed(home, raw_frames, frame_times, params, fps)
             source_meta["behavior_source"] = "csv_fallback_from_ts"

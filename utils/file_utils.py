@@ -30,6 +30,24 @@ def read_json(path: str | Path, what: str, default=REQUIRED, missing: str | None
         raise ValueError(f"{what} {path} is not valid JSON ({exc}).") from exc
 
 
+def write_json(path: str | Path, data) -> None:
+    """Save `data` as an indented utf-8 json file."""
+    Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _resolved(path: str | Path) -> Path:
+    try:
+        return Path(path).resolve()
+    except OSError:
+        return Path(path).absolute()
+
+
+def path_within(path: str | Path, *roots: str | Path) -> bool:
+    """True when `path` is one of the roots or inside one of them (both sides resolved: symlinks and ".." cannot escape)."""
+    target = _resolved(path)
+    return any(target == base or base in target.parents for base in map(_resolved, roots))
+
+
 def read_npz_arrays(path: str | Path, what: str, default=REQUIRED, missing: str | None = None) -> dict:
     """Every array of a saved npz file as {key: array}. A missing file gives `default` (when given) or a FileNotFoundError, as read_json."""
     try:

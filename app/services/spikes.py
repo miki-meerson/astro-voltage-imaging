@@ -1,15 +1,15 @@
 """Spike labels of a cell: read/write the label files, detection parameters, stale-Suite2p checks."""
 from __future__ import annotations
 
-from datetime import datetime
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
 from app.services.runs import run_dir
 from app.services.suite2p_data import experiment_stat_cells
-from utils.file_utils import read_npz_arrays
+from utils.file_utils import read_npz_arrays, write_json
 from utils.paths_utils import PathKind, path_for
 from utils.spike_params import SPIKE_PARAM_SPECS, spike_params_with_defaults
 
@@ -99,11 +99,7 @@ def load_spike_payload(path: Path) -> dict:
 
 def spike_detection_params(run_row, params_path: Path | None = None) -> dict:
     """Detector settings of a spike run; the ones saved with the cell (params_path, written by the editor's save) win."""
-    try:
-        params = json.loads(run_row["parameters_json"] or "{}") if run_row is not None else {}
-    except json.JSONDecodeError:
-        params = {}
-    result = spike_params_with_defaults(params)
+    result = spike_params_with_defaults(json.loads(run_row["parameters_json"]) if run_row is not None else {})
     if params_path is not None:
         saved = read_npz_arrays(params_path, "The saved spike settings", default={})  # the file only exists once the cell's settings were saved
         if "mad_threshold_factor" in saved:
@@ -141,17 +137,14 @@ def save_spike_payload(spike_run_folder: Path, pipeline_neuron_id: str, peaks: n
             mad_threshold_factor=full["mad_factor"],
             **{name: full[name] for name in SPIKE_PARAM_SPECS if name != "mad_factor"},
         )
-    path_for(PathKind.SPIKE_MANUAL_REVIEW, spike_run_folder, cell=pipeline_neuron_id).write_text(
-        json.dumps(
-            {
-                "peaks_all": peaks.tolist(),
-                "labels": labels.tolist(),
-                "detection_params": saved_params,
-                "saved_at": datetime.now().isoformat(timespec="seconds"),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    write_json(
+        path_for(PathKind.SPIKE_MANUAL_REVIEW, spike_run_folder, cell=pipeline_neuron_id),
+        {
+            "peaks_all": peaks.tolist(),
+            "labels": labels.tolist(),
+            "detection_params": saved_params,
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+        },
     )
 
 

@@ -12,17 +12,19 @@ from app.services import caches, polarity
 from app.services.runs import default_sta_step, run_dir
 from app.services.suite2p_data import experiment_stat_cells
 from app.settings import Settings
+from utils import globals_utils as g
 from utils.cluster_result import load_cluster_result
+from utils.clusters_utils import mask_mean_trace
 from utils.db_utils import collect_cluster_result_metadata
 from utils.movie_utils import get_mean_images
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths, sta_dir_of_run
 from utils.suite2p_utils import suite2p_roi_mask
 
 RESULT_ORDER = {
-    "all": 0,
+    g.ALL_GROUP: 0,
     "simple": 1,
     "complex": 2,
-    "anatomy": 3,
+    g.ANATOMY_GROUP: 3,
     "behavioral_active": 4,
     "behavioral_inactive": 5,
 }
@@ -62,33 +64,18 @@ def _image_response(image: Image.Image) -> BytesIO:
     return bio
 
 
-def _bytes_response(data: bytes) -> BytesIO:
-    bio = BytesIO(data)
-    bio.seek(0)
-    return bio
-
-
-def _mask_outline(mask: np.ndarray) -> np.ndarray:
-    mask = np.asarray(mask, dtype=bool)
-    if not mask.any():
-        return mask
-    outline = mask & ~binary_erosion(mask)
-    return outline if outline.any() else mask
-
-
-def _hex_rgb(color: str) -> tuple[int, int, int]:
-    color = color.lstrip("#")
-    return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
-
-
 def _overlay_mask_pixels(base: Image.Image, mask: np.ndarray, color: str, alpha: float = 0.9) -> Image.Image:
     if mask is None or not np.asarray(mask).any():
         return base
     if np.asarray(mask).shape != (base.height, base.width):
         return base
-    outline = _mask_outline(mask)
+    mask = np.asarray(mask, dtype=bool)
+    outline = mask & ~binary_erosion(mask)
+    if not outline.any():
+        outline = mask
     rgba = np.zeros((outline.shape[0], outline.shape[1], 4), dtype=np.uint8)
-    rgba[..., :3] = _hex_rgb(color)
+    color = color.lstrip("#")
+    rgba[..., :3] = tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
     rgba[..., 3] = (outline.astype(np.float32) * 255 * float(alpha)).astype(np.uint8)
     return Image.alpha_composite(base.convert("RGBA"), Image.fromarray(rgba, mode="RGBA"))
 
@@ -114,13 +101,6 @@ def _nice_ticks(lo: float, hi: float, n: int = 5) -> list[float]:
         ticks.append(float(value))
         value += step
     return ticks
-
-
-def _fmt_dff(value: float) -> str:
-    pct = value * 100
-    if abs(pct) >= 10:
-        return f"{pct:.0f}%"
-    return f"{pct:.1f}%"
 
 
 def _draw_trace_tile(
@@ -161,7 +141,8 @@ def _draw_trace_tile(
         _, py = xy(x0, value)
         draw.line([(plot[0], py), (plot[2], py)], fill="#1d2630", width=1)
         draw.line([(plot[0] - 5, py), (plot[0], py)], fill="#43505f", width=1)
-        draw.text((plot[0] - 10, py), _fmt_dff(value), fill="#aeb9c6", font=_font(13), anchor="rm")
+        pct = value * 100
+        draw.text((plot[0] - 10, py), f"{pct:.0f}%" if abs(pct) >= 10 else f"{pct:.1f}%", fill="#aeb9c6", font=_font(13), anchor="rm")
 
     x_ticks = _nice_ticks(x0, x1, 5)
     for value in x_ticks:
@@ -286,7 +267,7 @@ def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
     )
     cached = caches.STA_SUMMARY_PNG.get(cache_key)
     if cached is not None:
-        return _bytes_response(cached)
+        return BytesIO(cached)
 
     paths = resolve_sta_paths(source_path, path_for(PathKind.STA_ALGORITHM_HOME, sta_run_dir))
     try:
@@ -331,7 +312,7 @@ def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
             traces = []
         else:
             neuron = suite2p_roi_mask(cell_id, stat_cells, mean_img.shape, int(meta["spatial_bin"]))
-            crop = meta["anatomy_crop_bounds"] if str(row.result_type) == "anatomy" else None
+            crop = meta["anatomy_crop_bounds"] if str(row.result_type) == g.ANATOMY_GROUP else None
             shown_img, shown_neuron, shown_clusters = mean_img, neuron, clusters
             if crop is not None:
                 y0, y1, x0, x1 = crop
@@ -365,7 +346,7 @@ def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
                 if wide_trace is not None:
                     t_plot, trace = wide_trace  # displayed over a wider window than the tested one
                 else:
-                    trace = meta["trace_effect"][:, mask].mean(axis=1)
+                    trace = mask_mean_trace(meta["trace_effect"], mask)
                 traces.append((trace, _cluster_color(cluster)))
         trace_tile = _draw_trace_tile(t_plot, traces, (tile_w, trace_h), tested_window=meta["tested_window"])
         prepared.append((title, int(row.n_peaks), int(row.n_significant_clusters), image_tile, trace_tile))

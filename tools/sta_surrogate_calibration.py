@@ -29,7 +29,7 @@ from scipy.stats import rankdata
 
 import sta_maps_sparse as sta
 from utils import globals_utils as g
-from utils.paths_utils import PathKind, cell_dirs, path_for
+from utils.paths_utils import PathKind, cells_with_anatomy_result, path_for
 
 DEFAULT_CONFIGS = {
     "legacy": dict(NULL_STANDARDIZATION="none", SMOOTH_SIGMA_FULLRES_PX=0.0, MIN_CLUSTER_FOOTPRINT_FULLRES_PX=0.0, MIN_CLUSTER_FRAMES=0),
@@ -38,12 +38,6 @@ DEFAULT_CONFIGS = {
     "z_smooth_extent": dict(NULL_STANDARDIZATION="per_pixel_z", SMOOTH_SIGMA_FULLRES_PX=1.0, MIN_CLUSTER_FOOTPRINT_FULLRES_PX=9.0, MIN_CLUSTER_FRAMES=2),
 }
 DECILES = np.arange(0, 101, 10)
-
-
-def _anatomy_files(sta_dir: str | Path) -> list[Path]:
-    """The anatomy result of every cell that has one, ordered by cell number."""
-    files = [path_for(PathKind.ANATOMY_RESULT, sta_dir, cell=cell) for cell in cell_dirs(sta_dir)]
-    return [f for f in files if f.exists()]
 
 
 def _geom(mask: np.ndarray) -> tuple[int, int, int]:
@@ -125,7 +119,7 @@ def main() -> None:
     args = ap.parse_args()
 
     configs = json.loads(Path(args.configs).read_text()) if args.configs else DEFAULT_CONFIGS
-    files = _anatomy_files(args.sta_dir)
+    files = [path_for(PathKind.ANATOMY_RESULT, args.sta_dir, cell=cell) for cell in cells_with_anatomy_result(args.sta_dir)]  # ordered by cell number
     if args.max_cells:
         files = files[: args.max_cells]
     if not files:

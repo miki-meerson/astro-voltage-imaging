@@ -14,6 +14,7 @@ from app.services.spikes import (
 )
 from app.services.suite2p_data import experiment_suite2p_context
 from app.web.common import FlatBlueprint, get_settings
+from utils import globals_utils as g
 from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
 from utils.spike_params import spike_params_with_defaults
@@ -26,7 +27,7 @@ bp = FlatBlueprint("spikes", __name__)
 @bp.get("/neurons/<int:neuron_id>/spikes")
 def spike_editor(neuron_id):
     settings = get_settings()
-    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, "spike")
+    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, g.SPIKE_STEP)
     if n is None:
         return render_template("error.html", title="Missing Cell", message="Cell not found"), 404
     if spike_run is None:
@@ -40,7 +41,7 @@ def spike_editor(neuron_id):
 @bp.get("/neurons/<int:neuron_id>/spikes/data")
 def spike_data(neuron_id):
     settings = get_settings()
-    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, "spike")
+    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, g.SPIKE_STEP)
     if n is None:
         return jsonify({"error": "Cell not found"}), 404
     if spike_run is None:
@@ -78,7 +79,7 @@ def detect_spike_data(neuron_id):
     settings = get_settings()
     data = request.get_json(force=True) or {}
     params = spike_params_with_defaults(data)
-    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, "spike")
+    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, g.SPIKE_STEP)
     if n is None:
         return jsonify({"error": "Cell not found"}), 404
     if spike_run is None:
@@ -138,7 +139,7 @@ def save_spike_data(neuron_id):
     keep = labels != "delete"
     peaks = peaks[keep]
     labels = labels[keep]
-    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, "spike")
+    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, g.SPIKE_STEP)
     if n is None:
         return jsonify({"error": "Cell not found"}), 404
     if spike_run is None:

@@ -21,6 +21,16 @@ class Settings:
     bind_port: int
     open_browser: bool
 
+    @property
+    def cluster(self) -> dict:
+        """The `cluster` section of the configuration ({} when there is none)."""
+        return self.raw.get("cluster", {})
+
+    @property
+    def defaults(self) -> dict:
+        """The `defaults` section of the configuration: the default parameters of each step ({} when there is none)."""
+        return self.raw.get("defaults", {})
+
 
 def _resolve(root: Path, value: str) -> Path:
     p = Path(value)

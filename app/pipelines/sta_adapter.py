@@ -8,10 +8,11 @@ import sys
 from app.cluster import client
 from app.settings import PROJECT_ROOT
 from utils import globals_utils as g
+from utils.file_utils import write_json
 from utils.paths_utils import PathKind, cell_dirs, path_for, sta_dir_of_run
 from utils.suite2p_utils import load_suite2p_context
 
-DEFAULT_RESULT_TYPES = ["all", "simple", "complex", "behavioral"]
+DEFAULT_RESULT_TYPES = [g.ALL_GROUP, "simple", "complex", "behavioral"]
 
 
 def _cluster(params: dict) -> dict:
@@ -30,15 +31,11 @@ def _result_types(params: dict) -> list[str]:
     return [str(item) for item in result_types]
 
 
-def _spike_cell_ids(spike_run: Path) -> list[int]:
-    return sorted(cell_dirs(spike_run))
-
-
 def _validate_spike_suite2p_alignment(source_home: Path, spike_run: Path) -> None:
     suite_path = path_for(PathKind.SUITE2P_PLANE0, source_home)
     suite2p = load_suite2p_context(suite_path)
     n_cells = int(suite2p["n_cells"])
-    spike_cells = _spike_cell_ids(spike_run)
+    spike_cells = sorted(cell_dirs(spike_run))
     invalid = [cell_id for cell_id in spike_cells if cell_id < 0 or cell_id >= n_cells]
     if invalid:
         raise ValueError(
@@ -65,7 +62,7 @@ def _check_inputs_and_make_output_dir(source_home: Path, out: Path, params: dict
         if behavior_run is None or not path_for(PathKind.BEHAVIOR_SEGMENTS, behavior_run).exists():
             raise FileNotFoundError("STA behavioral result_type requires a project-owned behavioral run output.")
 
-    if "anatomy" in _result_types(params):
+    if g.ANATOMY_GROUP in _result_types(params):
         anatomy_run = _optional_path(params, "anatomy_run")
         crop_path = path_for(PathKind.ANATOMY_CROP_PARAMS, anatomy_run) if anatomy_run else None
         if crop_path is None or not crop_path.exists():
@@ -100,7 +97,7 @@ def _write_config(sta_home: Path, out: Path, params: dict, source_home: Path, sp
     cfg.setdefault("n_workers", 1)
     cfg["summary_csv"] = path_for(PathKind.STA_SUMMARY_CSV, path_for(PathKind.RUN_STA_ANALYSIS, ".")).as_posix()
     cfg_path = path_for(PathKind.STA_JOB_PARAMS_EFFECTIVE, out)
-    cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    write_json(cfg_path, cfg)
     return cfg_path
 
 
@@ -117,7 +114,7 @@ def _write_metrics(out: Path, sta_home: Path, config_path: Path, spike_run: Path
         "sta_npz_count": len(npz_files),
         "sta_outputs": rows,
     }
-    path_for(PathKind.RUN_METRICS_JSON, out).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    write_json(path_for(PathKind.RUN_METRICS_JSON, out), metrics)
 
 
 def _submit_group_test(out: Path, source_home: Path, params: dict, sta_job_id: str) -> str | None:
@@ -127,7 +124,7 @@ def _submit_group_test(out: Path, source_home: Path, params: dict, sta_job_id: s
     only prints a warning: the STA job is already submitted and does not depend on it. Returns the job id, or None."""
     if not params.get("run_group_test_after_sta", True):
         return None
-    if "anatomy" not in _result_types(params):
+    if g.ANATOMY_GROUP not in _result_types(params):
         print("Group test not submitted: this run has no 'anatomy' result type.")
         return None
     script = path_for(PathKind.GROUP_TEST_JOB_SCRIPT, PROJECT_ROOT)
@@ -151,19 +148,12 @@ def _submit_group_test(out: Path, source_home: Path, params: dict, sta_job_id: s
     return job_id
 
 
-def _sta_script(cluster: dict) -> Path:
-    script = Path(cluster.get("sta_script") or path_for(PathKind.STA_JOB_SCRIPT, PROJECT_ROOT))
-    if not script.is_absolute():
-        script = PROJECT_ROOT / script
-    if not script.exists():
-        raise FileNotFoundError(f"Missing cluster STA script: {script}")
-    return script
-
-
 def _run_cluster_job(config_path: Path, out: Path, params: dict, source_home: Path | None = None) -> int:
     cluster = _cluster(params)
     client.check_ready(cluster)
-    cluster_script = _sta_script(cluster)
+    cluster_script = Path(cluster.get("sta_script") or path_for(PathKind.STA_JOB_SCRIPT, PROJECT_ROOT))
+    if not cluster_script.is_absolute():
+        cluster_script = PROJECT_ROOT / cluster_script
     cluster_stdout = path_for(PathKind.CLUSTER_STDOUT_LOG, out)
     cluster_stderr = path_for(PathKind.CLUSTER_STDERR_LOG, out)
     print("Submitting STA Maps cluster job:")

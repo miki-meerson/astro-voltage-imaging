@@ -1,8 +1,6 @@
 """Preprocessing page and its actions, data and movie endpoints."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from flask import jsonify, redirect, render_template, request, send_file, url_for
 
 from app.db import preprocessing_repository as repo
@@ -17,6 +15,8 @@ from app.services.preprocessing import PREPROCESSING_STEPS, latest_preprocessing
 from app.services.run_views import STEP_LABELS, run_view
 from app.services.runs import create_run, launch_run
 from app.web.common import FlatBlueprint, get_settings
+from utils import globals_utils as g
+from utils.file_utils import path_within
 from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
 
@@ -65,7 +65,7 @@ def experiment_preprocessing(experiment_id):
 def run_preprocessing(experiment_id):
     settings = get_settings()
     try:
-        rid = create_run(settings, experiment_id, "preprocessing", settings.raw.get("defaults", {}).get("preprocessing", {}), backend="cluster")
+        rid = create_run(settings, experiment_id, g.PREPROCESSING_STEP, settings.defaults.get(g.PREPROCESSING_STEP, {}), backend="cluster")
         launch_run(settings, rid)
         return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, new_run=rid))
     except Exception as exc:
@@ -125,9 +125,8 @@ def preprocessing_photobleaching_qc_plot(experiment_id, kind):
     source_path = repo.experiment_source_path(settings, experiment_id)
     if source_path is None or kind not in PB_KINDS:
         return render_template("error.html", title="Missing Experiment", message="Experiment not found."), 404
-    source_root = Path(source_path).resolve()
     target = path_for(PathKind.PB_QC_PLOT, source_path, pb_kind=kind).resolve()
-    if source_root not in target.parents and target != source_root:
+    if not path_within(target, source_path):
         return render_template("error.html", title="Unsafe Path", message="QC plot path is outside the experiment folder."), 400
     if not target.exists() or not target.is_file():
         return render_template("error.html", title="Missing QC Plot", message=str(target)), 404
