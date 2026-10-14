@@ -258,7 +258,7 @@ def anatomy_crop_params_path() -> Path:
     return _resolve_shared_path(ANATOMY_CROP_PARAMS_FILE)
 
 
-def load_anatomy_radius(paths, target_spatial_bin: int) -> dict:
+def load_anatomy_radius(target_spatial_bin: int) -> dict:
     path = anatomy_crop_params_path()
     if not path.exists():
         raise FileNotFoundError(
@@ -321,7 +321,7 @@ def ensure_binned_movie(paths, spatial_bin: int | None = None) -> np.memmap:
     return np.load(cache_path, mmap_mode="r")
 
 
-def load_behavioral_frame_groups(paths) -> dict[str, np.ndarray]:
+def load_behavioral_frame_groups() -> dict[str, np.ndarray]:
     path = behavior_segments_path()
     if not path.exists():
         raise FileNotFoundError(
@@ -968,7 +968,7 @@ def anatomy_analysis_kwargs(cell_id: int, pre: int, baseline: int, anatomy_setti
     }
 
 
-def analysis_cfg(pre: int, post: int, baseline: int, windows: tuple, n_frames: int, centers: np.ndarray, **extra) -> dict:
+def analysis_cfg(pre: int, post: int, baseline: int, windows: tuple, n_frames: int, **extra) -> dict:
     return {
         "pre": pre,
         "post": post,
@@ -1282,7 +1282,7 @@ def main() -> None:
     fps = int(read_frame_rate(resolved_source_home))
     pre, post, baseline, *windows = frame_settings(fps)
     standard_result_types = tuple(result_type for result_type in RESULT_TYPES if result_type not in {"behavioral", g.ANATOMY_GROUP})
-    anatomy_settings = load_anatomy_radius(paths, ANATOMY_SPATIAL_BIN) if g.ANATOMY_GROUP in RESULT_TYPES else None
+    anatomy_settings = load_anatomy_radius(ANATOMY_SPATIAL_BIN) if g.ANATOMY_GROUP in RESULT_TYPES else None
     used_params = sta_run_parameters(fps, pre, post, baseline, windows, standard_result_types, anatomy_settings)
     save_sta_run_parameters(paths.sta_dir, used_params)
     cells = list_cells()
@@ -1318,7 +1318,6 @@ def main() -> None:
             baseline,
             windows,
             movie.shape[0],
-            centers,
             result_types=standard_result_types,
         )
         cfg["result_types"] = standard_result_types
@@ -1336,7 +1335,6 @@ def main() -> None:
             baseline,
             windows,
             anatomy_movie.shape[0],
-            anatomy_centers,
             result_types=(g.ANATOMY_GROUP,),
             anatomy_settings=anatomy_settings,
         )
@@ -1354,7 +1352,7 @@ def main() -> None:
         rows.extend(run_pool(process_cell, anatomy_cfg, cells, paths.sta_dir, init_args))
 
     if "behavioral" in RESULT_TYPES:
-        frame_groups = load_behavioral_frame_groups(paths)
+        frame_groups = load_behavioral_frame_groups()
         source_behavioral_segments = behavior_segments_path()
         skipped_groups = []
         for behavioral_group in BEHAVIORAL_GROUPS:
@@ -1395,7 +1393,6 @@ def main() -> None:
                 baseline,
                 windows,
                 behavioral_movie.shape[0],
-                behavioral_centers,
                 behavioral_group=behavioral_group,
                 source_frames=frame_groups[behavioral_group],
                 source_behavioral_segments=str(source_behavioral_segments),

@@ -16,7 +16,6 @@ import json
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from utils.anatomy_group_test import cell_records, group_test

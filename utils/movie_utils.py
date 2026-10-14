@@ -39,8 +39,8 @@ def _reorder_tiff_to_thw(movie, axes):
     return movie
 
 
-def get_movie_parameters(path, is_dir=False, verbal=False):
-    tree = ET.parse(path_for(PathKind.EXPERIMENT_XML, os.path.split(path)[0]))  # is_dir is accepted but has no effect
+def get_movie_parameters(path):
+    tree = ET.parse(path_for(PathKind.EXPERIMENT_XML, os.path.split(path)[0]))
     root = tree.getroot()
     # Find the LSM tag and get the frameRate attribute
     lsm = root.find("LSM")
@@ -48,9 +48,6 @@ def get_movie_parameters(path, is_dir=False, verbal=False):
     camera = root.find("Camera")
     width = int(float(camera.attrib['width'].replace(',', '')))
     height = int(float(camera.attrib['height'].replace(',', '')))
-
-    if verbal:
-        print(f"FPS: {fps}, Width: {width}, Height: {height}")
 
     return {'fps': fps, 'width': width, 'height': height}
 
@@ -143,19 +140,6 @@ def spatial_bin_movie(movie: np.ndarray, bin_factor: int) -> np.ndarray:
         n_row_binned, bin_factor,
         n_col_binned, bin_factor,
     ).mean(axis=(2, 4))
-
-
-def apply_keep_mask_to_movie(movie3d, keep_mask2d):
-    movie3d = np.asarray(movie3d, dtype=np.float32)
-    if keep_mask2d is None:
-        return movie3d
-    if movie3d.shape[1:] != keep_mask2d.shape:
-        raise ValueError(
-            f"Mask shape {keep_mask2d.shape} does not match movie shape {movie3d.shape[1:]}"
-        )
-    out = movie3d.copy()
-    out[:, ~keep_mask2d] = 0.0
-    return out
 
 
 def _bin_image(img2d: np.ndarray, spatial_bin: int) -> np.ndarray:

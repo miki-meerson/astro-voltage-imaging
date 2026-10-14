@@ -16,3 +16,6 @@ secrets.yml
 
 # tests are kept local
 tests/
+
+# IDE project files
+.idea/

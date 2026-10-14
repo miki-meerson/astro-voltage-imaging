@@ -19,8 +19,7 @@ STAGE_ANALYSIS_READY = "analysis_ready"
 REVIEW_UNREVIEWED = "unreviewed"
 REVIEW_CONFIRMED = "confirmed"
 
-# the run statuses that mean "still in progress" / "has a result" (analysis_runs.status)
-RUN_ACTIVE_STATUSES = ("pending", "queued", "running")
+# the run statuses a run can be cancelled/reset from (analysis_runs.status)
 RUN_CANCELLABLE_STATUSES = ("pending", "queued", "running", "completed", "failed", "blocked")
 
 

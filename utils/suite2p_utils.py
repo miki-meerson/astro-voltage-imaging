@@ -67,20 +67,11 @@ def roi_pixels_in_crop(stat_cell, crop: dict) -> list:
 def suite2p_trace_dff(
     neuron_id: int,
     *,
-    suite2p_ctx: dict | None = None,
-    suite2p_path=None,
-    F_raw: np.ndarray | None = None,
+    suite2p_ctx: dict,
     baseline_percentile: float = 10.0,
 ) -> np.ndarray:
     """Convert a raw Suite2p fluorescence trace to dF/F using a robust per-neuron baseline."""
-    if F_raw is None:
-        if suite2p_ctx is None:
-            if suite2p_path is None:
-                raise ValueError("Pass suite2p_ctx, suite2p_path, or F_raw to suite2p_trace_dff.")
-            suite2p_ctx = load_suite2p_context(suite2p_path)
-        F_raw = np.asarray(suite2p_ctx["F"], dtype=np.float32)
-    else:
-        F_raw = np.asarray(F_raw, dtype=np.float32)
+    F_raw = np.asarray(suite2p_ctx["F"], dtype=np.float32)
     trace = np.asarray(F_raw[int(neuron_id)], dtype=np.float32).ravel()
     f0 = float(np.nanpercentile(trace, baseline_percentile))
     if not np.isfinite(f0) or abs(f0) <= 1e-6:

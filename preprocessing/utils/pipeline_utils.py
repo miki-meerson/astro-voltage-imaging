@@ -1,12 +1,10 @@
 import os
-import re
 import numpy as np
 import xml.etree.ElementTree as ET
 import tifffile
 import xmltodict
 from matplotlib.path import Path
 import pandas as pd
-import glob
 from utils import pipeline_constants as consts
 
 
@@ -16,26 +14,6 @@ def mkdir(dir_name):
         os.makedirs(dir_name, mode=0o777, exist_ok=True)
     return
 
-def windows_to_linux_path(path):
-    """
-    Convert path on windows OS to the corresponding cluster path.
-    """
-    if path is None:
-        return path
-
-    # Already a linux path on the cluster mount.
-    if isinstance(path, str) and path.startswith("/ems/"):
-        return path
-
-    pattern = "Adam-Lab-Shared"
-    path_prefix = '/ems/elsc-labs/adam-y/Adam-Lab-Shared/'
-    match = re.search(pattern, path)
-    if match:
-        path_suffix = path[match.end():].replace('\\','/')
-        return path_prefix + path_suffix
-
-    # Fallback: normalize slashes without forcing remap if marker is missing.
-    return str(path).replace("\\", "/")
 
 def get_raw_video_dimensions(raw_path):
     """
@@ -134,12 +112,6 @@ def cast_movie_for_tiff_save(movie, target_dtype):
         return np.clip(np.rint(arr), info.min, info.max).astype(target_dtype)
 
     return arr.astype(target_dtype)
-
-
-def get_last_modified_file(dirname, suffix):
-    list_of_files = glob.glob(dirname + '/*' + suffix) # * means all if need specific format then *.csv
-    last_path = max(list_of_files, key=os.path.getctime) # take the last modified file
-    return last_path
 
 
 def raw_to_tif(raw_path, start_frame=None, end_frame=None, output_path=None):
@@ -310,15 +282,3 @@ def trace_extraction(video, rois_mask, weights=None):
         df[df.columns[roi_num]] = trace
     return df
 
-def get_video_details(path):
-    """
-    given raw video path, the function look after the cage and mouse name
-    """
-    try:
-        dir_parts = os.path.normpath(os.path.dirname(path)).replace("\\", "/").split("/")
-        cage, mouse, date_behavior, fov, exp_details = dir_parts[-5:]
-        date, behavior = date_behavior.rsplit("-", 1)
-
-        return cage, mouse, fov, date, behavior, exp_details
-    except:
-        return None, None, None, None, None, None

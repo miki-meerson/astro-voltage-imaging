@@ -30,14 +30,12 @@ class Anchor(Enum):
 class PathKind(Enum):
     # anchored on the experiment folder
     PIPELINE_RESULTS = auto()
-    QC_DIR = auto()
     PB_CORRECTED_DIR = auto()
     MOTION_CORRECTED_DIR = auto()
     ASTRO_PB_MOVIE = auto()
     NEURON_PB_MOVIE = auto()
     BAD_SEGMENTS = auto()
     SUITE2P_PLANE0 = auto()
-    STA_MOVIE_TIF_CELL_DIR = auto()  # fields: cell
     STA_MOVIE_TIF = auto()  # fields: cell, group, bin
     # anchored on the folder of an app run
     RUN_STA_ANALYSIS = auto()  # <run>/sta-analysis (runs of the Anatomy Crop and Behavior Split steps keep files there)
@@ -54,7 +52,6 @@ class PathKind(Enum):
     GROUP_TEST_RECORDS = auto()
     CELL_DIR = auto()  # fields: cell
     ANATOMY_RESULT = auto()  # fields: cell
-    CLUSTER_RESULT = auto()  # fields: cell, result_type
     MOTION_STA = auto()  # fields: cell
     # preprocessing: QC files (experiment folder), raw movie names, run-folder files, runner scripts (project folder)
     PB_QC_METRICS = auto()  # anchor: experiment; fields: pb_kind
@@ -132,14 +129,12 @@ _CELL = g.CELL_DIR_TEMPLATE
 
 _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.PIPELINE_RESULTS: _Spec(_E, (g.PIPELINE_RESULTS_DIR,)),
-    PathKind.QC_DIR: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR)),
     PathKind.PB_CORRECTED_DIR: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.PB_CORRECTED_DIR)),
     PathKind.MOTION_CORRECTED_DIR: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.MOTION_CORRECTED_DIR)),
     PathKind.ASTRO_PB_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.PB_CORRECTED_DIR, g.ASTRO_PB_MOVIE)),
     PathKind.NEURON_PB_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.PB_CORRECTED_DIR, g.NEURON_PB_MOVIE)),
     PathKind.BAD_SEGMENTS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.BAD_SEGMENTS)),
     PathKind.SUITE2P_PLANE0: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.FOR_SUITE2P_DIR, g.SUITE2P_DIR, g.PLANE0_DIR)),
-    PathKind.STA_MOVIE_TIF_CELL_DIR: _Spec(_E, (g.STA_MOVIES_TIF_DIR, _CELL)),
     PathKind.STA_MOVIE_TIF: _Spec(_E, (g.STA_MOVIES_TIF_DIR, _CELL, g.STA_MOVIE_TIF_TEMPLATE)),
     PathKind.RUN_STA_ANALYSIS: _Spec(_R, (g.STA_ANALYSIS_DIR,)),
     PathKind.ANATOMY_CROP_PARAMS: _Spec(_R, (g.STA_ANALYSIS_DIR, g.ANATOMY_CROP_PARAMS)),
@@ -153,7 +148,6 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.GROUP_TEST_RECORDS: _Spec(_A, (g.GROUP_TEST_RECORDS,)),
     PathKind.CELL_DIR: _Spec(_A, (_CELL,)),
     PathKind.ANATOMY_RESULT: _Spec(_A, (_CELL, g.ANATOMY_RESULT)),
-    PathKind.CLUSTER_RESULT: _Spec(_A, (_CELL, g.TYPED_RESULT_TEMPLATE)),
     PathKind.MOTION_STA: _Spec(_A, (_CELL, g.MOTION_STA)),
     PathKind.PB_QC_METRICS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.PB_QC_METRICS_TEMPLATE)),
     PathKind.PB_QC_TRACE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.PB_QC_TRACE_TEMPLATE)),

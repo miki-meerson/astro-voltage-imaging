@@ -61,14 +61,6 @@ SUITE2P_STAT = LRUCache(16, "suite2p_stat")             # key: experiment folder
 SUITE2P_CONTEXT = LRUCache(3, "suite2p_context")        # key: experiment folder -> stats + fluorescence matrices (tens of MB): only the last 3 experiments
 
 
-def clear_movie_caches() -> None:
-    """Drop everything that may hold a handle on, or a rendering of, a movie file (before the movie is rewritten)."""
-    MOVIE_ARRAY.clear()
-    MOVIE_META.clear()
-    MOVIE_JPEG.clear()
-    MEAN_INTENSITY.clear()
-
-
 def clear_experiment_result_caches() -> None:
     """Drop the summaries derived from the STA / spike / behavior results of an experiment."""
     STA_SIGNIFICANT.clear()

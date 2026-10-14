@@ -1,48 +1,19 @@
 ﻿### pipeline steps names ###
-MOTION_CORRECTION = 'motion_correction'
-PHOTOBLEACHING_CORRECTION = 'photobleaching_correction'
-SPLIT_2CH = 'split_2ch'
 
 ### tab names ###
-RUN = "run"
-MONITOR = "monitor"
 
 ### field names ###
-RAW_VIDEO_PATH = "raw_video_path"
 RAW_VIDEO_PATH_LINUX = "raw_video_path_linux"
-HOME_DIR_LINUX = "home_dir_linux"
-HOME_DIR = "home_dir"
-ANALYSIS_VIDEO_PATH = "analysis_video_path"
 IS_2CH = "is_2ch"
 
 ### pipeline states ###
-WAITING = 0
-EXECUTING = 1
-FINISHED = 2
 FAILED = 3
-CANCELLD = 4
 
 ### pipeline steps states ###
-NOT_STARTED = "not started"
-JOB_PENDING = "Pending"
-JOB_RUNNING = "running"
-JOB_FAILED = "failed"
-JOB_FINISHED = "completed"
-JOB_CANCELLD = "cancelled"
 
 ### SLURM states ###
-SLURM_PENDING = "PENDING"
-SLURM_RUNNING = "RUNNING"
-SLURM_FAILED = "FAILED"
-SLURM_FINISHED = "COMPLETED"
-SLURM_CANCELLD = "CANCELLED"
 
 ### new SLURM commands ### 4.8.2025
-RUN_JOB_COMMAND = "/usr/bin/sbatch"
-JOB_STATE_COMMAND = "/usr/bin/sacct -j {} -n -o State -P"
-JOB_STATE_COMMAND_2 = "/usr/bin/scontrol show job {}  | grep JobState"
-CANCEL_JOB_COMMAND = "/usr/bin/scancel {}"
-GET_LOG_PATH_COMMAND = "/usr/bin/scontrol show job {} | grep StdOut"
 
 ### directories and files names ###
 PIPELINE_DIR = "pipeline_results"
@@ -61,8 +32,6 @@ PB_FIT_PATH = "pb_corrected_fit_params.npz"
 QC_DIR = "qc"
 TRACES_DIR = "traces"
 TRACES_PATH = "_traces.csv"
-PARAMS_DIR_NAME = "pipeline_params"
-PARAMS_FILE_SUFFIX_NAME = "_params.json"
 
 ### motion correction ###
 PW_RIGID = "pw_rigid"
@@ -82,18 +51,11 @@ MAX_SHIFT = "max_shift"
 STD_SHIFT = "std_shift"
 
 ### columns names ###
-EXPERIMENT_DATE = "experiment_date"
-CAGE = "cage"
-MOUSE_NAME = "mouse_name"
 GUI_TIME = "gui_time"
 FOV = "FOV"
 FRAME_RATE = "frame_rate"
-BEHAVIOR = "behavior"
-EXPERIMENT_DETAILS = "exp_details"
 
 ### photobleaching metrics - I(t)=Aâ‹…e^(âˆ’t/Ï„)+C, corrected_mean(t)=mt+b ###
-PB_TRACE_LOADED = "pb_trace_loaded"
-TRIMMED_SLIDER = "trimmed_slider"
 TRIMMED = "trimmed"
 BLEACH_TAU = "bleach_tau"
 BLEACH_C = "bleach_C"

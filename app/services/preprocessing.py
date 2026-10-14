@@ -7,7 +7,6 @@ from pathlib import Path
 from app.cluster import client
 from app.db import preprocessing_repository as repo
 from app.settings import Settings
-from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
 
 

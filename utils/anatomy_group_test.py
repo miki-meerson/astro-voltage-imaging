@@ -74,7 +74,7 @@ def _lag_corr_matrix(M: np.ndarray, lag: int) -> np.ndarray:
     return num / np.maximum(den, 1e-12)
 
 
-def group_stats(cells: list[int], rows: list[dict]) -> dict:
+def group_stats(rows: list[dict]) -> dict:
     """The five numbers for one group of clusters. rows carry 'cell' too. NaN when too few clusters to compare."""
     out = {k: float("nan") for k in STATS}
     out["cells_with_cluster"] = float(len({r["cell"] for r in rows}))
@@ -100,14 +100,14 @@ def group_test(records: dict[int, dict], n_draws: int = 3000, seed: int = 0) -> 
     """records: {cell: {'real': rows, 'fake': [rows,...]}}. Returns real values, fake percentiles and one-sided p-values."""
     cells = sorted(records)
     real_rows = [dict(r, cell=c) for c in cells for r in records[c]["real"]]
-    real = group_stats(cells, real_rows)
+    real = group_stats(real_rows)
     rng = np.random.default_rng(seed)
     draws = {k: [] for k in STATS}
     n_fake = min(len(records[c]["fake"]) for c in cells)
     for _ in range(n_draws):
         pick = rng.integers(n_fake, size=len(cells))
         rows = [dict(r, cell=c) for c, i in zip(cells, pick) for r in records[c]["fake"][int(i)]]
-        s = group_stats(cells, rows)
+        s = group_stats(rows)
         for k in STATS:
             draws[k].append(s[k])
     result = {"n_cells": len(cells), "n_real_clusters": len(real_rows), "n_draws": n_draws, "n_fakes_per_cell": n_fake, "stats": {}}

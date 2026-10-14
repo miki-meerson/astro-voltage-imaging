@@ -283,9 +283,3 @@ def saved_cluster_args(d) -> dict:
         )
     return args
 
-
-def per_sign_overrides(saved: dict) -> dict:
-    """extract_clusters keyword overrides for a `load_saved_npz` dict: {} for symmetric-threshold results, the per-sign rule otherwise."""
-    if not saved.get("per_sign_null"):
-        return {}
-    return dict(per_sign_null=True, neg_threshold=saved["threshold_neg"], null_max=saved["null_max_pos"], null_max_neg=saved["null_max_neg"])

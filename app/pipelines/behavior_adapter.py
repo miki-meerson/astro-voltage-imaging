@@ -132,7 +132,7 @@ def _load_ts_speed(home: Path, raw_frames: int, kept: np.ndarray, params: dict, 
     }
 
 
-def _split_and_save(home: Path, out: Path, params: dict, speed_trace: np.ndarray, covered: np.ndarray, chosen: str, kept: np.ndarray, fps: float, source_meta: dict) -> None:
+def _split_and_save(out: Path, params: dict, speed_trace: np.ndarray, covered: np.ndarray, chosen: str, kept: np.ndarray, fps: float, source_meta: dict) -> None:
     velocity_trace = np.asarray(speed_trace, dtype=float)
     if source_meta.get("behavior_source") == "ts":
         speed_trace = np.abs(velocity_trace)
@@ -215,7 +215,7 @@ def main() -> None:
     else:
         speed_trace, covered, chosen, source_meta = _load_csv_speed(home, raw_frames, frame_times, params, fps)
     source_meta = {**source_meta, **trim_meta}
-    _split_and_save(home, out, params, speed_trace, covered, chosen, kept, fps, source_meta)
+    _split_and_save(out, params, speed_trace, covered, chosen, kept, fps, source_meta)
 
 
 if __name__ == "__main__": main()
