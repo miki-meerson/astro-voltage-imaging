@@ -8,10 +8,11 @@ import time
 
 from app.cluster import client
 from app.db import run_repository
-from app.services.preprocessing import load_state, save_state, submit_preprocessing_step
+from app.services.preprocessing import save_state, submit_preprocessing_step
 from app.services.runs import output_manifest
 from app.settings import Settings
 from utils import globals_utils as g
+from utils.file_utils import read_json
 from utils.paths_utils import PathKind, path_for
 
 
@@ -179,7 +180,7 @@ def poll_preprocessing_once(settings: Settings) -> int:
     changed = 0
     for run in runs:
         out = Path(run["output_dir"] or "")
-        state = load_state(out)
+        state = read_json(path_for(PathKind.PREPROCESSING_STATE, out), "The preprocessing state file", default={})
         if not state:
             continue
         state = _sync_preprocessing_state(settings, int(run["id"]), out, state)

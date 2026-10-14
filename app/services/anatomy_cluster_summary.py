@@ -8,12 +8,11 @@ depolarizing / hyperpolarizing here (app/services/polarity.py).
 """
 from __future__ import annotations
 
-import json
-
 from app.db import experiment_repository, run_repository
 from app.services import polarity
 from app.services.runs import default_sta_step, run_dir
 from utils.anatomy_summary import load_anatomy_summary
+from utils.file_utils import read_json
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 
 
@@ -32,8 +31,7 @@ def anatomy_cluster_summary(settings, experiment_id: int) -> dict:
         "available": True, "run_id": int(run["id"]), "cells": saved["cells"], "clusters": clusters,
         "counts": saved["counts"], "excluded": saved["excluded"],
     }
-    try:  # the real-vs-fake test is a separate cluster job: shown when it has run
-        payload["group_test"] = json.loads(path_for(PathKind.GROUP_TEST, sta_dir).read_text(encoding="utf-8"))
-    except FileNotFoundError:  # not made yet
-        pass
+    group_test = read_json(path_for(PathKind.GROUP_TEST, sta_dir), "The real-vs-fake group test", default=None)  # a separate cluster job: shown when it has run
+    if group_test is not None:
+        payload["group_test"] = group_test
     return payload

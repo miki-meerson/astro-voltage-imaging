@@ -11,6 +11,7 @@ from app.services.runs import default_sta_step, run_dir
 from app.settings import Settings
 from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, saved_cluster_args
 from utils.db_utils import collect_cluster_result_metadata
+from utils.file_utils import read_npz_arrays
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 
 
@@ -71,13 +72,6 @@ def _row_float(row, name: str):
         if value is None:
             return None
     return float(value)
-
-
-def _load_npz_arrays(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    with np.load(path, allow_pickle=True) as d:
-        return {key: np.asarray(d[key]) for key in d.files}
 
 
 def _copy_source_artifact(src: Path, dest_root: Path) -> str:
@@ -153,9 +147,9 @@ def _spike_record(settings: Settings, spike_run: dict, cell: str, canonical_id: 
     spike_out = run_dir(settings, int(spike_run["id"]), bool(spike_run["is_test"]))
     labels_path = path_for(PathKind.SPIKE_LABELS, spike_out, cell=cell)
     peaks_path = path_for(PathKind.SPIKE_PEAKS, spike_out, cell=cell)
-    labels = _load_npz_arrays(labels_path)
-    peaks = _load_npz_arrays(peaks_path)
-    params = _load_npz_arrays(path_for(PathKind.SPIKE_PEAK_PARAMS, spike_out, cell=cell))
+    labels = read_npz_arrays(labels_path, "The spike labels file", default={})
+    peaks = read_npz_arrays(peaks_path, "The spike peaks file", default={})
+    params = read_npz_arrays(path_for(PathKind.SPIKE_PEAK_PARAMS, spike_out, cell=cell), "The spike peak settings file", default={})
     all_peaks = labels.get("peaks_all", peaks.get("peaks_all", peaks.get("all_peak_frames", [])))
     simple_peaks = labels.get("simple_peaks", labels.get("simple_peak_frames", labels.get("peaks_simple", peaks.get("simple_peak_frames", []))))
     complex_peaks = labels.get("complex_peaks", labels.get("complex_peak_frames", labels.get("peaks_complex", peaks.get("complex_peak_frames", []))))

@@ -208,17 +208,6 @@ def _cluster_color(cluster: dict) -> str:
     return polarity.polarity_color(polarity.polarity_from_sign(str(cluster.get("sign", ""))))
 
 
-def _load_cluster_result(path: Path):
-    """Cached (in memory, by file and mtime) read of a saved cluster result; the reading itself is utils.cluster_result.load_cluster_result."""
-    cache_key = (str(path), int(path.stat().st_mtime_ns))
-    cached = caches.CLUSTER_RESULT.get(cache_key)
-    if cached is not None:
-        return cached
-    result = load_cluster_result(path)
-    caches.CLUSTER_RESULT.put(cache_key, result)
-    return result
-
-
 def _display_cluster_mask(
     mask: np.ndarray,
     full_shape: tuple[int, int],
@@ -323,7 +312,12 @@ def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
     prepared = []
 
     for row in rows.itertuples():
-        effect, t_rel, clusters, meta = _load_cluster_result(Path(row.path))
+        cache_key = (str(row.path), int(Path(row.path).stat().st_mtime_ns))  # parsed results are cached in memory by file and mtime
+        result = caches.CLUSTER_RESULT.get(cache_key)
+        if result is None:
+            result = load_cluster_result(row.path)
+            caches.CLUSTER_RESULT.put(cache_key, result)
+        effect, t_rel, clusters, meta = result
         behavioral_group = meta["behavioral_group"]
         mean_img = _mean_binned_image(paths, int(meta["spatial_bin"]), cache, behavioral_group)
         if mean_img is None and behavioral_group is not None:

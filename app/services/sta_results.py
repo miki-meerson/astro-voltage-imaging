@@ -1,7 +1,6 @@
 """STA result summaries read from the cluster outputs (significant cells per result type, anatomy clusters in a crop)."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +14,7 @@ from utils import globals_utils as g
 from utils.cluster_context import significant_clusters
 from utils.cluster_result import cluster_basic_fields, cluster_pixels_fullres
 from utils.db_utils import collect_cluster_result_metadata
+from utils.file_utils import read_json
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 from utils.sta_trace_utils import pixels_in_crop
 
@@ -67,10 +67,8 @@ def sta_significant_summary(settings, experiment_id: int) -> dict:
             .sort_values(["clusters", "neurons", "result_type"], ascending=[False, False, True])
         )
         alpha = None
-        try:
-            used = json.loads(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir).read_text(encoding="utf-8"))
-        except FileNotFoundError:  # the chance estimate is an extra: shown only when the job saved its parameters
-            used = {}
+        # the chance estimate is an extra: shown only when the job saved its parameters
+        used = read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA used-parameters file", default={})
         if used.get("cluster_alpha") is not None:
             alpha = float(used["cluster_alpha"])
         tested = result_df

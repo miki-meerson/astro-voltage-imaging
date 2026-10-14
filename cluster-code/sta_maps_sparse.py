@@ -35,7 +35,8 @@ from utils.sta_stats_utils import (
     standardize,
 )
 from utils.paths_utils import PathKind, cell_dirs, path_for, resolve_sta_paths, result_file_name
-from utils.qc_utils import read_bad_segments, read_trimmed_frames
+from utils.file_utils import read_json
+from utils.qc_utils import read_trimmed_frames
 from utils.tif_export import sta_note, write_imagej_stack
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 
@@ -124,8 +125,7 @@ def load_config(path_arg: str | None) -> dict:
         config_path = default_path if default_path.exists() else None
     if config_path is None:
         return {}
-    with config_path.open("r", encoding="utf-8") as f:
-        config = json.load(f)
+    config = read_json(config_path, "The job settings file")
     print(f"Loaded settings from {config_path}")
     return config
 
@@ -482,7 +482,7 @@ def load_cut_frames(paths, n_frames: int) -> list[int]:
     Bad segments are removed outside the app, before motion correction; qc/bad_segments.json ([start, end) frame ranges in the numbering
     before the removal) records where. Position in the cleaned movie = start - frames removed before it - photobleaching `trimmed`."""
     experiment_dir = Path(paths.mc_dir).parents[1]  # <experiment>/pipeline_results/motion_corrected
-    cuts = cuts_from_bad_segments(read_bad_segments(experiment_dir), read_trimmed_frames(experiment_dir))
+    cuts = cuts_from_bad_segments(read_json(path_for(PathKind.BAD_SEGMENTS, experiment_dir), "The bad-segments file", default=[]),read_trimmed_frames(experiment_dir))
     return [c for c in cuts if 0 < c < int(n_frames)]
 
 

@@ -9,6 +9,7 @@ import numpy as np
 
 from app.services.runs import run_dir
 from app.services.suite2p_data import experiment_stat_cells
+from utils.file_utils import read_npz_arrays
 from utils.paths_utils import PathKind, path_for
 from utils.spike_params import SPIKE_PARAM_SPECS, spike_params_with_defaults
 
@@ -88,13 +89,10 @@ def spike_review_info(settings, spike_run, pipeline_neuron_id: str) -> dict:
 
 def load_spike_payload(path: Path) -> dict:
     """Peaks and labels (sorted by frame) of a cell's saved spike label file. FileNotFoundError says which step writes the file."""
-    try:
-        saved = np.load(path, allow_pickle=True)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"The spike labels file {path} is missing: the Spike Detection step writes it, so rerun Spike Detection for this experiment.") from None
-    with saved as d:
-        peaks = np.asarray(d["peaks_all"], dtype=np.int32)
-        labels = np.asarray(d["labels"]).astype(str)
+    missing = f"The spike labels file {path} is missing: the Spike Detection step writes it, so rerun Spike Detection for this experiment."
+    saved = read_npz_arrays(path, "The spike labels file", missing=missing)
+    peaks = np.asarray(saved["peaks_all"], dtype=np.int32)
+    labels = np.asarray(saved["labels"]).astype(str)
     order = np.argsort(peaks)
     return {"peaks_all": peaks[order], "labels": labels[order]}
 
@@ -107,16 +105,12 @@ def spike_detection_params(run_row, params_path: Path | None = None) -> dict:
         params = {}
     result = spike_params_with_defaults(params)
     if params_path is not None:
-        try:
-            saved = np.load(params_path, allow_pickle=True)
-        except FileNotFoundError:  # the file only exists once the cell's settings were saved
-            return result
-        with saved as d:
-            if "mad_threshold_factor" in d:
-                result["mad_factor"] = float(np.asarray(d["mad_threshold_factor"]).item())
-            for name, (kind, _) in SPIKE_PARAM_SPECS.items():
-                if name != "mad_factor" and name in d:
-                    result[name] = kind(np.asarray(d[name]).item())
+        saved = read_npz_arrays(params_path, "The saved spike settings", default={})  # the file only exists once the cell's settings were saved
+        if "mad_threshold_factor" in saved:
+            result["mad_factor"] = float(saved["mad_threshold_factor"].item())
+        for name, (kind, _) in SPIKE_PARAM_SPECS.items():
+            if name != "mad_factor" and name in saved:
+                result[name] = kind(saved[name].item())
     return result
 
 
@@ -126,14 +120,8 @@ def save_spike_payload(spike_run_folder: Path, pipeline_neuron_id: str, peaks: n
     order = np.argsort(peaks)
     peaks = np.asarray(peaks, dtype=np.int32)[order]
     labels = np.asarray(labels).astype("<U8")[order]
-    payload = {}
-    try:
-        existing = np.load(path_for(PathKind.SPIKE_LABELS, spike_run_folder, cell=pipeline_neuron_id), allow_pickle=True)
-    except FileNotFoundError:  # a cell without a label file yet: the first save creates it
-        existing = None
-    if existing is not None:
-        with existing as d:
-            payload = {key: np.asarray(d[key]) for key in d.files}
+    # the other keys of the old label file are kept; a cell without a label file yet: the first save creates it
+    payload = read_npz_arrays(path_for(PathKind.SPIKE_LABELS, spike_run_folder, cell=pipeline_neuron_id), "The spike labels file", default={})
     payload.update({
         "peaks_all": peaks,
         "labels": labels,

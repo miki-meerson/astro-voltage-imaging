@@ -25,6 +25,7 @@ import pandas as pd
 
 from utils import globals_utils as g
 from utils.cluster_result import cluster_basic_fields, cluster_offset_from_roi, load_cluster_result
+from utils.file_utils import read_json
 from utils.motion_diagnostics import cell_motion_status
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for, run_dir_of_sta_dir
@@ -119,12 +120,7 @@ def load_anatomy_summary(sta_dir: str | Path, run_label=None) -> dict:
     unreadable or made for another run folder. run_label: how the error names the run (default: its folder name)."""
     path = path_for(PathKind.ANATOMY_SUMMARY, sta_dir)
     label = run_label if run_label is not None else run_dir_of_sta_dir(sta_dir).name
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise FileNotFoundError(missing_output_message("The anatomy clusters summary", label)) from None
-    except ValueError as exc:
-        raise ValueError(f"The anatomy clusters summary of STA run {label} is unreadable ({exc}): {path}") from exc
+    data = read_json(path, f"The anatomy clusters summary of STA run {label}", missing=missing_output_message("The anatomy clusters summary", label))
     if data["run_folder"] != run_dir_of_sta_dir(sta_dir).name:
         raise ValueError(f"The anatomy clusters summary of STA run {label} was made for another STA run folder: {path}. Rerun STA Maps.")
     return data

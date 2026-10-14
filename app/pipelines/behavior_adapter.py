@@ -12,7 +12,7 @@ from utils.thorsync_utils import (
 )
 from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
-from utils.qc_utils import read_bad_segments
+from utils.file_utils import read_json, read_npz_arrays
 
 
 def _save_speed_png(path: Path, speed, fps: float, threshold: float) -> None:
@@ -40,23 +40,18 @@ def _save_speed_png(path: Path, speed, fps: float, threshold: float) -> None:
     img.save(path)
 
 
-def _pb_frame_indices(trace_path: Path) -> np.ndarray:
-    """The frame indices (into the raw movie minus bad segments) the photobleaching step kept, from its saved trace file."""
-    if not trace_path.exists():
-        raise FileNotFoundError(f"The photobleaching trace is missing: {trace_path}. Rerun the Photobleaching step of this experiment.")
-    with np.load(trace_path, allow_pickle=False) as d:
-        return np.asarray(d["frame_idx"], dtype=int)
-
-
 def _kept_frames(home: Path, fps: float) -> tuple[int, int, np.ndarray, np.ndarray, dict]:
     with tifffile.TiffFile(path_for(PathKind.RAW_MOVIE, home)) as tif:
         raw_frames = tif.series[0].shape[0] // 2
     with tifffile.TiffFile(path_for(PathKind.ASTRO_PB_MOVIE, home)) as tif:
         pb_frames = tif.series[0].shape[0]
-    removed = np.array(sorted({f for s, e in read_bad_segments(home) for f in range(int(s), int(e))}), dtype=int)
+    bad_segments = read_json(path_for(PathKind.BAD_SEGMENTS, home), "The bad-segments file", default=[])
+    removed = np.array(sorted({f for s, e in bad_segments for f in range(int(s), int(e))}), dtype=int)
     kept_untrimmed = np.setdiff1d(np.arange(raw_frames), removed)
     pb_trace_path = path_for(PathKind.PB_QC_TRACE, home, pb_kind="astro")
-    pb_idx = _pb_frame_indices(pb_trace_path)
+    missing = f"The photobleaching trace is missing: {pb_trace_path}. Rerun the Photobleaching step of this experiment."
+    # the frame indices (into the raw movie minus bad segments) the photobleaching step kept
+    pb_idx = np.asarray(read_npz_arrays(pb_trace_path, "The photobleaching trace", missing=missing)["frame_idx"], dtype=int)
     if pb_idx.size and (pb_idx.min() < 0 or pb_idx.max() >= kept_untrimmed.size):
         raise ValueError(
             f"Photobleaching frame indices span {int(pb_idx.min())}-{int(pb_idx.max())}, "

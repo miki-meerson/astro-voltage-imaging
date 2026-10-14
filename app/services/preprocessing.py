@@ -8,6 +8,7 @@ from app.cluster import client
 from app.db import preprocessing_repository as repo
 from app.db import run_repository
 from app.settings import Settings
+from utils.file_utils import read_json
 from utils.paths_utils import PathKind, path_for
 
 
@@ -61,13 +62,6 @@ def write_params_file(settings: Settings, run: dict, out: Path, params: dict) ->
     path = path_for(PathKind.PREPROCESSING_PARAMS, out, run_id=run["id"])
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
-
-
-def load_state(out: Path) -> dict:
-    path = path_for(PathKind.PREPROCESSING_STATE, out)
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def save_state(out: Path, state: dict) -> None:
@@ -133,19 +127,13 @@ def submit_preprocessing_step(settings: Settings, out: Path, state: dict, index:
     return state
 
 
-def _load_params_file(path: Path) -> dict:
-    if not path.exists():
-        raise ValueError(f"Preprocessing params file is missing: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def _save_params_file(path: Path, params: dict) -> None:
     path.write_text(json.dumps(params, indent=2), encoding="utf-8")
 
 
 def _apply_step_rerun_params(state: dict, extra_params: dict | None) -> dict:
     params_path = Path(state["params_path"])
-    params = _load_params_file(params_path)
+    params = read_json(params_path, "The preprocessing params file")
     for key, value in (extra_params or {}).items():
         if key == "trimmed":
             params[key] = max(0, int(value))
@@ -172,7 +160,7 @@ def rerun_preprocessing_step(settings: Settings, experiment_id: int, step_name: 
         raise ValueError(f"This step can be rerun only from: {allowed}. Current status is {step_row['status']}.")
 
     out = Path(run["output_dir"] or "")
-    state = load_state(out)
+    state = read_json(path_for(PathKind.PREPROCESSING_STATE, out), "The preprocessing state file", default={})
     if not state:
         raise ValueError("Preprocessing state file is missing.")
     steps = state.get("steps", [])
@@ -218,8 +206,8 @@ def latest_preprocessing_params(settings: Settings, experiment_id: int) -> dict:
     run = run_repository.latest_run(settings, experiment_id, "preprocessing", status=None)
     if run is None:
         return {}
-    state = load_state(Path(run["output_dir"] or ""))
+    state = read_json(path_for(PathKind.PREPROCESSING_STATE, Path(run["output_dir"] or "")), "The preprocessing state file", default={})
     params_path = Path(state.get("params_path") or "")
     if state.get("params_path") and params_path.exists():
-        return json.loads(params_path.read_text(encoding="utf-8"))
+        return read_json(params_path, "The preprocessing params file")
     return json.loads(run["parameters_json"] or "{}")

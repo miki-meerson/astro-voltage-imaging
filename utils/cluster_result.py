@@ -1,5 +1,5 @@
 """Read one saved cluster-permutation result (astro_sta_cluster_permutation_<type>.npz): the significant clusters, their 2D footprints and the
-wide dF/F trace of each. The ONE implementation, used by the cell page (app/services/visualizations.py, which adds an in-memory cache) and by
+wide dF/F trace of each. The ONE implementation, used by the cell page (app/services/visualizations.py, which caches it in memory) and by
 utils/anatomy_summary.py (the experiment-level anatomy clusters summary). No Flask, no app imports."""
 from __future__ import annotations
 

@@ -9,8 +9,8 @@ import tifffile
 from PIL import Image
 
 from app.services import caches, polarity
+from utils.file_utils import read_json
 from utils.paths_utils import PathKind, path_for
-from utils.qc_utils import read_pb_qc_metrics
 
 
 def pb_movie_path(source_path: str | Path | None, kind: str) -> Path | None:
@@ -27,7 +27,9 @@ PB_KINDS = ("astro", "neuron")
 
 def pb_qc_metrics(source_path: str | Path | None, kind: str) -> dict:
     """Photobleaching QC numbers of `kind`; {} when the QC file was not written (the photobleaching step produces it)."""
-    return read_pb_qc_metrics(source_path, kind) if source_path else {}
+    if not source_path:
+        return {}
+    return read_json(path_for(PathKind.PB_QC_METRICS, source_path, pb_kind=kind), "The photobleaching QC file", default={})
 
 
 def pb_qc_trace(source_path: str | Path | None, kind: str, max_points: int) -> dict | None:
