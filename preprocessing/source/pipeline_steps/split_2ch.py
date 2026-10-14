@@ -4,9 +4,10 @@ import json
 import numpy as np
 import tifffile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from utils import pipeline_constants as consts
-from utils import pipeline_utils as pipe_utils
+from utils import globals_utils as g
+from utils.file_utils import make_shared_dir
+from utils.movie_utils import cast_movie_for_tiff_save, get_signed_movie_dtype, read_experiment_xml
+from utils.paths_utils import PathKind, path_for
 
 
 ##### GUI params extraction functions #####
@@ -15,12 +16,7 @@ def extract_params(gui_param_path):
     with open(gui_param_path, "r") as fp:
         gui_params = json.load(fp)
 
-    raw_video_path = gui_params[consts.RAW_VIDEO_PATH_LINUX]
-    fr = pipe_utils.get_frame_rate(raw_video_path, is2p=True)
-    pipeline_dir = pipe_utils.get_pipeline_results_dir(raw_video_path)
-    gui_time = gui_params[consts.GUI_TIME]
-
-    return raw_video_path, gui_time, fr
+    return gui_params[g.PARAM_RAW_VIDEO_PATH_LINUX], gui_params[g.PARAM_GUI_TIME]
 
 
 def _write_tiff_pages(input_path, astro_path, neuron_path, target_dtype):
@@ -37,7 +33,7 @@ def _write_tiff_pages(input_path, astro_path, neuron_path, target_dtype):
             )
         with tifffile.TiffWriter(astro_path, bigtiff=True) as astro_writer, tifffile.TiffWriter(neuron_path, bigtiff=True) as neuron_writer:
             for frame_index, page in enumerate(series.pages):
-                frame = pipe_utils.cast_movie_for_tiff_save(page.asarray(), target_dtype)
+                frame = cast_movie_for_tiff_save(page.asarray(), target_dtype)
                 if frame_index < middle_frame:
                     astro_writer.write(frame, contiguous=True)
                 else:
@@ -47,7 +43,8 @@ def _write_tiff_pages(input_path, astro_path, neuron_path, target_dtype):
 
 
 def _write_raw_frames(input_path, astro_path, neuron_path, target_dtype):
-    n_cols, n_rows = pipe_utils.get_raw_video_dimensions(input_path)
+    size = read_experiment_xml(os.path.dirname(input_path))
+    n_cols, n_rows = size['width'], size['height']
     raw = np.memmap(input_path, dtype=np.uint16, mode="r")
     frame_pixels = int(n_rows) * int(n_cols)
     if raw.size % frame_pixels:
@@ -57,7 +54,7 @@ def _write_raw_frames(input_path, astro_path, neuron_path, target_dtype):
     middle_frame = n_frames // 2
     with tifffile.TiffWriter(astro_path, bigtiff=True) as astro_writer, tifffile.TiffWriter(neuron_path, bigtiff=True) as neuron_writer:
         for frame_index in range(n_frames):
-            frame = pipe_utils.cast_movie_for_tiff_save(movie[frame_index], target_dtype)
+            frame = cast_movie_for_tiff_save(movie[frame_index], target_dtype)
             if frame_index < middle_frame:
                 astro_writer.write(frame, contiguous=True)
             else:
@@ -66,13 +63,13 @@ def _write_raw_frames(input_path, astro_path, neuron_path, target_dtype):
                 print(f"Split {frame_index}/{n_frames} frames", flush=True)
 
 
-def split_and_save_movies(pipeline_dir, raw_video_path):
-    split_dir = os.path.join(pipeline_dir, consts.SPLIT_DIR)
-    pipe_utils.mkdir(split_dir)
-    target_dtype = pipe_utils.get_signed_movie_dtype(raw_video_path)
+def split_and_save_movies(raw_video_path):
+    experiment_dir = os.path.dirname(raw_video_path)
+    make_shared_dir(path_for(PathKind.SPLIT_DIR, experiment_dir))
+    target_dtype = get_signed_movie_dtype(raw_video_path)
 
-    astro_path = os.path.join(split_dir, consts.SPLIT_ASTRO_VIDEO_PATH)
-    neuron_path = os.path.join(split_dir, consts.SPLIT_NEURON_VIDEO_PATH)
+    astro_path = path_for(PathKind.SPLIT_ASTRO_MOVIE, experiment_dir)
+    neuron_path = path_for(PathKind.SPLIT_NEURON_MOVIE, experiment_dir)
     ext = os.path.splitext(raw_video_path)[1].lower()
     if ext == ".raw":
         _write_raw_frames(raw_video_path, astro_path, neuron_path, target_dtype)
@@ -83,16 +80,15 @@ def split_and_save_movies(pipeline_dir, raw_video_path):
 
 def main(args):
     gui_params_path = args[1]
-    raw_video_path, gui_time, fr = extract_params(gui_params_path)
+    raw_video_path, gui_time = extract_params(gui_params_path)
     print("GUI TIME:", gui_time)
     print("Splitting to 2 channels from movie:", raw_video_path)
-    pipeline_dir = pipe_utils.get_pipeline_results_dir(raw_video_path)
 
-    astro_path, neuron_path = split_and_save_movies(pipeline_dir, raw_video_path)
+    astro_path, neuron_path = split_and_save_movies(raw_video_path)
     print("Saved astro split:", astro_path, flush=True)
     print("Saved neuron split:", neuron_path, flush=True)
 
-    print(consts.STEP_COMPLETED)
+    print(g.STEP_COMPLETED_MESSAGE)
     return
 
 

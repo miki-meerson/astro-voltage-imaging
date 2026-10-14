@@ -3,6 +3,7 @@ unless the caller says the file may be absent (then `default` is returned). No F
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,15 @@ def read_json(path: str | Path, what: str, default=REQUIRED, missing: str | None
 def write_json(path: str | Path, data) -> None:
     """Save `data` as an indented utf-8 json file."""
     Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def make_shared_dir(path: str | Path) -> Path:
+    """Create a folder (and its parents) that the whole lab group may write to: mode 0o777. When the folder has to be created this also sets the
+    process umask to 0 (as the cluster steps always did), so the files the step writes afterwards are group-writable too. An existing folder is left as it is."""
+    if not os.path.exists(path):
+        os.umask(0)
+        os.makedirs(path, mode=0o777, exist_ok=True)
+    return Path(path)
 
 
 def _resolved(path: str | Path) -> Path:

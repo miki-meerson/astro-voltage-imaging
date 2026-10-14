@@ -28,7 +28,6 @@ RUNNER_SCRIPTS = {
 
 def default_preprocessing_params(settings: Settings, source_path: str | Path) -> dict:
     defaults = dict(settings.defaults.get(g.PREPROCESSING_STEP, {}))
-    defaults.setdefault("is_2ch", True)
     defaults.setdefault("steps", list(PREPROCESSING_STEPS))
     defaults.setdefault("pw_rigid", False)
     defaults.setdefault("gSig_filt", 3)
@@ -52,12 +51,11 @@ def write_params_file(settings: Settings, run: dict, out: Path, params: dict) ->
     cluster = settings.cluster
     payload = {
         **params,
-        "gui_time": f"app_run_{run['id']}__{now}",
+        g.PARAM_GUI_TIME: f"app_run_{run['id']}__{now}",
         "raw_video_path": str(raw_video),
-        "raw_video_path_linux": client.to_cluster_path(raw_video, cluster),
+        g.PARAM_RAW_VIDEO_PATH_LINUX: client.to_cluster_path(raw_video, cluster),
         "home_dir": str(home),
         "home_dir_linux": client.to_cluster_path(home, cluster),
-        "is_2ch": bool(params.get("is_2ch", True)),
     }
     path_for(PathKind.PREPROCESSING_PARAMS_DIR, out).mkdir(parents=True, exist_ok=True)
     path = path_for(PathKind.PREPROCESSING_PARAMS, out, run_id=run["id"])

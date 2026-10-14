@@ -66,6 +66,22 @@ CLUSTER_JOB_ID_FILE = "cluster_job_id.txt"  # <run>/: Slurm job id of the run
 PREPROCESSING_SOURCE_DIR = ("preprocessing", "source", "pipeline_steps")  # under the project folder
 PREPROCESSING_RUNNER_DIR = "cluster_runners_scripts"  # inside PREPROCESSING_SOURCE_DIR
 
+# ---- preprocessing steps (preprocessing/source/pipeline_steps): the params file the app writes and the steps read ---------------------------------
+PARAM_RAW_VIDEO_PATH_LINUX = "raw_video_path_linux"  # key of the params json: the movie, as the cluster sees the path
+PARAM_GUI_TIME = "gui_time"  # key of the params json: the time stamp of the run
+STEP_COMPLETED_MESSAGE = "Everything worked well. The Script finished to run."  # last line a preprocessing step prints; the Slurm monitor looks for it
+
+# ---- preprocessing steps: files they write (<experiment>/pipeline_results/...) -----------------------------------------------------------------
+CHANNEL_FILE_TEMPLATE = "{channel}_{name}"  # a file of one channel: neuron_mean_image.npy, astro_photobleaching_corrected.tif
+SPLIT_DIR = "2ch_split"  # pipeline_results/: the movie split into its two channels
+SPLIT_ASTRO_MOVIE = "2ch_split_astro.tif"
+SPLIT_NEURON_MOVIE = "2ch_split_neuron.tif"
+MC_MOVIE = "motion_corrected.tif"  # motion_corrected/, with a channel prefix
+MEAN_IMAGE_FILE = "mean_image.npy"  # motion_corrected/, with a channel prefix (see ASTRO_MEAN_IMAGE_FILE)
+MC_QC_FILE = "motion_correction_qc.json"  # qc/
+PB_MOVIE = "photobleaching_corrected.tif"  # pb_corrected/ (with a channel prefix for 2-channel movies; see ASTRO_PB_MOVIE)
+PB_FIT_FILE = "pb_corrected_fit_params.npz"  # pb_corrected/ (with a channel prefix for 2-channel movies)
+
 # ---- experiment registry (experiments service): files the validation looks for in the experiment folder, runtime folders --------------------
 EXPERIMENT_XML = "Experiment.xml"  # the microscope's settings file of an experiment (frame rate, ...)
 IMAGING_CSV_GLOB = "imaging_*.csv"  # behavior recorded as a CSV next to the movie
@@ -85,7 +101,6 @@ SCIENTIFIC_DATABASE_DIR = "scientific_database"  # <runtime>/scientific_database
 SUITE2P_ISCELL_FILE = "iscell.npy"
 SUITE2P_STAT_FILE = "stat.npy"
 SUITE2P_F_FILE = "F.npy"
-SUITE2P_FNEU_FILE = "Fneu.npy"
 SUITE2P_OPS_FILE = "ops.npy"
 ASTRO_MEAN_IMAGE_FILE = "astro_mean_image.npy"  # <experiment>/pipeline_results/motion_corrected/
 NEURON_MEAN_IMAGE_FILE = "neuron_mean_image.npy"

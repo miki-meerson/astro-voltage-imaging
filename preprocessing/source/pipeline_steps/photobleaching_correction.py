@@ -8,9 +8,22 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from utils import pipeline_constants as consts
-from utils import pipeline_utils as pipe_utils
+from utils import globals_utils as g
+from utils.file_utils import make_shared_dir
+from utils.movie_utils import cast_movie_for_tiff_save, get_signed_movie_dtype, read_frame_rate
+from utils.paths_utils import PathKind, channel_file_name, path_for
+
+# keys of the params json and of the photobleaching QC json (I(t) = A*exp(-t/tau) + C, corrected_mean(t) = m*t + b); used by this step only
+TRIMMED = "trimmed"
+BLEACH_TAU = "bleach_tau"
+BLEACH_C = "bleach_C"
+BLEACH_R2 = "bleach_r2"
+RESIDUAL_SLOPE_POST_CORRECTION = "residual_slope_post_correction"  # |m|
+CORRECTED_MEAN_INTENSITY = "corrected_mean_intensity"
+GLOBAL_DFF_STD = "global_dff_std"  # global signal metrics, on the corrected movie
+GLOBAL_DFF_MEAN = "global_dff_mean"
+GLOBAL_DFF_SKENESS = "global_dff_skewness"
+CHANNELS = ["neuron", "astro"]
 
 ##### GUI params extraction functions #####
 
@@ -18,30 +31,15 @@ def extract_params(gui_param_path):
     with open(gui_param_path, 'r') as fp:
         gui_params = json.load(fp)
 
-    raw_video_path = gui_params[consts.RAW_VIDEO_PATH_LINUX]
+    raw_video_path = gui_params[g.PARAM_RAW_VIDEO_PATH_LINUX]
+    home_dir = os.path.dirname(raw_video_path)
+    gui_time = gui_params[g.PARAM_GUI_TIME]
+    trimmed = gui_params.get(TRIMMED, 0)
+    fr = read_frame_rate(home_dir)
 
-    pipeline_dir = pipe_utils.get_pipeline_results_dir(raw_video_path)
-    gui_time = gui_params[consts.GUI_TIME]
-    trimmed = gui_params.get(consts.TRIMMED, 0)
-    mc_dir = os.path.join(pipeline_dir, consts.MC_DIR)
-    split_2ch_flag = gui_params.get(consts.IS_2CH, False)
+    mc_video_paths = {ch: path_for(PathKind.MC_FILE, home_dir, name=channel_file_name(ch, g.MC_MOVIE)) for ch in CHANNELS}
 
-    is2p = "hyp" in str(raw_video_path).lower()
-    fr = pipe_utils.get_frame_rate(raw_video_path, is2p=is2p)
-
-    if split_2ch_flag:
-        channels = ["neuron", "astro"]
-        mc_video_paths = {
-            ch: os.path.join(mc_dir, f"{ch}_{consts.MC_VIDEO_PATH}")
-            for ch in channels
-        }
-    else:
-        channels = ["full"]
-        mc_video_paths = {
-            "full": os.path.join(mc_dir, consts.MC_VIDEO_PATH)
-        }
-
-    return raw_video_path, mc_video_paths, channels, gui_time, fr, trimmed
+    return raw_video_path, mc_video_paths, gui_time, fr, trimmed
 
 
 def run_photobleaching_correction(fr, start_frame, stop_frame, mc_path):
@@ -120,15 +118,15 @@ def run_photobleaching_correction(fr, start_frame, stop_frame, mc_path):
         dff_skewness = float(np.mean((dff_centered / dff_std) ** 3))
 
     qc_metrics = {
-        consts.TRIMMED: int(start_frame),
-        consts.BLEACH_TAU: float(fitted_params[2]),
-        consts.BLEACH_C: float(fitted_params[0]),
-        consts.BLEACH_R2: float(bleach_r2),
-        consts.RESIDUAL_SLOPE_POST_CORRECTION: float(abs(slope)),
-        consts.CORRECTED_MEAN_INTENSITY: float(np.mean(corrected_mean)),
-        consts.GLOBAL_DFF_STD: dff_std,
-        consts.GLOBAL_DFF_MEAN: float(np.mean(global_dff)),
-        consts.GLOBAL_DFF_SKENESS: dff_skewness
+        TRIMMED: int(start_frame),
+        BLEACH_TAU: float(fitted_params[2]),
+        BLEACH_C: float(fitted_params[0]),
+        BLEACH_R2: float(bleach_r2),
+        RESIDUAL_SLOPE_POST_CORRECTION: float(abs(slope)),
+        CORRECTED_MEAN_INTENSITY: float(np.mean(corrected_mean)),
+        GLOBAL_DFF_STD: dff_std,
+        GLOBAL_DFF_MEAN: float(np.mean(global_dff)),
+        GLOBAL_DFF_SKENESS: dff_skewness
     }
 
     pb_correct_dict["original_mean"] = p
@@ -156,7 +154,7 @@ def _movie_mean_trace(movie_path):
 
 
 def _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_path):
-    target_dtype = pipe_utils.get_signed_movie_dtype(raw_video_path)
+    target_dtype = get_signed_movie_dtype(raw_video_path)
     mc_path = pb_correct_dict["mc_path"]
     start_frame = int(pb_correct_dict["start_frame"])
     fitted_curve = np.asarray(pb_correct_dict["fitted_curve"], dtype=np.float64)
@@ -171,19 +169,13 @@ def _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_p
                 denom = eps
             frame = np.asarray(page.asarray(), dtype=np.float32)
             corrected = (frame / denom) * scale
-            writer.write(pipe_utils.cast_movie_for_tiff_save(corrected, target_dtype), contiguous=True)
+            writer.write(cast_movie_for_tiff_save(corrected, target_dtype), contiguous=True)
 
 
-def save_pb_correct_data(pipeline_dir, pb_correct_dict, raw_video_path, channel_name=None):
-    pb_dir = os.path.join(pipeline_dir, consts.PB_DIR)
-    pipe_utils.mkdir(pb_dir)
-
-    if channel_name is None:
-        pb_movie_path = os.path.join(pb_dir, consts.PB_VIDEO_PATH)
-        pb_fit_path = os.path.join(pb_dir, consts.PB_FIT_PATH)
-    else:
-        pb_movie_path = os.path.join(pb_dir, f"{channel_name}_{consts.PB_VIDEO_PATH}")
-        pb_fit_path = os.path.join(pb_dir, f"{channel_name}_{consts.PB_FIT_PATH}")
+def save_pb_correct_data(home_dir, pb_correct_dict, raw_video_path, channel_name):
+    make_shared_dir(path_for(PathKind.PB_CORRECTED_DIR, home_dir))
+    pb_movie_path = path_for(PathKind.PB_FILE, home_dir, name=channel_file_name(channel_name, g.PB_MOVIE))
+    pb_fit_path = path_for(PathKind.PB_FILE, home_dir, name=channel_file_name(channel_name, g.PB_FIT_FILE))
 
     _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_path)
 
@@ -196,12 +188,10 @@ def save_pb_correct_data(pipeline_dir, pb_correct_dict, raw_video_path, channel_
     )
 
 
-def save_pb_qc(pipeline_dir, pb_correct_dict, channel_name=None):
-    qc_dir = os.path.join(pipeline_dir, consts.QC_DIR)
-    pipe_utils.mkdir(qc_dir)
+def save_pb_qc(home_dir, pb_correct_dict, channel_name):
+    make_shared_dir(path_for(PathKind.QC_DIR, home_dir))
 
-    suffix = "" if channel_name is None else f"_{channel_name}"
-    qc_json_path = os.path.join(qc_dir, f"photobleaching_qc{suffix}.json")
+    qc_json_path, trace_path, fig_path = (path_for(kind, home_dir, pb_kind=channel_name) for kind in (PathKind.PB_QC_METRICS, PathKind.PB_QC_TRACE, PathKind.PB_QC_PLOT))
     with open(qc_json_path, "w") as fp:
         json.dump(pb_correct_dict["qc_metrics"], fp, indent=2)
 
@@ -211,9 +201,8 @@ def save_pb_qc(pipeline_dir, pb_correct_dict, channel_name=None):
     corrected_mean = pb_correct_dict["corrected_mean"]
     fitted_curve = pb_correct_dict["fitted_curve"]
     corrected_fit_line = pb_correct_dict["corrected_mean_fit_line"]
-    trimmed = int(pb_correct_dict["qc_metrics"].get(consts.TRIMMED, 0))
+    trimmed = int(pb_correct_dict["qc_metrics"].get(TRIMMED, 0))
 
-    trace_path = os.path.join(qc_dir, f"photobleaching_qc_trace{suffix}.npz")
     np.savez_compressed(
         trace_path,
         frame_idx=frame_idx,
@@ -249,18 +238,17 @@ def save_pb_qc(pipeline_dir, pb_correct_dict, channel_name=None):
     ax.legend(loc="best")
     ax.grid(alpha=0.25)
     fig.tight_layout()
-    fig_path = os.path.join(qc_dir, f"photobleaching_qc_plot{suffix}.png")
     fig.savefig(fig_path, dpi=150)
     plt.close(fig)
 
 
 def main(args):
     gui_params_path = args[1]
-    raw_video_path, mc_video_paths, channels, gui_time, fr, trimmed = extract_params(gui_params_path)
+    raw_video_path, mc_video_paths, gui_time, fr, trimmed = extract_params(gui_params_path)
     print("GUI TIME:", gui_time)
-    pipeline_dir = pipe_utils.get_pipeline_results_dir(raw_video_path)
+    home_dir = os.path.dirname(raw_video_path)
 
-    for ch in channels:
+    for ch in CHANNELS:
         mc_video_path = mc_video_paths[ch]
         print(f"Photobleaching correction on ({ch}):", mc_video_path)
 
@@ -272,18 +260,18 @@ def main(args):
         )
 
         save_pb_correct_data(
-            pipeline_dir,
+            home_dir,
             pb_correct_dict,
             raw_video_path,
-            channel_name=None if ch == "full" else ch
+            channel_name=ch
         )
         save_pb_qc(
-            pipeline_dir,
+            home_dir,
             pb_correct_dict,
-            channel_name=None if ch == "full" else ch
+            channel_name=ch
         )
 
-    print(consts.STEP_COMPLETED)
+    print(g.STEP_COMPLETED_MESSAGE)
     return
 
 

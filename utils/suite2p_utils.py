@@ -6,20 +6,9 @@ from utils.paths_utils import PathKind, path_for
 from utils.sta_trace_utils import pixels_in_crop
 
 
-def read_suite2p_traces(suite2p_path, cell_mask, neuropil_correction=False):
-    F = np.load(path_for(PathKind.SUITE2P_F, suite2p_path), allow_pickle=True)
-    F_cells = F[cell_mask, :]
-
-    if neuropil_correction:
-        Fneu = np.load(path_for(PathKind.SUITE2P_FNEU, suite2p_path), allow_pickle=True)
-        Fneu_cells = Fneu[cell_mask, :]
-
-        neuropil_coeff = 0.7
-        F_corr = F_cells - neuropil_coeff * Fneu_cells
-    else:
-        F_corr = F_cells
-
-    F_norm = (F_corr - np.min(F_corr, axis=1, keepdims=True)) / (np.ptp(F_corr, axis=1, keepdims=True) + 1e-12)
+def read_suite2p_traces(suite2p_path, cell_mask):
+    F_cells = np.load(path_for(PathKind.SUITE2P_F, suite2p_path), allow_pickle=True)[cell_mask, :]
+    F_norm = (F_cells - np.min(F_cells, axis=1, keepdims=True)) / (np.ptp(F_cells, axis=1, keepdims=True) + 1e-12)
     return F_cells, F_norm
 
 

@@ -62,6 +62,37 @@ def read_frame_rate(source_dir) -> float:
         raise ValueError(f"The frame rate (fps) could not be read from {xml_path} ({type(exc).__name__}: {exc}). Check that {g.EXPERIMENT_XML} is there and has the LSM frameRate.") from exc
 
 
+def get_raw_movie_dtype(movie_path) -> np.dtype:
+    """The dtype of a movie as it was recorded: uint16 for a .raw file, the stored dtype for a tif. Any other format is a ValueError."""
+    ext = os.path.splitext(movie_path)[1].lower()
+    if ext == ".raw":
+        return np.dtype(np.uint16)
+    if ext in (".tif", ".tiff"):
+        with tifffile.TiffFile(movie_path) as tif:
+            return np.dtype(tif.series[0].dtype)
+    raise ValueError(f"Unsupported movie format for dtype extraction: {movie_path}")
+
+
+def get_signed_movie_dtype(movie_path) -> np.dtype:
+    """A signed dtype that holds the values of the recorded movie (get_raw_movie_dtype) and can also hold the negative values a correction creates:
+    unsigned integers go to the next wider signed type (uint64 to float64); signed and float types stay."""
+    dtype = get_raw_movie_dtype(movie_path)
+    if np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.signedinteger):
+        return dtype
+    wider = {np.dtype(np.uint8): np.int16, np.dtype(np.uint16): np.int32, np.dtype(np.uint32): np.int64, np.dtype(np.uint64): np.float64}
+    return np.dtype(wider.get(dtype, np.float32))
+
+
+def cast_movie_for_tiff_save(movie, target_dtype) -> np.ndarray:
+    """`movie` as `target_dtype` for saving: an integer target gets rounded and clipped to its range (no wrap-around), a float target a plain cast."""
+    arr = np.asarray(movie)
+    target_dtype = np.dtype(target_dtype)
+    if np.issubdtype(target_dtype, np.integer):
+        info = np.iinfo(target_dtype)
+        return np.clip(np.rint(arr), info.min, info.max).astype(target_dtype)
+    return arr.astype(target_dtype)
+
+
 def read_movie(path, dtype=np.uint16, as_memmap=False, is_negative_gevi=False):
     """ Read a movie from path
         Each file type requires different handling

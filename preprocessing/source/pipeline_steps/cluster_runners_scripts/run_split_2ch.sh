@@ -14,4 +14,6 @@ echo "bashrc sourced"
 . ${HOME}/miniconda3/bin/activate caiman
 echo "caiman env activated"
 
+# the job starts in --chdir (= preprocessing/source/pipeline_steps): the repo root, three folders up, holds the utils package
+export PYTHONPATH="$(cd "$PWD/../../.." && pwd)${PYTHONPATH:+:$PYTHONPATH}"
 python split_2ch.py "$PARAMS_FILE"

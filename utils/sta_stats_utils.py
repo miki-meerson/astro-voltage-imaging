@@ -112,3 +112,29 @@ def cluster_trace_wide(
     mask2d = np.asarray(mask2d, dtype=bool)
     trace = (np.asarray(sta_movie[sel], dtype=np.float32)[:, mask2d] - baseline_map[mask2d]).mean(axis=1)
     return rels[sel], trace.astype(np.float32)
+
+
+def _spikes_in_window(kept: np.ndarray, frames: np.ndarray, before: int, after: int) -> np.ndarray:
+    """For each frame, how many of the kept spikes lie in [frame - before, frame + after] (both ends included)."""
+    kept = np.unique(np.asarray(kept, dtype=np.int64))
+    frames = np.asarray(frames, dtype=np.int64)
+    return np.searchsorted(kept, frames + int(after), side="right") - np.searchsorted(kept, frames - int(before), side="left")
+
+
+def isolated_spikes(peaks: np.ndarray, kept: np.ndarray, before: int, after: int) -> np.ndarray:
+    """The spikes of `peaks` (a subset of the cell's kept spikes `kept`) with no OTHER kept spike within `before` frames before them or
+    `after` frames after them. The window ends are included: a spike exactly `before` frames after another is not isolated.
+    before = after = 0 is no condition: `peaks` is returned unchanged."""
+    peaks = np.asarray(peaks)
+    if before == 0 and after == 0:
+        return peaks
+    return peaks[_spikes_in_window(kept, peaks, before, after) == 1]  # 1 = the spike itself
+
+
+def silence_pool(frames: np.ndarray, kept: np.ndarray, before: int, after: int) -> np.ndarray:
+    """Indices into `frames` (candidate frames for the chance copies) that have no kept spike within `before` frames before them or `after`
+    frames after them (ends included), so the chance copies obey the same silence as the real spikes. before = after = 0: every index."""
+    frames = np.asarray(frames)
+    if before == 0 and after == 0:
+        return np.arange(frames.size)
+    return np.flatnonzero(_spikes_in_window(kept, frames, before, after) == 0)

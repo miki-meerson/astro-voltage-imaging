@@ -3,18 +3,13 @@ from scipy.ndimage import generate_binary_structure, label
 from utils.sta_stats_utils import passes_extent, per_sign_p_values
 
 
-def cluster_mask2d_from_cluster(
-    cluster_like,
-    *,
-    image_shape: tuple[int, int] | None = None,
-) -> np.ndarray | None:
+def cluster_mask2d_from_cluster(cluster_like) -> np.ndarray | None:
     """Return a 2D boolean mask from a cluster-like mapping/record.
 
     Supported inputs (checked in this order):
     - "mask2d": already 2D
     - "mask3d": collapsed across time with any(axis=0)
     - "mask":  either 2D or 3D (3D collapsed with any(axis=0))
-    - ("ypix", "xpix"): pixel coordinate arrays (requires image_shape)
     """
     if "mask2d" in cluster_like and cluster_like["mask2d"] is not None:
         return np.asarray(cluster_like["mask2d"], dtype=bool)
@@ -28,20 +23,6 @@ def cluster_mask2d_from_cluster(
             return m
         if m.ndim == 3:
             return m.any(axis=0)
-
-    if (
-        "ypix" in cluster_like
-        and "xpix" in cluster_like
-        and cluster_like["ypix"] is not None
-        and cluster_like["xpix"] is not None
-    ):
-        if image_shape is None:
-            raise ValueError("image_shape is required when building mask from ypix/xpix.")
-        yy = np.asarray(cluster_like["ypix"], dtype=int)
-        xx = np.asarray(cluster_like["xpix"], dtype=int)
-        m = np.zeros(image_shape, dtype=bool)
-        m[yy, xx] = True
-        return m
 
     return None
 

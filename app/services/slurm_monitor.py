@@ -48,7 +48,7 @@ def _local_log_status(path: Path) -> tuple[str | None, int | None, str]:
     if not text:
         return None, None, ""
     success_markers = (
-        "Everything worked well. The Script finished to run.",
+        g.STEP_COMPLETED_MESSAGE,
         "Done. Summary saved to ",
     )
     if any(marker in text for marker in success_markers):

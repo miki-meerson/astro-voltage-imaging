@@ -37,6 +37,14 @@ class PathKind(Enum):
     BAD_SEGMENTS = auto()
     SUITE2P_PLANE0 = auto()
     STA_MOVIE_TIF = auto()  # fields: cell, group, bin
+    # preprocessing steps: what they write (anchor: experiment)
+    SPLIT_DIR = auto()
+    SPLIT_ASTRO_MOVIE = auto()
+    SPLIT_NEURON_MOVIE = auto()
+    MC_FILE = auto()  # fields: name (a file of the motion_corrected folder)
+    QC_DIR = auto()
+    QC_FILE = auto()  # fields: name (a file of the qc folder)
+    PB_FILE = auto()  # fields: name (a file of the pb_corrected folder)
     # anchored on the folder of an app run
     RUN_STA_ANALYSIS = auto()  # <run>/sta-analysis (runs of the Anatomy Crop and Behavior Split steps keep files there)
     ANATOMY_CROP_PARAMS = auto()
@@ -67,7 +75,6 @@ class PathKind(Enum):
     SUITE2P_ISCELL = auto()  # anchor: Suite2p plane0 folder
     SUITE2P_STAT = auto()  # anchor: Suite2p plane0 folder
     SUITE2P_F = auto()  # anchor: Suite2p plane0 folder
-    SUITE2P_FNEU = auto()  # anchor: Suite2p plane0 folder
     SUITE2P_OPS = auto()  # anchor: Suite2p plane0 folder
     MC_ASTRO_MEAN_IMAGE = auto()  # anchor: motion_corrected folder
     MC_NEURON_MEAN_IMAGE = auto()  # anchor: motion_corrected folder
@@ -138,6 +145,13 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.BAD_SEGMENTS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.BAD_SEGMENTS)),
     PathKind.SUITE2P_PLANE0: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.FOR_SUITE2P_DIR, g.SUITE2P_DIR, g.PLANE0_DIR)),
     PathKind.STA_MOVIE_TIF: _Spec(_E, (g.STA_MOVIES_TIF_DIR, _CELL, g.STA_MOVIE_TIF_TEMPLATE)),
+    PathKind.SPLIT_DIR: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.SPLIT_DIR)),
+    PathKind.SPLIT_ASTRO_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.SPLIT_DIR, g.SPLIT_ASTRO_MOVIE)),
+    PathKind.SPLIT_NEURON_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.SPLIT_DIR, g.SPLIT_NEURON_MOVIE)),
+    PathKind.MC_FILE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.MOTION_CORRECTED_DIR, "{name}")),
+    PathKind.QC_DIR: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR)),
+    PathKind.QC_FILE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, "{name}")),
+    PathKind.PB_FILE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.PB_CORRECTED_DIR, "{name}")),
     PathKind.RUN_STA_ANALYSIS: _Spec(_R, (g.STA_ANALYSIS_DIR,)),
     PathKind.ANATOMY_CROP_PARAMS: _Spec(_R, (g.STA_ANALYSIS_DIR, g.ANATOMY_CROP_PARAMS)),
     PathKind.BEHAVIOR_SEGMENTS: _Spec(_R, (g.BEHAVIOR_SEGMENTS,)),
@@ -163,7 +177,6 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.SUITE2P_ISCELL: _Spec(_P0, (g.SUITE2P_ISCELL_FILE,)),
     PathKind.SUITE2P_STAT: _Spec(_P0, (g.SUITE2P_STAT_FILE,)),
     PathKind.SUITE2P_F: _Spec(_P0, (g.SUITE2P_F_FILE,)),
-    PathKind.SUITE2P_FNEU: _Spec(_P0, (g.SUITE2P_FNEU_FILE,)),
     PathKind.SUITE2P_OPS: _Spec(_P0, (g.SUITE2P_OPS_FILE,)),
     PathKind.MC_ASTRO_MEAN_IMAGE: _Spec(_MC, (g.ASTRO_MEAN_IMAGE_FILE,)),
     PathKind.MC_NEURON_MEAN_IMAGE: _Spec(_MC, (g.NEURON_MEAN_IMAGE_FILE,)),
@@ -213,13 +226,8 @@ _REGISTRY: dict[PathKind, _Spec] = {
 }
 
 
-def anchor_of(kind: PathKind) -> Anchor:
-    """Which folder a kind is relative to."""
-    return _REGISTRY[kind].anchor
-
-
 def path_for(kind: PathKind, anchor_path: str | Path, **fields) -> Path:
-    """The path of `kind` under `anchor_path` (the folder anchor_of(kind) names). `fields` fill the placeholders of the name
+    """The path of `kind` under `anchor_path` (the folder its registry entry is anchored on). `fields` fill the placeholders of the name
     (cell=, group=, bin=, result_type=); a missing field is an error."""
     spec = _REGISTRY[kind]
     try:
@@ -227,6 +235,11 @@ def path_for(kind: PathKind, anchor_path: str | Path, **fields) -> Path:
     except KeyError as exc:
         raise ValueError(f"{kind.name} needs the field {exc.args[0]!r}") from None
     return Path(anchor_path).joinpath(*parts)
+
+
+def channel_file_name(channel: str, name: str) -> str:
+    """The name of a file of one channel of a 2-channel movie ("astro", "neuron"): "astro_<name>"."""
+    return g.CHANNEL_FILE_TEMPLATE.format(channel=channel, name=name)
 
 
 def result_file_name(result_type: str) -> str:
