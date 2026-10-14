@@ -9,6 +9,7 @@ from app.cluster import client
 from app.settings import PROJECT_ROOT
 from utils import globals_utils as g
 from utils.file_utils import write_json
+from utils.hypotheses import run_settings
 from utils.paths_utils import PathKind, cell_dirs, path_for, sta_dir_of_run
 from utils.suite2p_utils import load_suite2p_context
 
@@ -48,6 +49,7 @@ def _validate_spike_suite2p_alignment(source_home: Path, spike_run: Path) -> Non
 
 def _check_inputs_and_make_output_dir(source_home: Path, out: Path, params: dict) -> tuple[Path, Path, Path | None]:
     """Check that the input runs the STA reads exist and create the run's output folder. Returns (output home, spike run, behavior run)."""
+    run_settings(params)  # refuse before anything is created or submitted when the run has no hypothesis settings
     sta_home = path_for(PathKind.STA_ALGORITHM_HOME, out)
     sta_home.mkdir(parents=True, exist_ok=True)
     path_for(PathKind.RUN_STA_ANALYSIS, sta_home).mkdir(parents=True, exist_ok=True)
@@ -93,7 +95,6 @@ def _write_config(sta_home: Path, out: Path, params: dict, source_home: Path, sp
     cfg.setdefault("voxel_alpha", 0.01)
     cfg.setdefault("cluster_alpha", 0.1)
     cfg.setdefault("rng_seed", 0)
-    cfg.setdefault("analysis_half_window", 10)
     cfg.setdefault("n_workers", 1)
     cfg["summary_csv"] = path_for(PathKind.STA_SUMMARY_CSV, path_for(PathKind.RUN_STA_ANALYSIS, ".")).as_posix()
     cfg_path = path_for(PathKind.STA_JOB_PARAMS_EFFECTIVE, out)

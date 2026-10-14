@@ -29,9 +29,16 @@ CLUSTER_RESULT_ALGORITHM_KEYS = [
     "rng_seed",
     "pre_seconds",
     "post_seconds",
-    "baseline_seconds",
-    "analysis_half_window_seconds",
-    "analysis_half_window_frames",
+    "f0_seconds",
+    "baseline_window_seconds",
+    "tested_window_seconds",
+    "silence_before_seconds",
+    "silence_after_seconds",
+    "silence_frames",
+    "n_peaks_before_silence",
+    "n_surrogate_frames",
+    "hypothesis",
+    "statistic",
     "cluster_connectivity",
     "min_cluster_size",
     "min_cluster_mass",
@@ -72,9 +79,9 @@ def parse_cluster_result_filename(path: str | Path) -> dict[str, int | str] | No
     return {"result_type": suffix or g.ALL_GROUP, "version": version}
 
 
-def _npz_metadata_value(npz_data, key: str, default=np.nan):
+def _npz_metadata_value(npz_data, key: str):
     if key not in npz_data:
-        return default
+        return np.nan
     value = np.asarray(npz_data[key])
     value = value.item() if value.shape == () else value.tolist()
     return tuple(value) if isinstance(value, list) else value

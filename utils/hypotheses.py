@@ -69,6 +69,39 @@ class Hypothesis:
         }
 
 
+RUN_SETTINGS = ("hypothesis", *NUMBER_SETTINGS, *WINDOW_SETTINGS, "statistic")  # the keys of Hypothesis.settings(), as stored in a run's parameters
+
+
+def run_settings(params: dict) -> dict:
+    """The hypothesis settings of a run's parameters (the keys of Hypothesis.settings()). Raises a ValueError naming the missing ones: there are no defaults."""
+    missing = [key for key in RUN_SETTINGS if key not in params]
+    if missing:
+        raise ValueError(
+            f"The analysis has no hypothesis setting(s) {', '.join(missing)}. Start the analysis from the experiment page (Run analysis): "
+            "it copies the settings of a hypothesis into the run."
+        )
+    return {key: params[key] for key in RUN_SETTINGS}
+
+
+def seconds_to_frames(seconds: float, fps: float) -> int:
+    """Seconds as a number of frames (rounded to the nearest frame)."""
+    return int(round(float(seconds) * float(fps)))
+
+
+def frame_windows(settings: dict, fps: float) -> tuple:
+    """The hypothesis settings (seconds) as frames: (pre, post, f0_frames, pre_window, post_window, analysis_window, baseline_window).
+
+    pre / post: saved frames before / after the spike. f0_frames: the pre-spike stretch (at most pre) whose median normalizes a spike.
+    analysis_window: the tested window; baseline_window: the baseline; pre_window = (tested start, -1) and post_window = (0, tested end) are
+    the two halves averaged for the post-minus-pre map. All windows are frames relative to the spike."""
+    settings = run_settings(settings)
+    pre, post = seconds_to_frames(settings["pre_seconds"], fps), seconds_to_frames(settings["post_seconds"], fps)
+    f0_frames = min(seconds_to_frames(settings["f0_seconds"], fps), pre)
+    tested = tuple(seconds_to_frames(s, fps) for s in settings["tested_window_seconds"])
+    baseline = tuple(seconds_to_frames(s, fps) for s in settings["baseline_window_seconds"])
+    return pre, post, f0_frames, (tested[0], -1), (0, tested[1]), tested, baseline
+
+
 def sta_step(name: str) -> str:
     """The pipeline step of the hypothesis `name` (for example 'sta:fast')."""
     return g.STA_STEP_PREFIX + name

@@ -54,11 +54,11 @@ def _cell_clusters(sta_dir: Path, cell: int, stat_cell) -> list[dict]:
     return records
 
 
-def build_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, run_id: int | None = None, summary_csv: str | Path | None = None, log=None) -> dict:
+def build_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, summary_csv: str | Path | None = None, log=None) -> dict:
     """The summary dict (see the module docstring). Reads the cells' anatomy results (~1.5 s per cell over the share).
 
-    sta_dir: <run folder>/sta_algorithm_home/sta-analysis; source_dir: the experiment folder (for the Suite2p ROIs); run_id: the app's run id
-    (parsed from the run folder name 'run_<id>' when None); summary_csv: the STA summary csv (default: the one in sta_dir).
+    sta_dir: <run folder>/sta_algorithm_home/sta-analysis; source_dir: the experiment folder (for the Suite2p ROIs); summary_csv: the STA summary csv
+    (default: the one in sta_dir). The run id is parsed from the run folder name 'run_<id>'.
     A run without anatomy rows gives an empty summary whose "warning" says so. A missing csv, anatomy result or Suite2p file raises.
     """
     log = log or (lambda m: None)
@@ -66,7 +66,7 @@ def build_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, run_id: i
     folder = run_dir_of_sta_dir(sta_dir).name
     folder_match = re.search(r"run_(\d+)$", folder)
     summary = {
-        "run_folder": folder, "run_id": run_id if run_id is not None else (int(folder_match.group(1)) if folder_match else None),
+        "run_folder": folder, "run_id": int(folder_match.group(1)) if folder_match else None,
         "warning": None, "cells": [], "clusters": [],
         "excluded": {"motion_flagged": [], "no_motion_diagnostics": []},
     }
@@ -98,11 +98,11 @@ def build_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, run_id: i
     return summary
 
 
-def save_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, run_id: int | None = None, summary_csv: str | Path | None = None, log=None) -> Path:
+def save_anatomy_summary(sta_dir: str | Path, source_dir: str | Path, summary_csv: str | Path | None = None, log=None) -> Path:
     """Build the summary and save it as <sta_dir>/anatomy_summary.json (atomic: temp file, then replace). What the STA job calls."""
     path = path_for(PathKind.ANATOMY_SUMMARY, sta_dir)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(build_anatomy_summary(sta_dir, source_dir, run_id, summary_csv, log)), encoding="utf-8")
+    tmp.write_text(json.dumps(build_anatomy_summary(sta_dir, source_dir, summary_csv, log)), encoding="utf-8")
     os.replace(tmp, path)
     return path
 

@@ -21,15 +21,18 @@ from utils.motion_diagnostics import (
     motion_sta_stats,
     registration_quality,
 )
+from utils.hypotheses import frame_windows, run_settings, seconds_to_frames
 from utils.movie_utils import read_astro_movie, read_frame_rate, spatial_bin_movie
 from utils.sta_stats_utils import (
     NULL_STANDARDIZATION_MODES,
+    isolated_spikes,
     max_mass_by_sign,
     min_footprint_in_analysis_px,
     null_sd_map,
     passes_extent,
     per_sign_p_values,
     per_sign_thresholds,
+    silence_pool,
     smooth_spatial,
     standardize,
 )
@@ -52,11 +55,7 @@ WINDOWS_SHARED_ROOT = Path(r"Z:\Adam-Lab-Shared")
 SCRIPT_DIR = Path(__file__).resolve().parent
 JOB_PARAMS_FILE = "sta_maps_job_params.json"
 
-PRE_SECONDS = 2.0
-POST_SECONDS = 3.0
-BASELINE_SECONDS = 1.0
-ANALYSIS_HALF_WINDOW_SECONDS = 1.0
-ANALYSIS_HALF_WINDOW_FRAMES: int | None = None
+HYPOTHESIS: dict | None = None  # the hypothesis settings (seconds) of this run, from the job config (see utils/hypotheses.py)
 
 SPATIAL_BIN = 8
 ANATOMY_SPATIAL_BIN = 1
@@ -134,8 +133,7 @@ def apply_config(config: dict) -> None:
     global HOME_DIR, SOURCE_HOME_DIR, SPIKE_RUN_DIR, BEHAVIOR_SEGMENTS_FILE, ANATOMY_CROP_PARAMS_FILE, RUN_NAME, SPATIAL_BIN, ANATOMY_SPATIAL_BIN, N_PERMUTATIONS, N_WORKERS, VOXEL_ALPHA, CLUSTER_ALPHA
     global CLUSTER_CONNECTIVITY, MIN_CLUSTER_SIZE, MIN_CLUSTER_MASS, MERGE_SIMILAR_CLUSTERS
     global MERGE_MAX_DISTANCE_PX, MERGE_MIN_TRACE_CORR, RNG_SEED, SAVE_BINNED_STA_MOVIES, SAVE_FIJI_TIFS
-    global OVERWRITE, CELL_IDS, RESULT_TYPES, SUMMARY_CSV, PRE_SECONDS, POST_SECONDS
-    global BASELINE_SECONDS, ANALYSIS_HALF_WINDOW_SECONDS, ANALYSIS_HALF_WINDOW_FRAMES
+    global OVERWRITE, CELL_IDS, RESULT_TYPES, SUMMARY_CSV, HYPOTHESIS
     global MIN_SPIKES_FOR_CLUSTER, NULL_STANDARDIZATION, NULL_SD_FLOOR_QUANTILE, SMOOTH_SIGMA_FULLRES_PX, PER_SIGN_NULL
     global MIN_CLUSTER_FOOTPRINT_FULLRES_PX, MIN_CLUSTER_FRAMES, MOTION_DIAGNOSTICS, MOTION_FLAG_ALPHA, MOTION_REG_QUALITY_BIN
     global EXCLUDE_SPIKES_NEAR_CUTS
@@ -183,14 +181,7 @@ def apply_config(config: dict) -> None:
     if unknown:
         raise ValueError(f"Unknown result type(s): {unknown}")
     SUMMARY_CSV = config.get("summary_csv", SUMMARY_CSV)
-    PRE_SECONDS = float(config.get("pre_seconds", PRE_SECONDS))
-    POST_SECONDS = float(config.get("post_seconds", POST_SECONDS))
-    BASELINE_SECONDS = float(config.get("baseline_seconds", BASELINE_SECONDS))
-    ANALYSIS_HALF_WINDOW_SECONDS = float(config.get("analysis_half_window_seconds", ANALYSIS_HALF_WINDOW_SECONDS))
-    if "analysis_half_window" in config:
-        ANALYSIS_HALF_WINDOW_FRAMES = int(config["analysis_half_window"])
-    if "analysis_half_window_frames" in config:
-        ANALYSIS_HALF_WINDOW_FRAMES = int(config["analysis_half_window_frames"])
+    HYPOTHESIS = run_settings(config)
 
 
 def _resolve_shared_path(path: Path) -> Path:
@@ -365,20 +356,6 @@ def ensure_behavioral_binned_movie(paths, group: str, source_frames: np.ndarray,
     return np.load(cache_path, mmap_mode="r")
 
 
-def frame_settings(fps: int):
-    pre = int(round(PRE_SECONDS * fps))
-    post = int(round(POST_SECONDS * fps))
-    baseline = min(int(round(BASELINE_SECONDS * fps)), pre)
-    half = ANALYSIS_HALF_WINDOW_FRAMES
-    if half is None:
-        half = int(round(ANALYSIS_HALF_WINDOW_SECONDS * fps))
-    pre_window = (-half, -1)
-    post_window = (0, half)
-    analysis_window = (-half, half)
-    baseline_window = (-pre, -(half + 1)) if pre > half + 2 else (-pre, -max(2, pre // 2))
-    return pre, post, baseline, pre_window, post_window, analysis_window, baseline_window
-
-
 def relative_indices(window: tuple[int, int], pre: int, post: int) -> np.ndarray:
     rel = np.arange(-pre, post + 1)
     return np.flatnonzero((rel >= window[0]) & (rel <= window[1]))
@@ -551,16 +528,28 @@ def kept_spike_peaks(d) -> tuple[np.ndarray, np.ndarray]:
     return peaks[keep], labels[keep]
 
 
-def load_spikes(cell_id: int, n_frames: int, pre: int, post: int, centers: np.ndarray | None = None) -> dict[str, np.ndarray]:
-    """`centers` (the run's valid centres, splice-free when exclude_spikes_near_cuts is on) also drops spikes near splices."""
+def load_kept_peaks(cell_id: int) -> tuple[np.ndarray, np.ndarray]:
+    """(peaks, lower-case labels) of all kept spikes of a cell (everything but "exclude"), in the numbering of the analysed movie."""
     with np.load(path_for(PathKind.SPIKE_CELL_DIR, spike_analysis_dir(), cell=cell_id) / g.SPIKE_LABELS, allow_pickle=True) as d:
-        peaks, labels = kept_spike_peaks(d)
+        return kept_spike_peaks(d)
+
+
+def load_spikes(
+    cell_id: int, n_frames: int, pre: int, post: int, centers: np.ndarray | None = None, silence: tuple[int, int] = (0, 0),
+) -> tuple[dict[str, np.ndarray], dict[str, int]]:
+    """({group: spikes used}, {group: number of valid spikes before the silence rule}) for the groups all, simple and complex.
+
+    `centers` (the run's valid centres, splice-free when exclude_spikes_near_cuts is on) also drops spikes near splices. `silence` = (frames
+    before, frames after): a spike is used only if the cell has no other kept spike (any group, also outside the valid centres) that close."""
+    peaks, labels = load_kept_peaks(cell_id)
 
     def valid(p: np.ndarray) -> np.ndarray:
         p = filter_valid_peaks(p, n_frames, pre, post).astype(np.int32)
         return p[np.isin(p, centers)] if centers is not None else p
 
-    return {g.ALL_GROUP: valid(peaks), "simple": valid(peaks[labels == "simple"]), "complex": valid(peaks[labels == "complex"])}
+    valid_groups = {g.ALL_GROUP: valid(peaks), "simple": valid(peaks[labels == "simple"]), "complex": valid(peaks[labels == "complex"])}
+    used = {group: isolated_spikes(p, peaks, *silence) for group, p in valid_groups.items()}
+    return used, {group: int(p.size) for group, p in valid_groups.items()}
 
 
 def load_behavioral_spikes(
@@ -569,17 +558,28 @@ def load_behavioral_spikes(
     n_frames: int,
     pre: int,
     post: int,
-) -> np.ndarray:
+    silence: tuple[int, int] = (0, 0),
+) -> tuple[np.ndarray, int]:
+    """(spikes used in the behavioral movie, number of valid ones before the silence rule). The silence rule is applied to the original
+    frame numbers, then the spikes are remapped into the behavioral movie."""
     source_frames = np.asarray(source_frames, dtype=np.int32)
-    with np.load(path_for(PathKind.SPIKE_CELL_DIR, spike_analysis_dir(), cell=cell_id) / g.SPIKE_LABELS, allow_pickle=True) as d:
-        peaks, _ = kept_spike_peaks(d)
+    peaks, _ = load_kept_peaks(cell_id)
 
-    frame_pos = np.searchsorted(source_frames, peaks)
-    in_bounds = frame_pos < source_frames.size
-    matched = np.zeros(peaks.size, dtype=bool)
-    matched[in_bounds] = source_frames[frame_pos[in_bounds]] == peaks[in_bounds]
-    remapped = frame_pos[matched].astype(np.int32)
-    return filter_valid_peaks(remapped, n_frames, pre, post).astype(np.int32)
+    def remap(p: np.ndarray) -> np.ndarray:
+        frame_pos = np.searchsorted(source_frames, p)
+        in_bounds = frame_pos < source_frames.size
+        matched = np.zeros(p.size, dtype=bool)
+        matched[in_bounds] = source_frames[frame_pos[in_bounds]] == p[in_bounds]
+        return filter_valid_peaks(frame_pos[matched].astype(np.int32), n_frames, pre, post).astype(np.int32)
+
+    return remap(isolated_spikes(peaks, peaks, *silence)), int(remap(peaks).size)
+
+
+def cell_surrogate_pool(cell_id: int, frames: np.ndarray, silence: tuple[int, int]) -> np.ndarray:
+    """Indices into `frames` (the original frame numbers of the run's valid centres) where a chance copy of a spike of this cell may be drawn:
+    no kept spike of the cell within the silence window. Built once per cell."""
+    peaks, _ = load_kept_peaks(cell_id)
+    return silence_pool(frames, peaks, *silence)
 
 
 def event_matrix(peaks: np.ndarray, positions: np.ndarray | None = None, f0_by_pos: np.ndarray | None = None) -> csr_matrix:
@@ -753,11 +753,9 @@ def save_cluster_result(path: Path, result: dict) -> None:
         n_permutations=np.asarray(N_PERMUTATIONS, dtype=np.int32),
         min_spikes_for_cluster=np.asarray(MIN_SPIKES_FOR_CLUSTER, dtype=np.int32),
         rng_seed=np.asarray(RNG_SEED, dtype=np.int32),
-        pre_seconds=np.asarray(PRE_SECONDS, dtype=np.float32),
-        post_seconds=np.asarray(POST_SECONDS, dtype=np.float32),
-        baseline_seconds=np.asarray(BASELINE_SECONDS, dtype=np.float32),
-        analysis_half_window_seconds=np.asarray(ANALYSIS_HALF_WINDOW_SECONDS, dtype=np.float32),
-        analysis_half_window_frames=np.asarray(-1 if ANALYSIS_HALF_WINDOW_FRAMES is None else ANALYSIS_HALF_WINDOW_FRAMES, dtype=np.int32),
+        silence_frames=np.asarray(result["silence_frames"], dtype=np.int32),
+        n_peaks_before_silence=np.asarray(result["n_peaks_before_silence"], dtype=np.int32),
+        n_surrogate_frames=np.asarray(result["n_surrogate_frames"], dtype=np.int32),
         result_types=np.asarray(RESULT_TYPES),
         movie_shape=np.asarray(result.get("movie_shape", ()), dtype=np.int32),
         n_valid_centers=np.asarray(result.get("n_valid_centers", -1), dtype=np.int32),
@@ -777,6 +775,7 @@ def save_cluster_result(path: Path, result: dict) -> None:
         min_cluster_frames=np.asarray(MIN_CLUSTER_FRAMES, dtype=np.int32),
         significance_statistic=np.asarray(result.get("significance_statistic", "effect")),
     )
+    payload.update({key: np.asarray(value) for key, value in HYPOTHESIS.items()})  # the hypothesis name and its settings (seconds)
     payload["per_sign_null"] = np.asarray(PER_SIGN_NULL)
     if PER_SIGN_NULL:
         # cluster_threshold above is the positive threshold; null_max_cluster_mass the elementwise max of the two nulls.
@@ -863,11 +862,16 @@ def analyze_group(
     baseline: int,
     windows: tuple,
     out_dir: Path,
+    silence: tuple[int, int],
+    pool: np.ndarray,
+    n_before: int,
     crop: tuple[int, int, int, int] | None = None,
     f0_by_pos: np.ndarray | None = None,
     extra_result: dict | None = None,
 ) -> dict:
-    print(f"cell {cell_id} {group}: {peaks.size} peaks")
+    """`pool`: indices into the valid centres where the chance copies may be drawn (the cell's silence pool); `n_before`: spikes of this group
+    before the silence rule (`peaks` are the spikes after it). A group with fewer pool frames than spikes gets no cluster test."""
+    print(f"cell {cell_id} {group}: {peaks.size} peaks ({n_before} before the silence rule), {pool.size} random frames")
     observed_events = event_matrix(peaks, f0_by_pos=f0_by_pos)
     rels = np.arange(-pre, post + 1, dtype=np.int32)
     observed_sta = sta_for_rels(observed_events, rels, crop)[0]
@@ -879,9 +883,16 @@ def analyze_group(
 
     clusters = []
     cluster_path = out_dir / result_file_name(group)
-    if peaks.size >= MIN_SPIKES_FOR_CLUSTER:
+    skip_reason = ""
+    if peaks.size >= MIN_SPIKES_FOR_CLUSTER and pool.size < peaks.size:
+        skip_reason = (
+            f"{peaks.size} spikes but only {pool.size} frames without another spike within the silence window "
+            f"({silence[0]} frames before, {silence[1]} after): no random frames to compare with"
+        )
+        print(f"WARNING: cell {cell_id} {group}: cluster test skipped: {skip_reason}")
+    if peaks.size >= MIN_SPIKES_FOR_CLUSTER and not skip_reason:
         observed_effect = compute_effect_movie(observed_sta, pre, post, *windows)
-        positions = surrogate_positions(cell_id, int(peaks.size), _VALID_CENTERS.size)
+        positions = surrogate_positions(cell_id, int(peaks.size), pool)
         perm_events = event_matrix(peaks, positions, f0_by_pos=f0_by_pos)
         perm_effects = permutation_effects(perm_events, pre, post, windows, crop)
         obs_stat, perm_stat, sd_map = prepare_test_statistic(observed_effect["effect_movie"], perm_effects)
@@ -916,6 +927,9 @@ def analyze_group(
             "spatial_bin": SPATIAL_BIN,
             "movie_shape": _MOVIE_SHAPE,
             "n_valid_centers": _VALID_CENTERS.size if _VALID_CENTERS is not None else -1,
+            "silence_frames": silence,
+            "n_peaks_before_silence": n_before,
+            "n_surrogate_frames": pool.size,
         }
         if extra_result:
             result.update(extra_result)
@@ -927,15 +941,21 @@ def analyze_group(
     else:
         cluster_path = ""
 
-    return {
+    row = {
         "cell_id": cell_id,
         "spike_group": group,
+        "hypothesis": HYPOTHESIS["hypothesis"],
         "n_peaks": int(peaks.size),
+        "n_peaks_before_silence": int(n_before),
+        "n_surrogate_frames": int(pool.size),
         "n_clusters": int(len(clusters)),
         "n_significant_clusters": int(sum(c["is_significant"] for c in clusters)),
         "max_cluster_mass": float(max((c["mass"] for c in clusters), default=0.0)),
         "cluster_npz_path": str(cluster_path),
     }
+    if skip_reason:
+        row.update({"status": "skipped", "skip_reason": skip_reason})
+    return row
 
 
 def anatomy_analysis_kwargs(cell_id: int, pre: int, baseline: int, anatomy_settings: dict | None = None) -> dict:
@@ -976,6 +996,7 @@ def sta_run_parameters(
     windows: tuple,
     standard_result_types: tuple[str, ...],
     anatomy_settings: dict | None,
+    silence: tuple[int, int],
 ) -> dict:
     return {
         "home_dir": str(home_dir()),
@@ -1012,12 +1033,9 @@ def sta_run_parameters(
         "save_fiji_tifs": bool(SAVE_FIJI_TIFS),
         "overwrite": bool(OVERWRITE),
         "summary_csv": SUMMARY_CSV,
-        "fps": int(fps),
-        "pre_seconds": float(PRE_SECONDS),
-        "post_seconds": float(POST_SECONDS),
-        "baseline_seconds": float(BASELINE_SECONDS),
-        "analysis_half_window_seconds": float(ANALYSIS_HALF_WINDOW_SECONDS),
-        "analysis_half_window_frames": None if ANALYSIS_HALF_WINDOW_FRAMES is None else int(ANALYSIS_HALF_WINDOW_FRAMES),
+        "fps": float(fps),
+        **HYPOTHESIS,
+        "silence_frames": [int(v) for v in silence],
         "pre_frames": int(pre),
         "post_frames": int(post),
         "baseline_frames": int(baseline),
@@ -1049,14 +1067,16 @@ def cell_output_dir(sta_dir_s: str, cell_id: int) -> Path:
     return out_dir
 
 
-def surrogate_positions(cell_id: int, n_spikes: int, n_valid_centers: int) -> np.ndarray:
-    """The chance copies of one spike train: (N_PERMUTATIONS, n_spikes) positions, each row n_spikes distinct random frames drawn from the
-    valid spike frames (the run's valid centres: splice-free when exclude_spikes_near_cuts is on, like the real spikes). Same seed for the
-    same (rng_seed, cell, number of spikes), so the null of a cell does not change between runs."""
-    if n_spikes > n_valid_centers:
-        raise ValueError(f"Cell {cell_id} has {n_spikes} spikes but only {n_valid_centers} valid spike frames exist: no random surrogate can be drawn.")
+def surrogate_positions(cell_id: int, n_spikes: int, pool: np.ndarray) -> np.ndarray:
+    """The chance copies of one spike train: (N_PERMUTATIONS, n_spikes) positions (indices into the valid centres), each row n_spikes distinct
+    random frames drawn from `pool`, the cell's silence pool (the valid spike frames with no real spike of the cell in the silence window;
+    all valid centres when the silence rule is off, which gives the same draws as before the rule existed). Same seed for the same
+    (rng_seed, cell, number of spikes), so the null of a cell does not change between runs."""
+    if n_spikes > pool.size:
+        raise ValueError(f"Cell {cell_id} has {n_spikes} spikes but only {pool.size} valid spike frames exist: no random surrogate can be drawn.")
     rng = np.random.default_rng([RNG_SEED, int(cell_id), int(n_spikes)])
-    return np.stack([rng.choice(int(n_valid_centers), size=int(n_spikes), replace=False) for _ in range(N_PERMUTATIONS)]).astype(np.int32)
+    draws = np.stack([rng.choice(int(pool.size), size=int(n_spikes), replace=False) for _ in range(N_PERMUTATIONS)])
+    return np.asarray(pool)[draws].astype(np.int32)
 
 
 def save_neuron_sta_metadata(out_dir: Path, cell_id: int, pre: int, post: int, baseline: int, suffix: str = "", **extra) -> None:
@@ -1079,7 +1099,7 @@ def run_pool(worker_fn, cfg: dict, cells: list[int], sta_dir: Path, init_args: t
     return rows
 
 
-def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, cfg: dict, out_dir: Path) -> dict:
+def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, pool: np.ndarray, cfg: dict, out_dir: Path) -> dict:
     """Spike-triggered motion test for one cell; writes cell_<id>/motion_sta.npz. Returns the cell's motion status for the summary csv
     (the one place that decides it). Never raises (diagnostic only)."""
     series = cfg.get("motion_series")
@@ -1088,7 +1108,7 @@ def run_motion_diagnostics(cell_id: int, peaks: np.ndarray, cfg: dict, out_dir: 
         return not_tested
     try:
         windows = cfg["windows"]
-        surrogate_frames = _VALID_CENTERS[surrogate_positions(cell_id, int(peaks.size), _VALID_CENTERS.size)]
+        surrogate_frames = _VALID_CENTERS[surrogate_positions(cell_id, int(peaks.size), pool)]
         stats = motion_sta_stats(
             series, peaks, surrogate_frames, cfg["pre"], cfg["post"],
             baseline_window=tuple(int(v) for v in windows[3]),
@@ -1153,13 +1173,16 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     windows = cfg["windows"]
     out_dir = cell_output_dir(sta_dir_s, cell_id)
 
-    spike_groups = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None)
+    silence = cfg["silence"]
+    spike_groups, n_before = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None, silence)
+    pool = cell_surrogate_pool(cell_id, _VALID_CENTERS, silence)
     save_neuron_sta_metadata(out_dir, cell_id, pre, post, baseline)
-    motion_row = run_motion_diagnostics(cell_id, spike_groups[g.ALL_GROUP], cfg, out_dir)
+    motion_row = run_motion_diagnostics(cell_id, spike_groups[g.ALL_GROUP], pool, cfg, out_dir)
 
     rows = []
     for result_type in cfg.get("result_types", RESULT_TYPES):
-        peaks = spike_groups[g.ALL_GROUP] if result_type == g.ANATOMY_GROUP else spike_groups[result_type]
+        spike_group = g.ALL_GROUP if result_type == g.ANATOMY_GROUP else result_type
+        peaks = spike_groups[spike_group]
         kwargs = anatomy_analysis_kwargs(cell_id, pre, baseline, cfg.get("anatomy_settings")) if result_type == g.ANATOMY_GROUP else {}
         rows.append(
             analyze_group(
@@ -1171,6 +1194,9 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
                 baseline,
                 windows,
                 out_dir,
+                silence,
+                pool,
+                n_before[spike_group],
                 **kwargs,
             )
         )
@@ -1187,7 +1213,9 @@ def process_cell_behavioral(args: tuple[int, dict, str]) -> list[dict]:
     source_frames = np.asarray(cfg["source_frames"], dtype=np.int32)
     out_dir = cell_output_dir(sta_dir_s, cell_id)
 
-    peaks = load_behavioral_spikes(cell_id, source_frames, cfg["n_frames"], pre, post)
+    silence = cfg["silence"]
+    peaks, n_before = load_behavioral_spikes(cell_id, source_frames, cfg["n_frames"], pre, post, silence)
+    pool = cell_surrogate_pool(cell_id, source_frames[_VALID_CENTERS], silence)  # the silence is measured in the original frame numbers
     group = f"behavioral_{behavioral_group}"
     save_neuron_sta_metadata(
         out_dir,
@@ -1210,6 +1238,9 @@ def process_cell_behavioral(args: tuple[int, dict, str]) -> list[dict]:
             baseline,
             windows,
             out_dir,
+            silence,
+            pool,
+            n_before,
             extra_result={
                 "behavioral_group": np.asarray(behavioral_group),
                 "source_behavioral_segments": np.asarray(str(cfg["source_behavioral_segments"])),
@@ -1224,6 +1255,7 @@ def skipped_behavioral_rows(cells: list[int], behavioral_group: str, source_fram
         {
             "cell_id": int(cell_id),
             "spike_group": group,
+            "hypothesis": HYPOTHESIS["hypothesis"],
             "n_peaks": 0,
             "n_clusters": 0,
             "n_significant_clusters": 0,
@@ -1245,7 +1277,10 @@ def write_summary(rows: list[dict], out_path: Path) -> None:
         "status",
         "skip_reason",
         "source_frame_count",
+        "hypothesis",
         "n_peaks",
+        "n_peaks_before_silence",
+        "n_surrogate_frames",
         "n_clusters",
         "n_significant_clusters",
         "max_cluster_mass",
@@ -1268,11 +1303,12 @@ def main() -> None:
     resolved_home = home_dir()
     resolved_source_home = source_home_dir()
     paths = resolve_sta_paths(resolved_source_home, resolved_home)
-    fps = int(read_frame_rate(resolved_source_home))
-    pre, post, baseline, *windows = frame_settings(fps)
+    fps = read_frame_rate(resolved_source_home)
+    pre, post, baseline, *windows = frame_windows(HYPOTHESIS, fps)
+    silence = (seconds_to_frames(HYPOTHESIS["silence_before_seconds"], fps), seconds_to_frames(HYPOTHESIS["silence_after_seconds"], fps))
     standard_result_types = tuple(result_type for result_type in RESULT_TYPES if result_type not in {"behavioral", g.ANATOMY_GROUP})
     anatomy_settings = load_anatomy_radius(ANATOMY_SPATIAL_BIN) if g.ANATOMY_GROUP in RESULT_TYPES else None
-    used_params = sta_run_parameters(fps, pre, post, baseline, windows, standard_result_types, anatomy_settings)
+    used_params = sta_run_parameters(fps, pre, post, baseline, windows, standard_result_types, anatomy_settings, silence)
     save_sta_run_parameters(paths.sta_dir, used_params)
     cells = list_cells()
     if not cells:
@@ -1282,6 +1318,7 @@ def main() -> None:
     print(f"Home dir: {resolved_home}")
     print(f"Result types: {', '.join(RESULT_TYPES)}")
     print(f"STA spatial bin: {SPATIAL_BIN}")
+    print(f"Hypothesis {HYPOTHESIS['hypothesis']} at {fps:g} fps: pre {pre}, post {post}, F0 {baseline}, windows {windows}, silence {silence} frames (before, after)")
     print(
         f"Statistic: null_standardization={NULL_STANDARDIZATION}, per_sign_null={PER_SIGN_NULL},smooth_sigma_fullres_px={SMOOTH_SIGMA_FULLRES_PX}, "
         f"min_cluster_size={MIN_CLUSTER_SIZE}, min_cluster_footprint_fullres_px={MIN_CLUSTER_FOOTPRINT_FULLRES_PX}, "
@@ -1308,6 +1345,7 @@ def main() -> None:
             windows,
             movie.shape[0],
             result_types=standard_result_types,
+            silence=silence,
         )
         cfg["result_types"] = standard_result_types
         cfg["motion_series"] = build_run_motion_series(paths, int(movie.shape[0]))
@@ -1326,6 +1364,7 @@ def main() -> None:
             anatomy_movie.shape[0],
             result_types=(g.ANATOMY_GROUP,),
             anatomy_settings=anatomy_settings,
+            silence=silence,
         )
         if not standard_result_types:  # motion diagnostics are per cell, so run them once (with the first pool)
             anatomy_cfg["motion_series"] = build_run_motion_series(paths, int(anatomy_movie.shape[0]))
@@ -1382,6 +1421,7 @@ def main() -> None:
                 baseline,
                 windows,
                 behavioral_movie.shape[0],
+                silence=silence,
                 behavioral_group=behavioral_group,
                 source_frames=frame_groups[behavioral_group],
                 source_behavioral_segments=str(source_behavioral_segments),
