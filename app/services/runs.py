@@ -11,17 +11,34 @@ from datetime import datetime
 from pathlib import Path
 
 from app.db import run_repository
-from app.settings import Settings
+from app.settings import PROJECT_ROOT, Settings
+from utils import globals_utils as g
+from utils.hypotheses import Hypothesis, catalogue_file, hypothesis_name, is_sta_step, load_hypotheses, sta_step
 from utils.paths_utils import PathKind, path_for
 
-STEPS = ("preprocessing", "spike", "behavior", "anatomy", "sta")
-ADAPTER_MODULES = {
+BASE_STEPS = ("preprocessing", "spike", "behavior", "anatomy")
+BASE_ADAPTER_MODULES = {
     "preprocessing": "preprocessing_adapter",
     "spike": "spike_adapter",
     "behavior": "behavior_adapter",
     "anatomy": "anatomy_adapter",
-    "sta": "sta_adapter",
 }
+STA_ADAPTER_MODULE = "sta_adapter"  # the adapter of every hypothesis step
+
+
+def build_steps(hypotheses: tuple[Hypothesis, ...]) -> tuple[str, ...]:
+    """The steps of the pipeline: the base steps, then one STA step (sta:<name>) for each hypothesis, in catalogue order."""
+    return (*BASE_STEPS, *(sta_step(h.name) for h in hypotheses))
+
+
+def build_adapter_modules(steps: tuple[str, ...]) -> dict[str, str]:
+    """{step: adapter module name} for the given steps."""
+    return {step: STA_ADAPTER_MODULE if is_sta_step(step) else BASE_ADAPTER_MODULES[step] for step in steps}
+
+
+HYPOTHESES = load_hypotheses(catalogue_file(PROJECT_ROOT))  # the catalogue is read once, when the app starts
+STEPS = build_steps(HYPOTHESES)
+ADAPTER_MODULES = build_adapter_modules(STEPS)
 CLUSTER_ENV_VARS = {
     "ssh_host": "ASTRO_CLUSTER_HOST",
     "ssh_port": "ASTRO_CLUSTER_PORT",
@@ -30,22 +47,50 @@ CLUSTER_ENV_VARS = {
     "ssh_key_filename": "ASTRO_CLUSTER_KEY",
 }
 STEPS_THAT_FEED_STA = {"spike", "behavior", "anatomy"}
+ACTIVE_STATUSES = ("waiting", "pending", "queued", "running")  # a run in one of these is not finished and not failed
 _EXECUTOR_LOCK = threading.Lock()
 _EXECUTOR: ThreadPoolExecutor | None = None
 _EXECUTOR_SIZE = 0
 
 
+def sta_steps() -> tuple[str, ...]:
+    """The STA step of every hypothesis, in catalogue order."""
+    return tuple(step for step in STEPS if is_sta_step(step))
+
+
+def default_sta_step() -> str:
+    """The STA step whose results every page shows until the pages can choose a hypothesis: the first one of the catalogue."""
+    steps = sta_steps()
+    if not steps:
+        raise ValueError("The pipeline has no STA step: the hypothesis catalogue is empty.")
+    return steps[0]
+
+
+def hypothesis_for(step: str) -> Hypothesis:
+    """The catalogue entry of an STA step."""
+    name = hypothesis_name(step)
+    for hypothesis in HYPOTHESES:
+        if hypothesis.name == name:
+            return hypothesis
+    raise ValueError(f"Step {step} is not in the hypothesis catalogue ({catalogue_file(PROJECT_ROOT).name}).")
+
+
+def feeding_steps(result_types) -> set[str]:
+    """The steps whose outputs an STA run of these result types reads: spike, behavior, and anatomy when that result type is marked."""
+    return {"spike", "behavior"} | ({"anatomy"} if g.ANATOMY_GROUP in result_types else set())
+
+
 def pipeline_status(latest: dict[str, str], steps: tuple[str, ...] | None = None) -> dict:
     """The status of an experiment from the status of the newest real run of each step ({step: status}).
 
-    'completed' only when EVERY step of the pipeline (STEPS, the one list of steps) has a newest run that completed; a failed rerun after an
-    earlier success counts as failed. Otherwise the first of running / pending (pending or queued) / failed (steps in alphabetical order) wins;
-    'partial' = some steps completed and none is active or failed; 'none' = no step completed."""
+    'completed' only when EVERY step of the pipeline (STEPS, the one list of steps: the base steps and one STA step per hypothesis) has a newest
+    run that completed; a failed rerun after an earlier success counts as failed. Otherwise the first of running / pending (waiting, pending or
+    queued) / failed (steps in alphabetical order) wins; 'partial' = some steps completed and none is active or failed; 'none' = no step completed."""
     steps = STEPS if steps is None else steps
     latest = {s: st for s, st in latest.items() if s in steps}  # rows of steps that are no longer in the pipeline are ignored
     done = [s for s in steps if latest.get(s) == "completed"]
     status, step = "none", ""
-    for name, wanted in (("running", ("running",)), ("pending", ("pending", "queued")), ("failed", ("failed",))):
+    for name, wanted in (("running", ("running",)), ("pending", ("waiting", "pending", "queued")), ("failed", ("failed",))):
         hits = sorted(s for s, st in latest.items() if st in wanted)
         if hits:
             status, step = name, hits[0]
@@ -72,10 +117,11 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def create_run(settings: Settings, experiment_id: int, step: str, params: dict, backend: str = "local", neuron_id: int | None = None, is_test: bool = False) -> int:
+def create_run(settings: Settings, experiment_id: int, step: str, params: dict, backend: str = "local", neuron_id: int | None = None, is_test: bool = False,
+               status: str = "pending") -> int:
     if step not in STEPS:
         raise ValueError(f"Unknown step: {step}")
-    return run_repository.insert_run(settings, experiment_id, step, params, backend, neuron_id, is_test)
+    return run_repository.insert_run(settings, experiment_id, step, params, backend, neuron_id, is_test, status)
 
 
 def _run_folder_fields(row) -> dict:
@@ -125,9 +171,12 @@ def _allocate_run_dir(settings: Settings, run) -> Path:
 
 
 def resume_pending_runs(settings: Settings) -> int:
+    """After a restart: launch every pending run, and start the waiting runs whose feeding steps have completed in the meantime."""
     run_ids = run_repository.pending_run_ids(settings)
     for run_id in run_ids:
         launch_run(settings, run_id)
+    for experiment_id in sorted({int(run["experiment_id"]) for run in run_repository.waiting_runs(settings)}):
+        run_ids += _launch_sta_if_ready(settings, experiment_id)
     return len(run_ids)
 
 
@@ -140,7 +189,7 @@ def rerun_failed_steps(settings: Settings, step: str | None = None) -> list[int]
             run_params = json.loads(run["parameters_json"] or "{}")
         except json.JSONDecodeError:
             run_params = {}
-        backend = "cluster" if run["step"] == "sta" else (run["backend"] or "local")
+        backend = "cluster" if is_sta_step(run["step"]) else (run["backend"] or "local")
         run_id = create_run(settings, int(run["experiment_id"]), str(run["step"]), run_params, backend=backend, neuron_id=run["neuron_id"], is_test=False)
         launch_run(settings, run_id)
         created.append(run_id)
@@ -192,7 +241,7 @@ def _execute_run(settings: Settings, run_id: int) -> None:
 
 def _missing_input_warning(settings: Settings, run) -> str | None:
     """Text saying what the step needs and does not have yet, or None when it can start."""
-    if run["step"] == "sta" and run["backend"] == "cluster" and _latest_completed_output(settings, int(run["experiment_id"]), "spike") is None:
+    if is_sta_step(run["step"]) and run["backend"] == "cluster" and _latest_completed_output(settings, int(run["experiment_id"]), "spike") is None:
         return "STA requires a completed spike run for the same experiment."
     return None
 
@@ -224,11 +273,11 @@ def _sta_command(settings: Settings, run, out: Path) -> list[str]:
 
 
 # step -> function(settings, run, out) giving the command line; a step that is not listed is a plain adapter call
-_COMMAND_BUILDERS = {"preprocessing": _preprocessing_command, "sta": _sta_command}
+_COMMAND_BUILDERS = {"preprocessing": _preprocessing_command}
 
 
 def _step_command(settings: Settings, run, out: Path) -> list[str]:
-    builder = _COMMAND_BUILDERS.get(run["step"])
+    builder = _sta_command if is_sta_step(run["step"]) else _COMMAND_BUILDERS.get(run["step"])
     return builder(settings, run, out) if builder else _adapter_command(run, out, run["parameters_json"])
 
 
@@ -268,24 +317,29 @@ def _record_outcome(settings: Settings, run, out: Path, cmd: list[str], code: in
     run_repository.finish_run(settings, int(run["id"]), fields, manifest, int(run["experiment_id"]), mark_preprocessing_running=submitted and run["step"] == "preprocessing")
 
 
-def _launch_sta_if_ready(settings: Settings, experiment_id: int) -> None:
-    params = _sta_params(settings)
-    required = {"spike", "behavior"}
-    if "anatomy" in params.get("result_types", []):
-        required.add("anatomy")
-    sta_run_id = run_repository.create_pending_run_if_ready(settings, experiment_id, "sta", "cluster", params, required)
-    if sta_run_id is not None:
-        launch_run(settings, sta_run_id)
+def _result_types_of(run: dict) -> list[str]:
+    return list(json.loads(run["parameters_json"] or "{}").get("result_types", []))
+
+
+def _launch_sta_if_ready(settings: Settings, experiment_id: int) -> list[int]:
+    """Start the WAITING hypothesis runs of an experiment whose feeding steps have all completed; returns the ids it launched.
+
+    Called when a feeding step completes. It creates no run (start_analysis does), and it leaves a waiting run alone while another run of
+    the same hypothesis step is pending, queued or running."""
+    completed = run_repository.steps_with_status(settings, experiment_id, ("completed",))
+    busy = run_repository.steps_with_status(settings, experiment_id, ("pending", "queued", "running"))
+    launched: list[int] = []
+    for run in run_repository.waiting_runs(settings, experiment_id):
+        run_id = int(run["id"])
+        if run["step"] in busy or not feeding_steps(_result_types_of(run)) <= completed:
+            continue
+        if run_repository.release_waiting_run(settings, run_id):
+            launch_run(settings, run_id)
+            busy.add(run["step"])
+            launched.append(run_id)
+    return launched
 
 
 def _latest_completed_output(settings: Settings, experiment_id: int, step: str) -> Path | None:
-    row = run_repository.latest_completed_run_row(settings, experiment_id, step)
-    if row is None:
-        return None
-    return run_dir(settings, int(row["id"]), bool(row["is_test"]))
-
-
-def _sta_params(settings: Settings) -> dict:
-    params = dict(settings.raw.get("defaults", {}).get("sta", {}))
-    params.setdefault("anatomy_spatial_bin", 1)
-    return params
+    row = run_repository.latest_run(settings, experiment_id, step)
+    return None if row is None else run_dir(settings, int(row["id"]), bool(row["is_test"]))

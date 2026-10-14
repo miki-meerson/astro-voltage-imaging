@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 from scipy.stats import binom
 
-from app.db import neuron_repository
+from app.db import run_repository
 from app.services import caches
-from app.services.runs import run_dir
+from app.services.runs import default_sta_step, run_dir
 from utils import globals_utils as g
 from utils.cluster_context import significant_clusters
 from utils.cluster_result import cluster_basic_fields, cluster_pixels_fullres
@@ -28,7 +28,7 @@ STA_RESULT_TYPES = [
 
 
 def sta_significant_summary(settings, experiment_id: int) -> dict:
-    run = neuron_repository.latest_completed_run(settings, experiment_id, "sta")
+    run = run_repository.latest_run(settings, experiment_id, default_sta_step())
     if run is None:
         return {"cells": {}, "result_types": []}
     run_id = int(run["id"])

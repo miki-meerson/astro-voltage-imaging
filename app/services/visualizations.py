@@ -7,9 +7,9 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import binary_erosion
 
-from app.db import neuron_repository
+from app.db import run_repository
 from app.services import caches, polarity
-from app.services.runs import run_dir
+from app.services.runs import default_sta_step, run_dir
 from app.services.suite2p_data import experiment_stat_cells
 from app.settings import Settings
 from utils.cluster_result import load_cluster_result
@@ -268,7 +268,7 @@ def _astro_mean_image(paths, spatial_bin: int, cache: dict) -> np.ndarray | None
 
 
 def render_sta_cell_summary(settings: Settings, neuron_row) -> BytesIO:
-    sta_run = neuron_repository.latest_completed_run(settings, int(neuron_row["experiment_id"]), "sta")
+    sta_run = run_repository.latest_run(settings, int(neuron_row["experiment_id"]), default_sta_step())
     if sta_run is None:
         return _message("STA Maps", "No completed STA maps run is available for this experiment.")
     sta_run_dir = run_dir(settings, int(sta_run["id"]), bool(sta_run["is_test"]))
@@ -454,7 +454,7 @@ def _draw_motion_tile(rels, observed, null_mean, null_sd, title: str, p: float, 
 
 def render_motion_sta(settings: Settings, neuron_row) -> BytesIO:
     """Cell Detail: is this cell's spiking time-locked to motion / registration quality? (diagnostic only)"""
-    sta_run = neuron_repository.latest_completed_run(settings, int(neuron_row["experiment_id"]), "sta")
+    sta_run = run_repository.latest_run(settings, int(neuron_row["experiment_id"]), default_sta_step())
     if sta_run is None:
         return _message("Motion diagnostics", "No completed STA maps run is available for this experiment.")
     cell_id = int(neuron_row["pipeline_neuron_id"])

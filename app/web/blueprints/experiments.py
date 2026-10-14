@@ -7,7 +7,7 @@ import threading
 from flask import jsonify, redirect, render_template, request, url_for
 
 from app.db import experiment_repository as repo
-from app.db.run_repository import latest_step_statuses
+from app.db.run_repository import latest_run, latest_step_statuses
 from app.services import caches
 from app.services.anatomy_cluster_summary import anatomy_cluster_summary
 from app.services.behavior_view import behavior_payload
@@ -247,7 +247,7 @@ def run_analysis(experiment_id):
 @bp.get("/experiments/<int:experiment_id>/behavior/data")
 def behavior_data(experiment_id):
     settings = get_settings()
-    return jsonify(behavior_payload(settings, repo.latest_completed_run(settings, experiment_id, "behavior")))
+    return jsonify(behavior_payload(settings, latest_run(settings, experiment_id, "behavior")))
 
 
 @bp.get("/experiments/<int:experiment_id>/movie/meta")
@@ -266,7 +266,7 @@ def sta_significant_cells_data(experiment_id):
     if not repo.experiment_exists(settings, experiment_id):
         return jsonify({"error": "Experiment not found"}), 404
     summary = dict(sta_significant_summary(settings, experiment_id))
-    sta_run, spike_run = repo.latest_completed_run(settings, experiment_id, default_sta_step()), repo.latest_completed_run(settings, experiment_id, "spike")
+    sta_run, spike_run = latest_run(settings, experiment_id, default_sta_step()), latest_run(settings, experiment_id, "spike")
     stale = []
     if sta_run is not None and spike_run is not None:
         for pipeline_neuron_id in repo.pipeline_neuron_ids(settings, experiment_id):
@@ -282,7 +282,7 @@ def cell_review_data(experiment_id):
     source_path = repo.experiment_source_path(settings, experiment_id)
     if source_path is None:
         return jsonify({"error": "Experiment not found"}), 404
-    spike_run = repo.latest_completed_run(settings, experiment_id, "spike")
+    spike_run = latest_run(settings, experiment_id, "spike")
     neurons = repo.experiment_neurons(settings, experiment_id)
     # the answer only depends on the label files, the review marks and iscell.npy: reuse it while none of them changed (PERF-01)
     key = review_cache_key(settings, experiment_id, spike_run, neurons, source_path)

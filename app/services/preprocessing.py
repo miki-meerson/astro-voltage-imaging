@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.cluster import client
 from app.db import preprocessing_repository as repo
+from app.db import run_repository
 from app.settings import Settings
 from utils.paths_utils import PathKind, path_for
 
@@ -157,7 +158,7 @@ def _apply_step_rerun_params(state: dict, extra_params: dict | None) -> dict:
 def rerun_preprocessing_step(settings: Settings, experiment_id: int, step_name: str, extra_params: dict | None = None) -> dict:
     if step_name not in PREPROCESSING_STEPS:
         raise ValueError(f"Unknown preprocessing step: {step_name}")
-    run = repo.latest_preprocessing_run(settings, experiment_id)
+    run = run_repository.latest_run(settings, experiment_id, "preprocessing", status=None)
     if run is None:
         raise ValueError("No preprocessing run exists for this experiment.")
     if repo.run_is_active(settings, run["id"]):
@@ -214,7 +215,7 @@ def rerun_preprocessing_step(settings: Settings, experiment_id: int, step_name: 
 
 def latest_preprocessing_params(settings: Settings, experiment_id: int) -> dict:
     """Parameters of the newest preprocessing run: the params file its state file points to, else the parameters saved with the run."""
-    run = repo.latest_preprocessing_run(settings, experiment_id)
+    run = run_repository.latest_run(settings, experiment_id, "preprocessing", status=None)
     if run is None:
         return {}
     state = load_state(Path(run["output_dir"] or ""))

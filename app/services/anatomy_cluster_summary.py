@@ -19,7 +19,7 @@ from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 
 def anatomy_cluster_summary(settings, experiment_id: int) -> dict:
     """The saved summary of the latest completed STA run (with polarity labels, neuron ids and the real-vs-fake group test when a cluster job has made it)."""
-    run = run_repository.latest_completed_run_row(settings, int(experiment_id), default_sta_step())
+    run = run_repository.latest_run(settings, int(experiment_id), default_sta_step())
     if run is None:
         raise FileNotFoundError("No completed STA run for this experiment: run STA Maps first.")
     sta_dir = sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))

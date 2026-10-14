@@ -102,20 +102,6 @@ def pipeline_neuron_ids(settings: Settings, experiment_id: int) -> list[str]:
         return [r["pipeline_neuron_id"] for r in conn.execute("SELECT pipeline_neuron_id FROM neurons WHERE experiment_id=?", (experiment_id,))]
 
 
-def latest_completed_run(settings: Settings, experiment_id: int, step: str) -> dict | None:
-    """The newest completed real (not test) run row of a step of an experiment, or None."""
-    with connect(settings) as conn:
-        row = conn.execute(
-            """
-            SELECT * FROM analysis_runs
-            WHERE experiment_id=? AND step=? AND is_test=0 AND status='completed'
-            ORDER BY id DESC LIMIT 1
-            """,
-            (experiment_id, step),
-        ).fetchone()
-    return dict(row) if row is not None else None
-
-
 def experiment_page_data(settings: Settings, experiment_id: int, analysis_steps) -> dict | None:
     """Everything the analysis page reads from the database, or None when the experiment is unknown:
     {exp, neurons, runs (newest first), latest_real_runs {step: newest real run row of each of analysis_steps}, confirmed_count, notes}."""

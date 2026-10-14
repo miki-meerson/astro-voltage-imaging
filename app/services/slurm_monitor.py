@@ -11,6 +11,7 @@ from app.db import run_repository
 from app.services.preprocessing import load_state, save_state, submit_preprocessing_step
 from app.services.runs import output_manifest
 from app.settings import Settings
+from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
 
 
@@ -143,7 +144,7 @@ def _copy_remote_log(settings: Settings, remote_log_path: str, local_path: Path)
 
 
 def poll_slurm_once(settings: Settings) -> int:
-    runs = run_repository.active_cluster_runs(settings, "sta")
+    runs = run_repository.active_cluster_runs(settings, f"{g.STA_STEP_PREFIX}%")  # the runs of every hypothesis step
     changed = 0
     for run in runs:
         job_id = _job_id(run.get("output_dir"))

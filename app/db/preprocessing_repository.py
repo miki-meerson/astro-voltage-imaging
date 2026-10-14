@@ -52,21 +52,6 @@ def preprocessing_page_data(settings: Settings, experiment_id: int) -> dict | No
     return {"experiment": dict(exp), "runs": runs, "steps": steps, "notes": notes}
 
 
-def latest_preprocessing_run(settings: Settings, experiment_id: int) -> dict | None:
-    """The newest non-test preprocessing run of the experiment (all columns), or None."""
-    with connect(settings) as conn:
-        row = conn.execute(
-            """
-            SELECT *
-            FROM analysis_runs
-            WHERE experiment_id=? AND step='preprocessing' AND is_test=0
-            ORDER BY id DESC LIMIT 1
-            """,
-            (experiment_id,),
-        ).fetchone()
-    return dict(row) if row is not None else None
-
-
 def run_is_active(settings: Settings, run_id: int) -> bool:
     marks = ",".join("?" for _ in ACTIVE_RUN_STATUSES)
     with connect(settings) as conn:

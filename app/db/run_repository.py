@@ -144,18 +144,17 @@ def latest_failed_runs(settings: Settings, step: str | None) -> list[dict]:
         ]
 
 
-def latest_completed_run_row(settings: Settings, experiment_id: int, step: str):
-    """The newest completed real run of a step: id, is_test, output_dir, stdout_path (None when there is none)."""
-    with tx(settings) as conn:
-        return conn.execute(
-            """
-            SELECT id,is_test,output_dir,stdout_path
-            FROM analysis_runs
-            WHERE experiment_id=? AND step=? AND is_test=0 AND status='completed'
-            ORDER BY id DESC LIMIT 1
-            """,
-            (experiment_id, step),
-        ).fetchone()
+def latest_run(settings: Settings, experiment_id: int, step: str, status: str | None = "completed", conn=None) -> dict | None:
+    """The newest real (not test) run row of a step of an experiment (all columns) with this status (None: any status); None when there is none.
+    Pass `conn` to look inside the caller's own connection."""
+    status_filter, args = ("AND status=?", (experiment_id, step, status)) if status is not None else ("", (experiment_id, step))
+    sql = f"SELECT * FROM analysis_runs WHERE experiment_id=? AND step=? AND is_test=0 {status_filter} ORDER BY id DESC LIMIT 1"
+    if conn is not None:
+        row = conn.execute(sql, args).fetchone()
+    else:
+        with connect(settings) as own:
+            row = own.execute(sql, args).fetchone()
+    return dict(row) if row is not None else None
 
 
 def steps_with_status(settings: Settings, experiment_id: int, statuses: tuple[str, ...]) -> set[str]:

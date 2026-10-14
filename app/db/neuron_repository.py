@@ -4,6 +4,7 @@ Every function takes plain arguments and returns plain data (dicts, lists); none
 """
 from __future__ import annotations
 
+from app.db import run_repository
 from app.db.core import connect
 from app.settings import Settings
 
@@ -22,31 +23,13 @@ def _neuron_row(conn, neuron_id: int) -> dict | None:
     return dict(row) if row is not None else None
 
 
-def _latest_completed_run(conn, experiment_id: int, step: str) -> dict | None:
-    row = conn.execute(
-        """
-        SELECT * FROM analysis_runs
-        WHERE experiment_id=? AND step=? AND is_test=0 AND status='completed'
-        ORDER BY id DESC LIMIT 1
-        """,
-        (experiment_id, step),
-    ).fetchone()
-    return dict(row) if row is not None else None
-
-
-def latest_completed_run(settings: Settings, experiment_id: int, step: str) -> dict | None:
-    """The newest completed real (not test) run of a step of an experiment, all columns; None when there is none."""
-    with connect(settings) as conn:
-        return _latest_completed_run(conn, experiment_id, step)
-
-
 def neuron_with_latest_run(settings: Settings, neuron_id: int, step: str) -> tuple[dict | None, dict | None]:
     """(cell with its experiment, latest completed run of `step` of its experiment); (None, None) when the cell is unknown."""
     with connect(settings) as conn:
         neuron = _neuron_row(conn, neuron_id)
         if neuron is None:
             return None, None
-        return neuron, _latest_completed_run(conn, int(neuron["experiment_id"]), step)
+        return neuron, run_repository.latest_run(settings, int(neuron["experiment_id"]), step, conn=conn)
 
 
 def neuron_page_data(settings: Settings, neuron_id: int) -> tuple[dict | None, list[dict], dict | None]:

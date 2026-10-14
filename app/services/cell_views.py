@@ -42,7 +42,7 @@ def cell_movie_files(settings, neuron_id: int) -> CellMovieFiles:
     cell = experiment_repository.neuron_with_experiment(settings, neuron_id)
     if cell is None:
         raise ValueError("Cell not found.")
-    run = run_repository.latest_completed_run_row(settings, int(cell["experiment_id"]), default_sta_step())
+    run = run_repository.latest_run(settings, int(cell["experiment_id"]), default_sta_step())
     if run is None:
         raise FileNotFoundError("No completed STA run was found for this experiment: run STA Maps first.")
     sta_dir = sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))
