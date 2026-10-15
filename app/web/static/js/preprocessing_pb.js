@@ -1,7 +1,12 @@
 (function () {
   const EXP_ID = JSON.parse(document.getElementById("page-data").textContent).expId;
+  const KEEP_BEHIND = 1, KEEP_AHEAD = 3, PREFETCH = 2;  // chunks kept in memory around the current one, and chunks asked for ahead of the playing
+
+  // The corrected movie is played from chunks of about 2 seconds that the page asks for one after the other, a little ahead of the playing,
+  // so playing costs about one request every 2 seconds. Frames are drawn here; nothing is asked for per frame.
   function initPreprocessingMovieViewer(root, kind) {
-    const frames = [root.querySelector("[data-frame-a]"), root.querySelector("[data-frame-b]")];
+    const canvas = root.querySelector("[data-movie-canvas]");
+    const ctx = canvas.getContext("2d");
     const summary = root.querySelector("[data-movie-summary]");
     const message = root.querySelector("[data-movie-message]");
     const play = root.querySelector("[data-movie-play]");
@@ -9,150 +14,129 @@
     const frameInput = root.querySelector("[data-movie-frame-input]");
     const readout = root.querySelector("[data-movie-readout]");
     const loadState = root.querySelector("[data-movie-load-state]");
-    const state = {meta: null, frame: 0, playing: false, timer: null, requestId: 0, cache: new Map(), pending: new Map(), activeBuffer: 0};
+    const state = {meta: null, image: null, chunks: new Map(), pending: new Map(), frame: 0, playing: false, started: 0, startFrame: 0, wanted: 0, timer: null};
+
     function setMessage(text) {
       message.textContent = text || "";
       message.style.display = text ? "grid" : "none";
     }
-    function formatTime(frame) {
-      const fps = state.meta?.fps || 1;
-      const seconds = frame / Math.max(1e-9, fps);
+    function formatTime(seconds) {
       return seconds >= 60 ? `${(seconds / 60).toFixed(1)} min` : `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
     }
-    function frameUrl(frame) {
-      return `/experiments/${EXP_ID}/movie/frame?kind=${encodeURIComponent(kind)}&frame=${frame}&max_size=760`;
+    const chunkOf = frame => Math.floor(frame / state.meta.chunk_frames);
+
+    function evict(centre) {
+      for (const index of [...state.chunks.keys()]) if (index < centre - KEEP_BEHIND || index > centre + KEEP_AHEAD) state.chunks.delete(index);
     }
-    function updateReadout() {
-      const total = state.meta?.frames || 0;
-      readout.textContent = total ? `Frame ${state.frame + 1} / ${total} | ${formatTime(state.frame)}` : "Frame 0 / 0";
-      scrub.value = state.frame;
-      frameInput.value = state.frame;
-    }
-    function trimCache() {
-      const keep = new Set();
-      for (let i = -5; i <= 10; i++) {
-        const frame = state.frame + i;
-        if (frame >= 0 && frame < (state.meta?.frames || 0)) keep.add(frame);
+    async function loadChunk(index) {
+      if (state.chunks.has(index)) return;
+      if (index < 0 || index * state.meta.chunk_frames >= state.meta.frames) return;
+      if (!state.pending.has(index)) {
+        const request = fetch(`/experiments/${EXP_ID}/movie/chunk?kind=${encodeURIComponent(kind)}&chunk=${index}`)
+          .then(async response => {
+            if (!response.ok) throw new Error((await response.json()).error || `The movie chunk ${index} could not be loaded.`);
+            state.chunks.set(index, new Uint8Array(await response.arrayBuffer()));
+          })
+          .finally(() => state.pending.delete(index));
+        state.pending.set(index, request);
       }
-      for (const [frame, url] of state.cache.entries()) {
-        if (!keep.has(frame)) {
-          URL.revokeObjectURL(url);
-          state.cache.delete(frame);
-        }
+      await state.pending.get(index);
+    }
+    function prefetch(frame) {
+      const centre = chunkOf(frame);
+      evict(centre);
+      for (let ahead = 1; ahead <= PREFETCH; ahead++) loadChunk(centre + ahead).catch(() => {});
+    }
+    function paint(frame) {
+      const {width, height, chunk_frames: perChunk} = state.meta, size = width * height;
+      const pixels = state.chunks.get(chunkOf(frame)), offset = (frame % perChunk) * size, data = state.image.data;
+      for (let i = 0; i < size; i++) {
+        data[4 * i] = data[4 * i + 1] = data[4 * i + 2] = pixels[offset + i];
+        data[4 * i + 3] = 255;
       }
+      ctx.putImageData(state.image, 0, 0);
+      state.frame = frame;
+      readout.textContent = `Frame ${frame + 1} / ${state.meta.frames} | ${formatTime(frame / state.meta.fps)}`;
+      scrub.value = frame;
+      frameInput.value = frame;
     }
-    async function fetchFrame(frame, requestId) {
-      if (state.cache.has(frame)) return state.cache.get(frame);
-      if (state.pending.has(frame)) return state.pending.get(frame);
-      const promise = fetch(frameUrl(frame), {cache: "force-cache"})
-        .then(async res => {
-          if (!res.ok) throw new Error(`Frame ${frame} failed (${res.status})`);
-          const url = URL.createObjectURL(await res.blob());
-          state.cache.set(frame, url);
-          trimCache();
-          return url;
-        })
-        .finally(() => state.pending.delete(frame));
-      state.pending.set(frame, promise);
-      const url = await promise;
-      return requestId === state.requestId ? url : "";
-    }
-    async function showFrame(frame) {
-      const total = state.meta?.frames || 0;
-      if (!total) return;
-      const requestId = ++state.requestId;
-      state.frame = Math.max(0, Math.min(total - 1, Math.round(Number(frame) || 0)));
-      updateReadout();
-      loadState.textContent = state.cache.has(state.frame) ? "" : "Loading frame...";
-      try {
-        const url = await fetchFrame(state.frame, requestId);
-        if (!url || requestId !== state.requestId) return;
-        const next = 1 - state.activeBuffer;
-        const nextImage = frames[next];
-        const currentImage = frames[state.activeBuffer];
-        if (nextImage.src !== url) {
-          nextImage.src = url;
-          if (nextImage.decode) {
-            try { await nextImage.decode(); } catch (_) {}
-          }
+    // show a frame: at once when its chunk is in memory, else after the chunk arrived (a short wait first, so dragging the slider does not ask for every chunk it passes)
+    function show(frame) {
+      frame = Math.max(0, Math.min(state.meta.frames - 1, Math.round(Number(frame) || 0)));
+      state.wanted = frame;
+      window.clearTimeout(state.timer);
+      if (state.chunks.has(chunkOf(frame))) { paint(frame); prefetch(frame); return; }
+      readout.textContent = `Frame ${frame + 1} / ${state.meta.frames}`;
+      state.timer = window.setTimeout(async () => {
+        loadState.textContent = "Loading...";
+        try {
+          await loadChunk(chunkOf(frame));
+          if (state.wanted === frame) { paint(frame); prefetch(frame); setMessage(""); }
+        } catch (error) {
+          setMessage(error.message);
         }
-        if (requestId !== state.requestId) return;
-        nextImage.classList.add("active");
-        currentImage.classList.remove("active");
-        state.activeBuffer = next;
         loadState.textContent = "";
-        setMessage("");
-      } catch (error) {
-        if (requestId === state.requestId) {
-          loadState.textContent = "";
-          setMessage(error.message || "Movie frame failed to load.");
-        }
-      }
+      }, 120);
     }
     function stop() {
       state.playing = false;
       play.textContent = "Play";
-      window.clearTimeout(state.timer);
     }
-    function tick() {
-      window.clearTimeout(state.timer);
-      if (!state.playing || !state.meta) return;
-      const displayFps = Math.min(18, Math.max(4, state.meta.fps));
-      state.timer = window.setTimeout(async () => {
-        const next = state.frame + Math.max(1, Math.round(state.meta.fps / displayFps));
-        if (next >= state.meta.frames) {
-          stop();
+    function tick(now) {
+      if (!state.playing) return;
+      const next = Math.min(state.meta.frames - 1, state.startFrame + Math.floor((now - state.started) / 1000 * state.meta.fps));
+      if (next !== state.frame) {
+        if (!state.chunks.has(chunkOf(next))) {  // the next chunk is not here yet: wait for it, then go on from this frame
+          loadState.textContent = "Loading...";
+          loadChunk(chunkOf(next)).then(() => {
+            loadState.textContent = "";
+            state.started = performance.now();
+            state.startFrame = next;
+            window.requestAnimationFrame(tick);
+          }).catch(error => { stop(); setMessage(error.message); loadState.textContent = ""; });
           return;
         }
-        await showFrame(next);
-        tick();
-      }, 1000 / displayFps);
+        paint(next);
+        prefetch(next);
+      }
+      if (next >= state.meta.frames - 1) stop();
+      else window.requestAnimationFrame(tick);
     }
     play.addEventListener("click", () => {
-      if (!state.meta?.frames) return;
-      state.playing = !state.playing;
-      play.textContent = state.playing ? "Pause" : "Play";
-      if (state.playing) tick();
-      else window.clearTimeout(state.timer);
+      if (!state.meta) return;
+      if (state.playing) { stop(); return; }
+      if (state.frame >= state.meta.frames - 1) show(0);
+      state.playing = true;
+      play.textContent = "Pause";
+      state.started = performance.now();
+      state.startFrame = state.frame;
+      window.requestAnimationFrame(tick);
     });
-    scrub.addEventListener("input", () => {
-      stop();
-      showFrame(Number(scrub.value));
-    });
-    frameInput.addEventListener("change", () => {
-      stop();
-      showFrame(Number(frameInput.value));
-    });
-    async function loadMeta() {
-      stop();
-      state.requestId += 1;
-      for (const url of state.cache.values()) URL.revokeObjectURL(url);
-      state.cache.clear();
-      state.pending.clear();
-      frames.forEach((img, index) => {
-        img.removeAttribute("src");
-        img.classList.toggle("active", index === 0);
-      });
+    scrub.addEventListener("input", () => { stop(); show(Number(scrub.value)); });
+    frameInput.addEventListener("change", () => { stop(); show(Number(frameInput.value)); });
+
+    async function load() {
       setMessage("Loading movie...");
       try {
-        const res = await fetch(`/experiments/${EXP_ID}/movie/meta?kind=${encodeURIComponent(kind)}`);
-        const data = await res.json();
-        if (!res.ok || !data.available) throw new Error(data.message || "Movie is unavailable.");
-        state.meta = data;
-        state.frame = 0;
-        state.activeBuffer = 0;
-        scrub.max = Math.max(0, data.frames - 1);
-        frameInput.max = Math.max(0, data.frames - 1);
-        summary.textContent = `${data.file_name} | ${data.frames} frames | ${data.width} x ${data.height} | ${Number(data.fps).toFixed(1)} fps`;
-        updateReadout();
-        await showFrame(0);
+        const response = await fetch(`/experiments/${EXP_ID}/movie/meta?kind=${encodeURIComponent(kind)}`);
+        const meta = await response.json();
+        if (!response.ok || !meta.available) throw new Error(meta.message || "Movie is unavailable.");
+        state.meta = meta;
+        canvas.width = meta.width;
+        canvas.height = meta.height;
+        state.image = ctx.createImageData(meta.width, meta.height);
+        scrub.max = meta.frames - 1;
+        frameInput.max = meta.frames - 1;
+        summary.textContent = `${meta.file_name} | ${meta.frames} frames | ${meta.width} x ${meta.height} | ${Number(meta.fps).toFixed(1)} fps`;
+        await loadChunk(0);
+        setMessage("");
+        show(0);
       } catch (error) {
         summary.textContent = error.message || "Movie is unavailable.";
         setMessage(error.message || "Movie is unavailable.");
-        updateReadout();
       }
     }
-    loadMeta();
+    load();
   }
 
   function resizeCanvas(canvas) {
@@ -270,6 +254,7 @@
       }
     }
   }
+  let meanIntensity = null;
   async function loadMeanIntensity() {
     const summary = document.getElementById("intensity-summary");
     try {
@@ -278,6 +263,7 @@
       if (!res.ok || !data.available) throw new Error(data.message || "Mean intensity data are unavailable.");
       const available = Object.values(data.series || {}).filter(s => s.available);
       summary.textContent = available.map(s => `${s.file_name}: ${s.frames} frames, showing every ${s.display_step}`).join(" | ");
+      meanIntensity = data;
       drawMeanIntensity(data);
       renderQcMetrics(data);
     } catch (error) {
@@ -286,5 +272,5 @@
   }
   document.querySelectorAll("[data-movie-viewer]").forEach(root => initPreprocessingMovieViewer(root, root.dataset.movieViewer));
   loadMeanIntensity();
-  window.addEventListener("resize", loadMeanIntensity);
+  window.addEventListener("resize", () => { if (meanIntensity) drawMeanIntensity(meanIntensity); });
 })();

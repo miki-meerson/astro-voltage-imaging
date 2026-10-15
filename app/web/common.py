@@ -8,7 +8,7 @@ from flask.blueprints import BlueprintSetupState
 
 from app.db.experiment_repository import experiment_source_path
 from app.services import polarity
-from app.services.movies import movie_frame_jpeg, movie_metadata
+from app.services.movies import movie_chunk, movie_info, pb_movie_path
 from utils.movie_utils import read_frame_rate
 
 
@@ -41,49 +41,39 @@ def get_settings():
     return current_app.config["SETTINGS"]
 
 
-def _movie_path_for(experiment_id: int, kind: str, path_of):
-    """(source_path, movie path, error response). path_of(source_path, kind) gives the movie file, or None for an unknown kind."""
+def _movie_of(experiment_id: int):
+    """(movie file, frame rate, flip the sign, error response) of ?kind= of the experiment; the error response is None when all is well."""
+    kind = request.args.get("kind", "astro")
     source_path = experiment_source_path(get_settings(), experiment_id)
     if source_path is None:
-        return None, None, "Experiment not found.", 404
-    path = path_of(source_path, kind)
+        return None, None, None, (jsonify({"available": False, "error": "Experiment not found.", "message": "Experiment not found."}), 404)
+    path = pb_movie_path(source_path, kind)
     if path is None:
-        return None, None, "Unknown movie type.", 400
-    return source_path, path, None, 200
-
-
-def movie_meta_response(experiment_id: int, path_of):
-    """JSON metadata of a movie of the experiment (kind = ?kind=astro|neuron), for the experiment and preprocessing viewers."""
-    kind = request.args.get("kind", "astro")
-    source_path, path, error, status = _movie_path_for(experiment_id, kind, path_of)
-    if error:
-        return jsonify({"available": False, "message": error}), status
+        return None, None, None, (jsonify({"available": False, "error": "Unknown movie type.", "message": "Unknown movie type."}), 400)
     if not path.exists():
-        return jsonify({"available": False, "message": f"{path.name} was not found."})
-    try:
-        payload = movie_metadata(path, read_frame_rate(source_path))
-        payload["kind"] = kind
-        payload["gevi_flipped"] = polarity.flip_for_kind(kind)
-        return jsonify(payload)
-    except (ValueError, OSError) as exc:
-        return jsonify({"available": False, "message": str(exc)}), 500
+        message = f"{path.name} was not found. The photobleaching correction step writes it: rerun that step for this experiment."
+        return None, None, None, (jsonify({"available": False, "error": message, "message": message}), 404)
+    return path, read_frame_rate(source_path), polarity.flip_for_kind(kind), None
 
 
-def movie_frame_response(experiment_id: int, path_of):
-    """One frame of a movie of the experiment as JPEG (?kind, ?frame, ?max_size, ?contrast), sign-flipped for astro."""
-    kind = request.args.get("kind", "astro")
-    try:
-        frame_index = max(0, int(request.args.get("frame", "0")))
-        max_size = min(1400, max(240, int(request.args.get("max_size", "720"))))
-    except ValueError:
-        return jsonify({"error": "Invalid frame or max_size."}), 400
-    _, path, error, status = _movie_path_for(experiment_id, kind, path_of)
+def movie_meta_response(experiment_id: int):
+    """JSON description of a corrected movie (?kind=astro|neuron): size, frame count, frame rate, contrast and the number of frames per chunk."""
+    path, fps, flip, error = _movie_of(experiment_id)
     if error:
-        return jsonify({"error": error}), status
-    if not path.exists():
-        return jsonify({"error": f"{path.name} was not found."}), 404
+        return error
     try:
-        jpeg = movie_frame_jpeg(path, frame_index, max_size, request.args.get("contrast", "auto"), invert_sign=polarity.flip_for_kind(kind))
-        return send_file(BytesIO(jpeg), mimetype="image/jpeg", max_age=600)
+        return jsonify(movie_info(path, fps, flip))
     except (ValueError, OSError) as exc:
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"available": False, "message": str(exc)}), 400
+
+
+def movie_chunk_response(experiment_id: int):
+    """One chunk of frames of a corrected movie (?kind, ?chunk) as raw 8-bit values: the page plays the movie by asking for chunk after chunk."""
+    path, fps, flip, error = _movie_of(experiment_id)
+    if error:
+        return error
+    try:
+        data = movie_chunk(path, fps, flip, request.args.get("chunk", 0, type=int))
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return send_file(BytesIO(data), mimetype="application/octet-stream", max_age=3600)

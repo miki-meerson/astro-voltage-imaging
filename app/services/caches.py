@@ -49,9 +49,7 @@ class LRUCache:
 
 STA_CELL_TABLE = LRUCache(8, "sta_cell_table")          # key: (run_id, csv mtime_ns, csv size) -> the per-cell flags of an STA run
 BEHAVIOR_PAYLOAD = LRUCache(8, "behavior_payload")      # key: (run_id, npz mtime_ns)
-MOVIE_META = LRUCache(16, "movie_meta")                 # key: (path, mtime_ns)
-MOVIE_ARRAY = LRUCache(3, "movie_array")                # holds np.memmap objects (open file handles): keep it tiny
-MOVIE_JPEG = LRUCache(160, "movie_jpeg")                # key: (path, mtime_ns, frame, max_size, contrast, ...) -> bytes
+MOVIE_INFO = LRUCache(16, "movie_info")                 # key: (movie file, mtime, flipped) -> size, frame count and contrast of a corrected movie (small)
 MEAN_INTENSITY = LRUCache(8, "mean_intensity")
 STA_STACK = LRUCache(6, "sta_stack")                    # key -> binary payload of the cropped STA movie
 CELL_REVIEW = LRUCache(16, "cell_review")               # key: (experiment, spike run, max mtime of label files and iscell.npy)

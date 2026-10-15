@@ -32,10 +32,7 @@ def experiment_preprocessing(experiment_id):
         return render_template("error.html", title="Missing Experiment", message="Experiment not found"), 404
     exp = data["exp"]
     runs = [run_view(r, settings) for r in data["runs"] if r["step"] == g.PREPROCESSING_STEP]
-    pb_available = any(
-        path is not None and path.exists()
-        for path in (pb_movie_path(exp["source_path"], "astro"), pb_movie_path(exp["source_path"], "neuron"))
-    )
+    pb_available = any(pb_movie_path(exp["source_path"], channel).exists() for channel in PB_KINDS)
     pb_qc_plots = [
         {"kind": kind, "label": kind.title(), "available": path_for(PathKind.PB_QC_PLOT, exp["source_path"], pb_kind=kind).exists()}
         for kind in PB_KINDS

@@ -20,10 +20,9 @@ from app.services.experiments import (
     validate_experiment,
 )
 from app.services.hypothesis_summary import anatomy_cluster_summary, chosen_step
-from app.services.movies import pb_movie_path
 from app.services.run_views import STEP_LABELS
 from app.services.runs import pipeline_status
-from app.web.common import FlatBlueprint, get_settings, movie_frame_response, movie_meta_response
+from app.web.common import FlatBlueprint, get_settings, movie_chunk_response, movie_meta_response
 from app.web.security import safe_next
 from utils import globals_utils as g
 
@@ -176,9 +175,9 @@ def behavior_data(experiment_id):
 
 @bp.get("/experiments/<int:experiment_id>/movie/meta")
 def experiment_movie_meta(experiment_id):
-    return movie_meta_response(experiment_id, pb_movie_path)
+    return movie_meta_response(experiment_id)
 
 
-@bp.get("/experiments/<int:experiment_id>/movie/frame")
-def experiment_movie_frame(experiment_id):
-    return movie_frame_response(experiment_id, pb_movie_path)
+@bp.get("/experiments/<int:experiment_id>/movie/chunk")
+def experiment_movie_chunk(experiment_id):
+    return movie_chunk_response(experiment_id)

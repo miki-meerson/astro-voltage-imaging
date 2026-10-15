@@ -96,8 +96,7 @@
         <span class="chip">{{ "GEVI sign flipped: bright = depolarization" if kind == "astro" else "Neuron" }}</span>
       </div>
       <div class="movie-stage">
-        <img class="movie-buffer active" data-frame-a alt="{{ kind.title() }} photobleaching corrected movie frame" decoding="async">
-        <img class="movie-buffer" data-frame-b alt="" decoding="async" aria-hidden="true">
+        <canvas class="movie-canvas" data-movie-canvas aria-label="{{ kind.title() }} photobleaching corrected movie"></canvas>
         <div class="movie-message" data-movie-message>Loading movie...</div>
       </div>
       <div class="movie-controls">
