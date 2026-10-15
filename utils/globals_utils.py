@@ -114,6 +114,7 @@ STA_USED_PARAMETERS_JSON = "sta_maps_used_parameters.json"  # STA analysis folde
 STA_USED_PARAMETERS_NPZ = "sta_maps_used_parameters.npz"
 MOTION_SERIES_FILE = "motion_series.npz"  # STA analysis folder
 MEAN_ASTRO_BINNED_FILE = "mean_astro_binned.npy"  # STA analysis folder of an Anatomy Crop run
+BASELINE_AVERAGE_MOVIE_FILE = "baseline_average_movie.npy"  # the STA job's moving mean of the movie over the baseline frames; in a temporary folder, deleted at the end of the run
 STA_SKIPPED_BEHAVIORAL_GROUPS = "sta_maps_skipped_behavioral_groups.json"
 NEURON_STA_TEMPLATE = "neuron_sta{suffix}.npz"  # cell folder of an STA run
 PEAK_DETECTION_PARAMS_FILE = "peak_detection_params.npz"  # cell folder of a spike run and of an STA run

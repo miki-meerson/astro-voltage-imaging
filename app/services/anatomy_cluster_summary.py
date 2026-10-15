@@ -8,20 +8,19 @@ depolarizing / hyperpolarizing here (app/services/polarity.py).
 """
 from __future__ import annotations
 
-from app.db import experiment_repository, run_repository
+from app.db import experiment_repository
 from app.services import polarity
-from app.services.runs import default_sta_step, run_dir
+from app.services.hypothesis_summary import completed_sta_run
+from app.services.runs import default_sta_step
 from utils.anatomy_summary import load_anatomy_summary
 from utils.file_utils import read_json
-from utils.paths_utils import PathKind, path_for, sta_dir_of_run
+from utils.paths_utils import PathKind, path_for
 
 
-def anatomy_cluster_summary(settings, experiment_id: int) -> dict:
-    """The saved summary of the latest completed STA run (with polarity labels, neuron ids and the real-vs-fake group test when a cluster job has made it)."""
-    run = run_repository.latest_run(settings, int(experiment_id), default_sta_step())
-    if run is None:
-        raise FileNotFoundError("No completed STA run for this experiment: run STA Maps first.")
-    sta_dir = sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))
+def anatomy_cluster_summary(settings, experiment_id: int, step: str | None = None) -> dict:
+    """The saved summary of the latest completed run of an STA step (default: the default hypothesis), with polarity labels, neuron ids and the
+    real-vs-fake group test when a cluster job has made it."""
+    run, sta_dir = completed_sta_run(settings, experiment_id, step or default_sta_step())
     saved = load_anatomy_summary(sta_dir, run_label=int(run["id"]))
     if saved["warning"]:
         return {"available": False, "message": saved["warning"]}

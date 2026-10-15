@@ -229,7 +229,7 @@ def _astro_mean_image(paths, spatial_bin: int, cache: dict) -> np.ndarray | None
     if key in cache:
         return cache[key]
     try:
-        astro_mean, _ = get_mean_images(paths.home_dir, spatial_bin=int(spatial_bin))
+        astro_mean, _ = get_mean_images(paths.mc_dir, spatial_bin=int(spatial_bin))
         # astro_mean_image.npy is raw; the binned caches above are already flipped, so flip this one to match
         cache[key] = polarity.to_biological(astro_mean)
         return cache[key]

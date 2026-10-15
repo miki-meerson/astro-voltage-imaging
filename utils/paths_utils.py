@@ -86,6 +86,7 @@ class PathKind(Enum):
     STA_USED_PARAMETERS_NPZ = auto()  # anchor: STA analysis folder
     MOTION_SERIES = auto()  # anchor: STA analysis folder
     MEAN_ASTRO_BINNED = auto()  # anchor: STA analysis folder
+    BASELINE_AVERAGE_MOVIE = auto()  # anchor: a temporary folder of the STA job
     STA_SKIPPED_BEHAVIORAL_GROUPS = auto()  # anchor: STA analysis folder
     NEURON_STA = auto()  # anchor: STA analysis folder; fields: cell, suffix
     SPIKE_PEAK_PARAMS = auto()  # anchor: run (spike run); fields: cell
@@ -188,6 +189,7 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.STA_USED_PARAMETERS_NPZ: _Spec(_A, (g.STA_USED_PARAMETERS_NPZ,)),
     PathKind.MOTION_SERIES: _Spec(_A, (g.MOTION_SERIES_FILE,)),
     PathKind.MEAN_ASTRO_BINNED: _Spec(_A, (g.MEAN_ASTRO_BINNED_FILE,)),
+    PathKind.BASELINE_AVERAGE_MOVIE: _Spec(_A, (g.BASELINE_AVERAGE_MOVIE_FILE,)),
     PathKind.STA_SKIPPED_BEHAVIORAL_GROUPS: _Spec(_A, (g.STA_SKIPPED_BEHAVIORAL_GROUPS,)),
     PathKind.NEURON_STA: _Spec(_A, (_CELL, g.NEURON_STA_TEMPLATE)),
     PathKind.SPIKE_PEAK_PARAMS: _Spec(_R, (_CELL, g.PEAK_DETECTION_PARAMS_FILE)),

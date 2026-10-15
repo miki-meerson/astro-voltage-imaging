@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 import csv
 import multiprocessing as mp
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from scipy.ndimage import find_objects, generate_binary_structure, label
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, vstack
 
 from utils import globals_utils as g
 from utils.anatomy_summary import save_anatomy_summary
@@ -95,8 +98,10 @@ BEHAVIORAL_GROUPS = ("active", "inactive")
 VALID_RESULT_TYPES = {g.ALL_GROUP, "simple", "complex", g.ANATOMY_GROUP, "behavioral"}
 SUMMARY_CSV: str | None = None
 
+TIMING_PHASES = ("spikes+pool", "observed STA", "surrogate events", "surrogate STA", "baseline map", "clusters", "saving")  # seconds per cell, one log line
+
 _MOVIE: np.ndarray | None = None
-_MOVIE_FLAT: np.ndarray | None = None
+_BASELINE_MOVIE: np.ndarray | None = None  # the run's baseline-averaged movie (see baseline_average_movie); None: built per cell for the crop
 _MOVIE_SHAPE: tuple[int, int, int] | None = None
 _VALID_CENTERS: np.ndarray | None = None
 _F0_BY_POS: np.ndarray | None = None
@@ -488,17 +493,18 @@ def init_worker(
     anatomy_radius: int | None,
     spatial_bin: int,
     config: dict | None = None,
+    baseline_path: str | None = None,
 ) -> None:
     # Workers started with the "spawn" method (Windows/macOS) re-import this module and would otherwise run with
     # module defaults; apply the run config explicitly so every start method behaves the same.
     if config is not None:
         apply_config(config)
-    global _MOVIE, _MOVIE_FLAT, _MOVIE_SHAPE, _VALID_CENTERS, _F0_BY_POS, _SUITE2P_CTX, _ANATOMY_RADIUS, SPATIAL_BIN
+    global _MOVIE, _BASELINE_MOVIE, _MOVIE_SHAPE, _VALID_CENTERS, _F0_BY_POS, _SUITE2P_CTX, _ANATOMY_RADIUS, SPATIAL_BIN
     movie_path_obj = Path(movie_path)
     movie = np.load(movie_path_obj, mmap_mode="r") if movie_path_obj.suffix == ".npy" else read_astro_movie(str(movie_path_obj), as_memmap=True)
     _MOVIE = movie
+    _BASELINE_MOVIE = np.load(baseline_path, mmap_mode="r") if baseline_path else None
     _MOVIE_SHAPE = tuple(int(x) for x in movie.shape)
-    _MOVIE_FLAT = movie.reshape(movie.shape[0], -1)
     _VALID_CENTERS = np.asarray(centers, dtype=np.int32)
     _F0_BY_POS = np.asarray(f0_by_pos, dtype=np.float32)
     _ANATOMY_RADIUS = anatomy_radius
@@ -609,44 +615,110 @@ def event_matrix(peaks: np.ndarray, positions: np.ndarray | None = None, f0_by_p
     return csr_matrix((data, (rows, cols)), shape=(len(positions), _VALID_CENTERS.size), dtype=np.float32)
 
 
+@contextmanager
+def timed(timing: dict, phase: str):
+    """Adds the seconds spent in the block to timing[phase] (a phase of TIMING_PHASES)."""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        timing[phase] += time.perf_counter() - start
+
+
+def timing_line(cell_id: int, timing: dict) -> str:
+    return f"cell {cell_id} seconds: " + ", ".join(f"{phase} {timing[phase]:.1f}" for phase in TIMING_PHASES)
+
+
+def frame_shape(crop: tuple[int, int, int, int] | None) -> tuple[int, int]:
+    """(height, width) of the analysed image: the whole movie frame, or the crop."""
+    if crop is None:
+        return _MOVIE_SHAPE[1], _MOVIE_SHAPE[2]
+    return crop[1] - crop[0], crop[3] - crop[2]
+
+
+def movie_frames(movie: np.ndarray, index, crop: tuple[int, int, int, int] | None = None) -> np.ndarray:
+    """The frames `index` (an index array or a slice) of `movie` as float32 rows of pixels, cut to `crop` (y0, y1, x0, x1) when given."""
+    frames = movie[index] if crop is None else movie[index, crop[0]:crop[1], crop[2]:crop[3]]
+    frames = np.asarray(frames, dtype=np.float32)
+    return frames.reshape(frames.shape[0], int(np.prod(frames.shape[1:])))
+
+
+def baseline_rels(pre: int, post: int, windows: tuple) -> np.ndarray:
+    """The relative frames of the baseline window (consecutive)."""
+    rels = np.arange(-pre, post + 1, dtype=np.int32)[relative_indices(windows[3], pre, post)]
+    if rels.size == 0:
+        raise ValueError("baseline_window selects no frames.")
+    return rels
+
+
+def baseline_average_movie(
+    movie: np.ndarray, rels: np.ndarray, crop: tuple[int, int, int, int] | None = None, path: Path | None = None, chunk: int = 512,
+) -> np.ndarray:
+    """The moving mean of the movie over the consecutive relative frames `rels`: row k is the mean of movie[k + rels[0]] ... movie[k + rels[-1]]
+    shifted so that the baseline average of centre c is row c + rels[0] (float32, pixels flattened). Written to the .npy `path` when given.
+
+    The STA is linear in the frames, so the baseline map of any spike train is its event weights times this one movie: one gather per
+    train instead of one per baseline frame. Sums are done in float64 over chunks of time, so memory stays bounded."""
+    length = int(rels.size)
+    n_out = int(movie.shape[0]) - length + 1
+    shape = (n_out, movie_frames(movie, slice(0, 1), crop).shape[1])
+    out = np.empty(shape, dtype=np.float32) if path is None else np.lib.format.open_memmap(path, mode="w+", dtype=np.float32, shape=shape)
+    for start in range(0, n_out, chunk):
+        stop = min(start + chunk, n_out)
+        frames = movie_frames(movie, slice(start, stop + length - 1), crop).astype(np.float64)
+        running = np.concatenate([np.zeros((1, frames.shape[1])), np.cumsum(frames, axis=0)])
+        out[start:stop] = (running[length:] - running[:stop - start]) / length
+    return out
+
+
+def event_columns(events: csr_matrix) -> tuple[np.ndarray, csr_matrix]:
+    """The valid-centre columns an event matrix uses (sorted: memmap locality) and the matrix cut to them. Only these frames are gathered."""
+    cols = np.unique(events.indices)
+    return cols, events[:, cols]
+
+
 def sta_for_rels(events: csr_matrix, rels: np.ndarray, crop: tuple[int, int, int, int] | None = None) -> np.ndarray:
-    if _MOVIE is None or _MOVIE_FLAT is None or _VALID_CENTERS is None or _MOVIE_SHAPE is None:
+    if _MOVIE is None or _VALID_CENTERS is None or _MOVIE_SHAPE is None:
         raise RuntimeError("Worker was not initialized.")
     rels = np.asarray(rels, dtype=np.int32)
-    if crop is None:
-        height, width = _MOVIE_SHAPE[1], _MOVIE_SHAPE[2]
-        n_pixels = _MOVIE_FLAT.shape[1]
-    else:
-        y0, y1, x0, x1 = crop
-        height, width = y1 - y0, x1 - x0
-        n_pixels = height * width
-    out = np.empty((events.shape[0], rels.size, n_pixels), dtype=np.float32)
+    height, width = frame_shape(crop)
+    cols, used = event_columns(events)
+    centers = _VALID_CENTERS[cols]
+    out = np.empty((events.shape[0], rels.size, height * width), dtype=np.float32)
     for i, rel in enumerate(rels):
-        frames = _VALID_CENTERS + int(rel)
-        if crop is None:
-            frame_data = np.asarray(_MOVIE_FLAT[frames], dtype=np.float32)
-        else:
-            y0, y1, x0, x1 = crop
-            frame_data = np.asarray(_MOVIE[frames, y0:y1, x0:x1], dtype=np.float32).reshape(frames.size, -1)
         # Astro movies are read in GEVI-flipped polarity, so their baseline is
         # negative while the normalization denominator is abs(F0). This computes
         # (frame - F0) / abs(F0), which is frame / abs(F0) + 1 for flipped astro.
-        out[:, i, :] = np.asarray(events @ frame_data, dtype=np.float32) + 1.0
+        out[:, i, :] = np.asarray(used @ movie_frames(_MOVIE, centers + int(rel), crop), dtype=np.float32) + 1.0
     return out.reshape(events.shape[0], rels.size, height, width)
 
 
-def permutation_effects(events: csr_matrix, pre: int, post: int, windows: tuple, crop: tuple[int, int, int, int] | None = None) -> np.ndarray:
-    baseline_idx = relative_indices(windows[3], pre, post)
-    analysis_idx = relative_indices(windows[2], pre, post)
-    all_rels = np.arange(-pre, post + 1, dtype=np.int32)
-    baseline_rels = all_rels[baseline_idx]
-    analysis_rels = all_rels[analysis_idx]
+def permutation_effects(events_list: list[csr_matrix], pre: int, post: int, windows: tuple, crop: tuple[int, int, int, int] | None, timing: dict) -> list[np.ndarray]:
+    """The effect maps (STA of each frame of the analysis window minus the baseline map) of every surrogate train; one array per matrix of
+    `events_list`. The matrices (the result types of one cell) are stacked: every frame is gathered once, over the columns any of them uses.
 
-    baseline_map = sta_for_rels(events, baseline_rels, crop).mean(axis=1)
-    effects = np.empty((events.shape[0], analysis_rels.size, *baseline_map.shape[1:]), dtype=np.float32)
-    for i, rel in enumerate(analysis_rels):
-        effects[:, i] = sta_for_rels(events, np.asarray([rel], dtype=np.int32), crop)[:, 0] - baseline_map
-    return effects
+    The baseline map of a train is its event weights times the baseline-averaged movie (the run's, else built here for `crop`). The "+ 1.0"
+    of sta_for_rels is in both terms of the difference, so it is left out."""
+    if _MOVIE is None or _VALID_CENTERS is None or _MOVIE_SHAPE is None:
+        raise RuntimeError("Worker was not initialized.")
+    base_rels = baseline_rels(pre, post, windows)
+    all_rels = np.arange(-pre, post + 1, dtype=np.int32)
+    analysis_rels = all_rels[relative_indices(windows[2], pre, post)]
+    height, width = frame_shape(crop)
+    events = vstack(events_list, format="csr")
+    cols, used = event_columns(events)
+    centers = _VALID_CENTERS[cols]
+    with timed(timing, "baseline map"):
+        baseline_movie = _BASELINE_MOVIE if crop is None and _BASELINE_MOVIE is not None else baseline_average_movie(_MOVIE, base_rels, crop)
+        baseline_map = np.asarray(used @ np.asarray(baseline_movie[centers + int(base_rels[0])], dtype=np.float32), dtype=np.float32)
+    bounds = np.cumsum([0] + [e.shape[0] for e in events_list])
+    effects = [np.empty((e.shape[0], analysis_rels.size, height * width), dtype=np.float32) for e in events_list]
+    with timed(timing, "surrogate STA"):
+        for i, rel in enumerate(analysis_rels):
+            values = np.asarray(used @ movie_frames(_MOVIE, centers + int(rel), crop), dtype=np.float32) - baseline_map
+            for effect, first, last in zip(effects, bounds[:-1], bounds[1:]):
+                effect[:, i] = values[first:last]
+    return [effect.reshape(effect.shape[0], effect.shape[1], height, width) for effect in effects]
 
 
 def effective_smooth_sigma_px() -> float:
@@ -853,94 +925,84 @@ def find_significant_clusters(obs_stat: np.ndarray, perm_stat: np.ndarray):
     return threshold, null_max, clusters, sig_mask, extra
 
 
-def analyze_group(
+def save_observed_sta(cell_id: int, group: str, observed_sta: np.ndarray, pre: int, n_spikes: int, out_dir: Path) -> None:
+    if not SAVE_BINNED_STA_MOVIES:
+        return
+    # one saved copy: the .tif in the experiment folder; the .npy in the run folder only when the .tif could not be written
+    if SAVE_FIJI_TIFS and export_fiji_sta(cell_id, group, observed_sta, pre, n_spikes):
+        return
+    sta_name = g.STA_MOVIE_NPY_PREFIX if group == g.ALL_GROUP else f"{g.STA_MOVIE_NPY_PREFIX}_{group}"
+    np.save(path_for(PathKind.STA_MOVIE_NPY, out_dir.parent, cell=cell_id, name=sta_name, bin=SPATIAL_BIN), observed_sta.astype(np.float32))
+
+
+def cluster_skip_reason(cell_id: int, group: str, peaks: np.ndarray, pool: np.ndarray, silence: tuple[int, int]) -> str:
+    """Why a group with enough spikes gets no cluster test (fewer random frames than spikes), else ''. Prints the warning."""
+    if peaks.size < MIN_SPIKES_FOR_CLUSTER or pool.size >= peaks.size:
+        return ""
+    reason = (
+        f"{peaks.size} spikes but only {pool.size} frames without another spike within the silence window "
+        f"({silence[0]} frames before, {silence[1]} after): no random frames to compare with"
+    )
+    print(f"WARNING: cell {cell_id} {group}: cluster test skipped: {reason}")
+    return reason
+
+
+def tested_group_result(
     cell_id: int,
     group: str,
     peaks: np.ndarray,
-    pre: int,
-    post: int,
-    baseline: int,
-    windows: tuple,
-    out_dir: Path,
-    silence: tuple[int, int],
+    observed_sta: np.ndarray,
+    perm_effects: dict,
+    positions: np.ndarray,
+    run: tuple,
     pool: np.ndarray,
     n_before: int,
-    crop: tuple[int, int, int, int] | None = None,
-    f0_by_pos: np.ndarray | None = None,
-    extra_result: dict | None = None,
-) -> dict:
-    """`pool`: indices into the valid centres where the chance copies may be drawn (the cell's silence pool); `n_before`: spikes of this group
-    before the silence rule (`peaks` are the spikes after it). A group with fewer pool frames than spikes gets no cluster test."""
-    print(f"cell {cell_id} {group}: {peaks.size} peaks ({n_before} before the silence rule), {pool.size} random frames")
-    observed_events = event_matrix(peaks, f0_by_pos=f0_by_pos)
-    rels = np.arange(-pre, post + 1, dtype=np.int32)
-    observed_sta = sta_for_rels(observed_events, rels, crop)[0]
-    sta_name = g.STA_MOVIE_NPY_PREFIX if group == g.ALL_GROUP else f"{g.STA_MOVIE_NPY_PREFIX}_{group}"
-    if SAVE_BINNED_STA_MOVIES:
-        # one saved copy: the .tif in the experiment folder; the .npy in the run folder only when the .tif could not be written
-        if not (SAVE_FIJI_TIFS and export_fiji_sta(cell_id, group, observed_sta, pre, int(peaks.size))):
-            np.save(path_for(PathKind.STA_MOVIE_NPY, out_dir.parent, cell=cell_id, name=sta_name, bin=SPATIAL_BIN), observed_sta.astype(np.float32))
-
-    clusters = []
-    cluster_path = out_dir / result_file_name(group)
-    skip_reason = ""
-    if peaks.size >= MIN_SPIKES_FOR_CLUSTER and pool.size < peaks.size:
-        skip_reason = (
-            f"{peaks.size} spikes but only {pool.size} frames without another spike within the silence window "
-            f"({silence[0]} frames before, {silence[1]} after): no random frames to compare with"
-        )
-        print(f"WARNING: cell {cell_id} {group}: cluster test skipped: {skip_reason}")
-    if peaks.size >= MIN_SPIKES_FOR_CLUSTER and not skip_reason:
+    timing: dict,
+) -> tuple[dict, list[dict]]:
+    """(result to save, cluster summary) of one group. `perm_effects` is {group index: surrogate effect maps}; this group's entry is
+    taken out so its memory is freed as soon as the test statistic exists. `run` = (pre, post, baseline, windows, silence, group index)."""
+    pre, post, baseline, windows, silence, index = run
+    with timed(timing, "clusters"):
         observed_effect = compute_effect_movie(observed_sta, pre, post, *windows)
-        positions = surrogate_positions(cell_id, int(peaks.size), pool)
-        perm_events = event_matrix(peaks, positions, f0_by_pos=f0_by_pos)
-        perm_effects = permutation_effects(perm_events, pre, post, windows, crop)
-        obs_stat, perm_stat, sd_map = prepare_test_statistic(observed_effect["effect_movie"], perm_effects)
-        del perm_effects
+        obs_stat, perm_stat, sd_map = prepare_test_statistic(observed_effect["effect_movie"], perm_effects.pop(index))
         threshold, null_max, clusters, sig_mask, threshold_extra = find_significant_clusters(obs_stat, perm_stat)
-        result = {
-            **threshold_extra,
-            "cell_id": cell_id,
-            "spike_group": group,
-            "peaks": peaks,
-            "observed_sta_movie": observed_sta,
-            # observed_effect_movie / perm_effects hold the TESTED statistic (effect, or per-pixel z when
-            # null_standardization == "per_pixel_z"); downstream code re-derives clusters from them + cluster_threshold.
-            "observed_effect_movie": obs_stat,
-            "observed_effect_raw_movie": observed_effect["effect_movie"],
-            "observed_post_pre_map": observed_effect["post_pre_map"],
-            "significant_cluster_mask": sig_mask,
-            "perm_effects": perm_stat,
-            "null_sd_map": sd_map,
-            "significance_statistic": "z" if sd_map is not None else "effect",
-            "null_max_cluster_mass": null_max,
-            "cluster_summary": clusters,
-            "cluster_threshold": threshold,
-            "permutation_positions": positions,
-            "pre_frames": pre,
-            "post_frames": post,
-            "baseline_frames": baseline,
-            "pre_window": windows[0],
-            "post_window": windows[1],
-            "analysis_window": windows[2],
-            "baseline_window": windows[3],
-            "spatial_bin": SPATIAL_BIN,
-            "movie_shape": _MOVIE_SHAPE,
-            "n_valid_centers": _VALID_CENTERS.size if _VALID_CENTERS is not None else -1,
-            "silence_frames": silence,
-            "n_peaks_before_silence": n_before,
-            "n_surrogate_frames": pool.size,
-        }
-        if extra_result:
-            result.update(extra_result)
-        if OVERWRITE or not cluster_path.exists():
-            save_cluster_result(cluster_path, result)
-    elif OVERWRITE and cluster_path.exists():
-        cluster_path.unlink()
-        cluster_path = ""
-    else:
-        cluster_path = ""
+    result = {
+        **threshold_extra,
+        "cell_id": cell_id,
+        "spike_group": group,
+        "peaks": peaks,
+        "observed_sta_movie": observed_sta,
+        # observed_effect_movie / perm_effects hold the TESTED statistic (effect, or per-pixel z when
+        # null_standardization == "per_pixel_z"); downstream code re-derives clusters from them + cluster_threshold.
+        "observed_effect_movie": obs_stat,
+        "observed_effect_raw_movie": observed_effect["effect_movie"],
+        "observed_post_pre_map": observed_effect["post_pre_map"],
+        "significant_cluster_mask": sig_mask,
+        "perm_effects": perm_stat,
+        "null_sd_map": sd_map,
+        "significance_statistic": "z" if sd_map is not None else "effect",
+        "null_max_cluster_mass": null_max,
+        "cluster_summary": clusters,
+        "cluster_threshold": threshold,
+        "permutation_positions": positions,
+        "pre_frames": pre,
+        "post_frames": post,
+        "baseline_frames": baseline,
+        "pre_window": windows[0],
+        "post_window": windows[1],
+        "analysis_window": windows[2],
+        "baseline_window": windows[3],
+        "spatial_bin": SPATIAL_BIN,
+        "movie_shape": _MOVIE_SHAPE,
+        "n_valid_centers": _VALID_CENTERS.size if _VALID_CENTERS is not None else -1,
+        "silence_frames": silence,
+        "n_peaks_before_silence": n_before,
+        "n_surrogate_frames": pool.size,
+    }
+    return result, clusters
 
+
+def group_row(cell_id: int, group: str, peaks: np.ndarray, n_before: int, pool: np.ndarray, clusters: list[dict], cluster_path: Path | str, skip_reason: str) -> dict:
     row = {
         "cell_id": cell_id,
         "spike_group": group,
@@ -956,6 +1018,61 @@ def analyze_group(
     if skip_reason:
         row.update({"status": "skipped", "skip_reason": skip_reason})
     return row
+
+
+def analyze_groups(
+    cell_id: int,
+    groups: list[tuple[str, np.ndarray, int]],
+    pre: int,
+    post: int,
+    baseline: int,
+    windows: tuple,
+    out_dir: Path,
+    silence: tuple[int, int],
+    pool: np.ndarray,
+    timing: dict,
+    crop: tuple[int, int, int, int] | None = None,
+    f0_by_pos: np.ndarray | None = None,
+    extra_result: dict | None = None,
+) -> list[dict]:
+    """The observed STA, the random-frame test and the saved files of one or more spike groups of one cell, in one pass over the movie.
+
+    `groups` = [(result type, peaks after the silence rule, number of spikes before it)]; they share the movie, `pool` (indices into the valid
+    centres where the chance copies may be drawn: the cell's silence pool), `crop` and `f0_by_pos`, so the frames are gathered once for all of them.
+    A group with fewer pool frames than spikes gets no cluster test. `timing`: seconds per phase (TIMING_PHASES), added to."""
+    for group, peaks, n_before in groups:
+        print(f"cell {cell_id} {group}: {peaks.size} peaks ({n_before} before the silence rule), {pool.size} random frames")
+    rels = np.arange(-pre, post + 1, dtype=np.int32)
+    with timed(timing, "observed STA"):
+        observed = sta_for_rels(vstack([event_matrix(peaks, f0_by_pos=f0_by_pos) for _, peaks, _ in groups], format="csr"), rels, crop)
+    with timed(timing, "saving"):
+        for (group, peaks, _), observed_sta in zip(groups, observed):
+            save_observed_sta(cell_id, group, observed_sta, pre, int(peaks.size), out_dir)
+    skips = [cluster_skip_reason(cell_id, group, peaks, pool, silence) for group, peaks, _ in groups]
+    tested = [k for k, (_, peaks, _) in enumerate(groups) if peaks.size >= MIN_SPIKES_FOR_CLUSTER and not skips[k]]
+    with timed(timing, "surrogate events"):
+        positions = {k: surrogate_positions(cell_id, int(groups[k][1].size), pool) for k in tested}
+        perm_events = [event_matrix(groups[k][1], positions[k], f0_by_pos=f0_by_pos) for k in tested]
+    perm_effects = dict(zip(tested, permutation_effects(perm_events, pre, post, windows, crop, timing))) if tested else {}
+    rows = []
+    for k, (group, peaks, n_before) in enumerate(groups):
+        cluster_path, clusters = out_dir / result_file_name(group), []
+        if k in tested:
+            result, clusters = tested_group_result(
+                cell_id, group, peaks, observed[k], perm_effects, positions[k], (pre, post, baseline, windows, silence, k), pool, n_before, timing,
+            )
+            result.update(extra_result or {})
+            with timed(timing, "saving"):
+                if OVERWRITE or not cluster_path.exists():
+                    save_cluster_result(cluster_path, result)
+            del result
+        elif OVERWRITE and cluster_path.exists():
+            cluster_path.unlink()
+            cluster_path = ""
+        else:
+            cluster_path = ""
+        rows.append(group_row(cell_id, group, peaks, n_before, pool, clusters, cluster_path, skips[k]))
+    return rows
 
 
 def anatomy_analysis_kwargs(cell_id: int, pre: int, baseline: int, anatomy_settings: dict | None = None) -> dict:
@@ -1091,11 +1208,18 @@ def save_neuron_sta_metadata(out_dir: Path, cell_id: int, pre: int, post: int, b
     np.savez(path_for(PathKind.NEURON_STA, out_dir.parent, cell=cell_id, suffix=suffix), **payload)
 
 
-def run_pool(worker_fn, cfg: dict, cells: list[int], sta_dir: Path, init_args: tuple) -> list[dict]:
+def run_pool(worker_fn, cfg: dict, cells: list[int], sta_dir: Path, init_args: tuple, movie: np.ndarray | None = None) -> list[dict]:
+    """Runs `worker_fn` for every cell. `movie`: the pool's full-frame movie; its baseline-averaged copy is written once to a temporary folder
+    inside the STA folder (deleted at the end) that all workers memory-map. None (the anatomy pool): each worker builds it per cell for its crop."""
     rows = []
-    with mp.Pool(N_WORKERS, initializer=init_worker, initargs=init_args) as pool:
-        for cell_rows in pool.imap_unordered(worker_fn, [(cell_id, cfg, str(sta_dir)) for cell_id in cells]):
-            rows.extend(cell_rows)
+    with tempfile.TemporaryDirectory(dir=sta_dir, prefix="baseline_") as tmp:
+        baseline_path = None
+        if movie is not None:
+            baseline_path = path_for(PathKind.BASELINE_AVERAGE_MOVIE, tmp)
+            baseline_average_movie(movie, baseline_rels(cfg["pre"], cfg["post"], cfg["windows"]), path=baseline_path).flush()
+        with mp.Pool(N_WORKERS, initializer=init_worker, initargs=(*init_args, str(baseline_path) if baseline_path else None)) as pool:
+            for cell_rows in pool.imap_unordered(worker_fn, [(cell_id, cfg, str(sta_dir)) for cell_id in cells]):
+                rows.extend(cell_rows)
     return rows
 
 
@@ -1173,35 +1297,24 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     windows = cfg["windows"]
     out_dir = cell_output_dir(sta_dir_s, cell_id)
 
+    timing = dict.fromkeys(TIMING_PHASES, 0.0)
     silence = cfg["silence"]
-    spike_groups, n_before = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None, silence)
-    pool = cell_surrogate_pool(cell_id, _VALID_CENTERS, silence)
+    with timed(timing, "spikes+pool"):
+        spike_groups, n_before = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None, silence)
+        pool = cell_surrogate_pool(cell_id, _VALID_CENTERS, silence)
     save_neuron_sta_metadata(out_dir, cell_id, pre, post, baseline)
     motion_row = run_motion_diagnostics(cell_id, spike_groups[g.ALL_GROUP], pool, cfg, out_dir)
 
-    rows = []
-    for result_type in cfg.get("result_types", RESULT_TYPES):
-        spike_group = g.ALL_GROUP if result_type == g.ANATOMY_GROUP else result_type
-        peaks = spike_groups[spike_group]
-        kwargs = anatomy_analysis_kwargs(cell_id, pre, baseline, cfg.get("anatomy_settings")) if result_type == g.ANATOMY_GROUP else {}
-        rows.append(
-            analyze_group(
-                cell_id,
-                result_type,
-                peaks,
-                pre,
-                post,
-                baseline,
-                windows,
-                out_dir,
-                silence,
-                pool,
-                n_before[spike_group],
-                **kwargs,
-            )
-        )
+    result_types = cfg.get("result_types", RESULT_TYPES)
+    standard = [(result_type, spike_groups[result_type], n_before[result_type]) for result_type in result_types if result_type != g.ANATOMY_GROUP]
+    rows = analyze_groups(cell_id, standard, pre, post, baseline, windows, out_dir, silence, pool, timing) if standard else []  # one pass for all of them
+    if g.ANATOMY_GROUP in result_types:  # its own crop of the movie: a pass of its own
+        kwargs = anatomy_analysis_kwargs(cell_id, pre, baseline, cfg.get("anatomy_settings"))
+        anatomy = [(g.ANATOMY_GROUP, spike_groups[g.ALL_GROUP], n_before[g.ALL_GROUP])]
+        rows.extend(analyze_groups(cell_id, anatomy, pre, post, baseline, windows, out_dir, silence, pool, timing, **kwargs))
     for row in rows:
         row.update(motion_row)
+    print(timing_line(cell_id, timing), flush=True)
     return rows
 
 
@@ -1213,9 +1326,11 @@ def process_cell_behavioral(args: tuple[int, dict, str]) -> list[dict]:
     source_frames = np.asarray(cfg["source_frames"], dtype=np.int32)
     out_dir = cell_output_dir(sta_dir_s, cell_id)
 
+    timing = dict.fromkeys(TIMING_PHASES, 0.0)
     silence = cfg["silence"]
-    peaks, n_before = load_behavioral_spikes(cell_id, source_frames, cfg["n_frames"], pre, post, silence)
-    pool = cell_surrogate_pool(cell_id, source_frames[_VALID_CENTERS], silence)  # the silence is measured in the original frame numbers
+    with timed(timing, "spikes+pool"):
+        peaks, n_before = load_behavioral_spikes(cell_id, source_frames, cfg["n_frames"], pre, post, silence)
+        pool = cell_surrogate_pool(cell_id, source_frames[_VALID_CENTERS], silence)  # the silence is measured in the original frame numbers
     group = f"behavioral_{behavioral_group}"
     save_neuron_sta_metadata(
         out_dir,
@@ -1228,25 +1343,24 @@ def process_cell_behavioral(args: tuple[int, dict, str]) -> list[dict]:
         behavioral_group=np.asarray(behavioral_group),
     )
 
-    return [
-        analyze_group(
-            cell_id,
-            group,
-            peaks,
-            pre,
-            post,
-            baseline,
-            windows,
-            out_dir,
-            silence,
-            pool,
-            n_before,
-            extra_result={
-                "behavioral_group": np.asarray(behavioral_group),
-                "source_behavioral_segments": np.asarray(str(cfg["source_behavioral_segments"])),
-            },
-        )
-    ]
+    rows = analyze_groups(
+        cell_id,
+        [(group, peaks, n_before)],
+        pre,
+        post,
+        baseline,
+        windows,
+        out_dir,
+        silence,
+        pool,
+        timing,
+        extra_result={
+            "behavioral_group": np.asarray(behavioral_group),
+            "source_behavioral_segments": np.asarray(str(cfg["source_behavioral_segments"])),
+        },
+    )
+    print(timing_line(cell_id, timing), flush=True)
+    return rows
 
 
 def skipped_behavioral_rows(cells: list[int], behavioral_group: str, source_frames: np.ndarray, reason: str) -> list[dict]:
@@ -1350,7 +1464,7 @@ def main() -> None:
         cfg["result_types"] = standard_result_types
         cfg["motion_series"] = build_run_motion_series(paths, int(movie.shape[0]))
         init_args = (str(movie_input_path(paths, SPATIAL_BIN)), centers, f0_by_pos, str(paths.suite2p_path), None, SPATIAL_BIN, RUN_CONFIG)
-        rows.extend(run_pool(process_cell, cfg, cells, paths.sta_dir, init_args))
+        rows.extend(run_pool(process_cell, cfg, cells, paths.sta_dir, init_args, movie))
 
     if g.ANATOMY_GROUP in RESULT_TYPES:
         anatomy_movie = ensure_binned_movie(paths, ANATOMY_SPATIAL_BIN)
@@ -1435,7 +1549,7 @@ def main() -> None:
                 SPATIAL_BIN,
                 RUN_CONFIG,
             )
-            rows.extend(run_pool(process_cell_behavioral, behavioral_cfg, cells, paths.sta_dir, init_args))
+            rows.extend(run_pool(process_cell_behavioral, behavioral_cfg, cells, paths.sta_dir, init_args, behavioral_movie))
         if skipped_groups:
             skipped_path = path_for(PathKind.STA_SKIPPED_BEHAVIORAL_GROUPS, paths.sta_dir)
             write_json(skipped_path, skipped_groups)
@@ -1444,6 +1558,11 @@ def main() -> None:
     summary_path = Path(SUMMARY_CSV) if SUMMARY_CSV else path_for(PathKind.STA_SUMMARY_CSV, paths.sta_dir)
     if not summary_path.is_absolute():
         summary_path = resolved_home / summary_path
+    # the motion test runs once per cell (with the first pool); every row of the cell, whichever pool made it, carries that one answer
+    motion_of_cell = {row["cell_id"]: {key: row[key] for key in (g.MOTION_STATUS_COLUMN, "motion_min_p") if key in row}
+                      for row in rows if row.get(g.MOTION_STATUS_COLUMN, g.MOTION_NOT_TESTED) != g.MOTION_NOT_TESTED}
+    for row in rows:
+        row.update(motion_of_cell.get(row["cell_id"], {g.MOTION_STATUS_COLUMN: g.MOTION_NOT_TESTED}))
     write_summary(rows, summary_path)
     print(f"Done. Summary saved to {summary_path}")
 

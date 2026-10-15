@@ -95,7 +95,6 @@ def _write_config(sta_home: Path, out: Path, params: dict, source_home: Path, sp
     cfg.setdefault("voxel_alpha", 0.01)
     cfg.setdefault("cluster_alpha", 0.1)
     cfg.setdefault("rng_seed", 0)
-    cfg.setdefault("n_workers", 1)
     cfg["summary_csv"] = path_for(PathKind.STA_SUMMARY_CSV, path_for(PathKind.RUN_STA_ANALYSIS, ".")).as_posix()
     cfg_path = path_for(PathKind.STA_JOB_PARAMS_EFFECTIVE, out)
     write_json(cfg_path, cfg)
