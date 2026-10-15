@@ -20,8 +20,6 @@ from utils.sta_trace_utils import pixels_in_crop
 
 STA_RESULT_TYPES = [
     (g.ALL_GROUP, "All"),
-    ("simple", "Simple"),
-    ("complex", "Complex"),
     (g.ANATOMY_GROUP, "Anatomy"),
     ("behavioral", "Behavioral"),
 ]

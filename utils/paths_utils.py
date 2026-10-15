@@ -100,7 +100,6 @@ class PathKind(Enum):
     SCIENTIFIC_DATABASE_EXPERIMENT = auto()  # anchor: project; fields: canonical_id
     # area 4: spike label files of a spike run (anchor: run; fields: cell) and the confirmed-cell folders (anchor: project)
     SPIKE_LABELS = auto()
-    SPIKE_PEAKS = auto()
     SPIKE_MANUAL_REVIEW = auto()
     CONFIRMED_CELL_DIR = auto()  # fields: canonical_id, cell
     CONFIRMED_SPIKES_DIR = auto()  # fields: canonical_id, cell
@@ -201,7 +200,6 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.HYPOTHESES_EXAMPLE_FILE: _Spec(Anchor.PROJECT, (g.HYPOTHESES_EXAMPLE_FILE,)),
     PathKind.SCIENTIFIC_DATABASE_EXPERIMENT: _Spec(Anchor.PROJECT, (g.RUNTIME_DIR, g.SCIENTIFIC_DATABASE_DIR, "{canonical_id}")),
     PathKind.SPIKE_LABELS: _Spec(_R, (_CELL, g.SPIKE_LABELS)),
-    PathKind.SPIKE_PEAKS: _Spec(_R, (_CELL, g.SPIKE_PEAKS)),
     PathKind.SPIKE_MANUAL_REVIEW: _Spec(_R, (_CELL, g.MANUAL_SPIKE_REVIEW)),
     PathKind.CONFIRMED_CELL_DIR: _Spec(Anchor.PROJECT, (g.RUNTIME_DIR, g.SCIENTIFIC_DATABASE_DIR, "{canonical_id}", _CELL)),
     PathKind.CONFIRMED_SPIKES_DIR: _Spec(Anchor.PROJECT, (g.RUNTIME_DIR, g.SCIENTIFIC_DATABASE_DIR, "{canonical_id}", _CELL, g.CONFIRMED_SPIKES_SUBDIR)),
@@ -245,7 +243,7 @@ def channel_file_name(channel: str, name: str) -> str:
 
 
 def result_file_name(result_type: str) -> str:
-    """File name of the cluster result of a result type ('all', 'simple', 'complex', 'anatomy', ...)."""
+    """File name of the cluster result of a result type ('all', 'anatomy', ...)."""
     return g.ALL_RESULT if result_type == g.ALL_GROUP else g.TYPED_RESULT_TEMPLATE.format(result_type=result_type)
 
 

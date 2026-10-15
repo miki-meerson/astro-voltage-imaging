@@ -51,8 +51,7 @@ ANATOMY_CROP_PARAMS = "anatomy_crop_params.npz"  # written by the Anatomy Crop s
 BEHAVIOR_SEGMENTS = "behavioral_segements.npz"  # spelling as saved by the Behavior Split step
 
 # ---- spike detection outputs (<spike run>/cell_<N>/...) ------------------------------------------------------------------------------------
-SPIKE_LABELS = "simple_complex_spike_labels.npz"
-SPIKE_PEAKS = "simple_complex_peaks_for_analysis.npz"
+SPIKE_LABELS = "spike_labels.npz"  # <spike run>/cell_N/: the spikes of a cell and their labels ("spike" or "exclude")
 MANUAL_SPIKE_REVIEW = "manual_spike_review.json"
 
 # ---- preprocessing: photobleaching QC files (<experiment>/pipeline_results/qc/), raw movie names, run-folder files -----------------------------

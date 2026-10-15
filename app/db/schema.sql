@@ -97,11 +97,7 @@ CREATE TABLE IF NOT EXISTS confirmed_neuron_peaks(
   id INTEGER PRIMARY KEY,
   confirmed_neuron_id INTEGER NOT NULL REFERENCES confirmed_neurons(id) ON DELETE CASCADE,
   all_peak_frames_json TEXT NOT NULL DEFAULT '[]',
-  simple_peak_frames_json TEXT NOT NULL DEFAULT '[]',
-  complex_peak_frames_json TEXT NOT NULL DEFAULT '[]',
   n_all_peaks INTEGER NOT NULL DEFAULT 0,
-  n_simple_peaks INTEGER NOT NULL DEFAULT 0,
-  n_complex_peaks INTEGER NOT NULL DEFAULT 0,
   peak_detection_params_json TEXT NOT NULL DEFAULT '{}',
   source_artifact_path TEXT NOT NULL DEFAULT '',
   UNIQUE(confirmed_neuron_id)

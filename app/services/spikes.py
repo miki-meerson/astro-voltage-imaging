@@ -71,18 +71,16 @@ def current_suite2p_neurons(source_path: str | Path | None, neurons: list[dict])
 
 def spike_review_info(settings, spike_run, pipeline_neuron_id: str) -> dict:
     if spike_run is None:
-        return {"reviewed": False, "n_peaks": 0, "n_simple": 0, "n_complex": 0, "n_excluded": 0}
+        return {"reviewed": False, "n_peaks": 0, "n_excluded": 0}
     run_folder = run_dir(settings, int(spike_run["id"]), bool(spike_run["is_test"]))
     try:
         payload = load_spike_payload(path_for(PathKind.SPIKE_LABELS, run_folder, cell=pipeline_neuron_id))
     except FileNotFoundError:  # no label file yet: the cell has no spikes to count
-        return {"reviewed": False, "n_peaks": 0, "n_simple": 0, "n_complex": 0, "n_excluded": 0}
+        return {"reviewed": False, "n_peaks": 0, "n_excluded": 0}
     labels = payload["labels"].astype(str)
     return {
         "reviewed": path_for(PathKind.SPIKE_MANUAL_REVIEW, run_folder, cell=pipeline_neuron_id).exists(),
         "n_peaks": int(payload["peaks_all"].size),
-        "n_simple": int(np.sum(labels == "simple")),
-        "n_complex": int(np.sum(labels == "complex")),
         "n_excluded": int(np.sum(labels == "exclude")),
     }
 
@@ -121,13 +119,9 @@ def save_spike_payload(spike_run_folder: Path, pipeline_neuron_id: str, peaks: n
     payload.update({
         "peaks_all": peaks,
         "labels": labels,
-        "simple_peaks": peaks[labels == "simple"],
-        "complex_peaks": peaks[labels == "complex"],
-        "excluded_peaks": peaks[labels == "exclude"],
         "manual_reviewed": np.asarray(True),
     })
-    for kind in (PathKind.SPIKE_LABELS, PathKind.SPIKE_PEAKS):
-        np.savez_compressed(path_for(kind, spike_run_folder, cell=pipeline_neuron_id), **payload)
+    np.savez_compressed(path_for(PathKind.SPIKE_LABELS, spike_run_folder, cell=pipeline_neuron_id), **payload)
     saved_params = dict(params or {})
     if saved_params:
         full = spike_params_with_defaults(saved_params)  # one default per setting, as in the editor

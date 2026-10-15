@@ -17,34 +17,18 @@
 
 <section class="panel">
   <div class="toolbar">
-    <button class="secondary" id="zoom-in">Zoom In</button>
-    <button class="secondary" id="zoom-out">Zoom Out</button>
-    <button class="secondary" id="left">Left</button>
-    <button class="secondary" id="right">Right</button>
+    <button class="secondary" id="zoom-in" title="Zoom in (+, or the mouse wheel)">+</button>
+    <button class="secondary" id="zoom-out" title="Zoom out (-, or the mouse wheel)">&minus;</button>
+    <button class="secondary" id="fit-all" title="Show the whole trace (Home)">Fit</button>
     <input id="frame-input" type="number" min="0" placeholder="Frame">
-    <button class="secondary" id="add-simple" type="button">Add Simple</button>
-    <button class="secondary" id="add-complex" type="button">Add Complex</button>
+    <button class="secondary" id="add-spike" type="button" title="Add a spike at this frame (or double-click the trace)">Add spike</button>
+    <span class="muted">Wheel: zoom at the cursor &middot; drag: move &middot; arrows: move &middot; double-click: add a spike &middot; x: exclude &middot; Delete: delete</span>
   </div>
   <div class="detector-grid">
     <div class="detector-control">
       <label for="mad-factor">MAD Threshold</label>
       <output id="mad-factor-value"></output>
       <input id="mad-factor" data-detect-param="mad_factor" type="range" min="0.5" max="8" step="0.1">
-    </div>
-    <div class="detector-control">
-      <label for="min-amplitude">Min Amplitude</label>
-      <output id="min-amplitude-value"></output>
-      <input id="min-amplitude" data-detect-param="min_amplitude" type="range" min="0" max="2" step="0.01">
-    </div>
-    <div class="detector-control">
-      <label for="min-width">Min Width</label>
-      <output id="min-width-value"></output>
-      <input id="min-width" data-detect-param="min_width" type="range" min="1" max="120" step="1">
-    </div>
-    <div class="detector-control">
-      <label for="min-subthreshold">Min Subthreshold</label>
-      <output id="min-subthreshold-value"></output>
-      <input id="min-subthreshold" data-detect-param="min_subthreshold" type="range" min="0" max="1" step="0.01">
     </div>
   </div>
   <div class="detector-status">
@@ -56,8 +40,6 @@
   <canvas id="spike-canvas" class="trace-canvas" style="height:560px; margin-top:12px;"></canvas>
   <div class="toolbar" style="margin-top:12px">
     <span id="selected-info" class="chip">No Spike Selected</span>
-    <button class="secondary" data-label="simple">Set Simple</button>
-    <button class="secondary" data-label="complex">Set Complex</button>
     <button class="secondary" data-label="exclude">Exclude</button>
     <button class="danger" data-label="delete">Delete</button>
   </div>

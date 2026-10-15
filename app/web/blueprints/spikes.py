@@ -18,7 +18,7 @@ from utils import globals_utils as g
 from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
 from utils.spike_params import spike_params_with_defaults
-from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
+from utils.spikes_utils import detect_peaks_mad, highpass_traces
 from utils.suite2p_utils import suite2p_trace_dff
 
 bp = FlatBlueprint("spikes", __name__)
@@ -103,27 +103,7 @@ def detect_spike_data(neuron_id):
         duplicate_window_frames=params["duplicate_window_frames"],
         align_radius_frames=params["align_radius_frames"],
     )
-    labels, features = classify_spikes(
-        trace,
-        peaks,
-        fps,
-        min_amplitude=params["min_amplitude"],
-        min_width=params["min_width"],
-        min_subthreshold=params["min_subthreshold"],
-        subthreshold_window_seconds=0.2,
-        baseline_window_seconds=1.5,
-    )
-    return jsonify(
-        {
-            "peaks": labels.peaks_all.astype(int).tolist(),
-            "labels": labels.labels.astype(str).tolist(),
-            "n_simple": int(labels.simple_peaks.size),
-            "n_complex": int(labels.complex_peaks.size),
-            "n_total": int(labels.peaks_all.size),
-            "params": params,
-            "score": np.round(features.get("score", np.empty(0)), 4).tolist(),
-        }
-    )
+    return jsonify({"peaks": peaks.astype(int).tolist(), "labels": ["spike"] * int(peaks.size), "n_total": int(peaks.size), "params": params})
 
 
 @bp.post("/neurons/<int:neuron_id>/spikes/save")

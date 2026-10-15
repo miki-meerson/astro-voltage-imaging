@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw
 from utils.file_utils import write_json
 from utils.movie_utils import read_frame_rate
 from utils.suite2p_utils import load_suite2p_context
-from utils.spikes_utils import classify_spikes, detect_peaks_mad, highpass_traces
+from utils.spikes_utils import detect_peaks_mad, highpass_traces
 from utils.paths_utils import PathKind, path_for
 from utils.spike_params import spike_params_with_defaults
 
@@ -27,7 +27,7 @@ def _save_review_png(path: Path, trace, peaks, labels) -> None:
     pts = [xy(i, y[i]) for i in range(0, y.size, step)]
     if len(pts) > 1:
         draw.line(pts, fill="#222222", width=1)
-    colors = {"simple": "#2f80ed", "complex": "#d97706", "exclude": "#d64550"}
+    colors = {"spike": "#2f80ed", "exclude": "#d64550"}
     for frame, label in zip(peaks, labels):
         if 0 <= int(frame) < y.size:
             x, yy = xy(int(frame), y[int(frame)])
@@ -46,13 +46,12 @@ def main() -> None:
     rows = []
     for cell_id, (trace, det) in enumerate(zip(traces, detection)):
         peaks = detect_peaks_mad(trace, det, mad_factor=p["mad_factor"], duplicate_window_frames=p["duplicate_window_frames"], align_radius_frames=p["align_radius_frames"])
-        labels, features = classify_spikes(trace, peaks, fps, min_amplitude=p["min_amplitude"], min_width=p["min_width"], min_subthreshold=p["min_subthreshold"], subthreshold_window_seconds=0.2, baseline_window_seconds=1.5)
+        labels = np.full(peaks.size, "spike", dtype="U8")
         path_for(PathKind.SPIKE_CELL_DIR, out, cell=cell_id).mkdir(exist_ok=True)
-        payload = {"cell_id": np.asarray(cell_id, dtype=np.int32), "peaks_all": labels.peaks_all, "labels": labels.labels, "simple_peaks": labels.simple_peaks, "complex_peaks": labels.complex_peaks, "excluded_peaks": labels.excluded_peaks, **features}
-        np.savez_compressed(path_for(PathKind.SPIKE_PEAKS, out, cell=cell_id), **payload); np.savez_compressed(path_for(PathKind.SPIKE_LABELS, out, cell=cell_id), **payload)
+        np.savez_compressed(path_for(PathKind.SPIKE_LABELS, out, cell=cell_id), cell_id=np.asarray(cell_id, dtype=np.int32), peaks_all=peaks, labels=labels)
         np.savez(path_for(PathKind.SPIKE_PEAK_PARAMS, out, cell=cell_id), threshold_method="mad", mad_threshold_factor=p["mad_factor"], highpass_cutoff_hz=p["highpass_cutoff_hz"])
-        _save_review_png(path_for(PathKind.SPIKE_REVIEW_PNG, out, cell=cell_id), trace, labels.peaks_all, labels.labels)
-        rows.append({"cell_id": cell_id, "all": int(labels.peaks_all.size), "simple": int(labels.simple_peaks.size), "complex": int(labels.complex_peaks.size)})
+        _save_review_png(path_for(PathKind.SPIKE_REVIEW_PNG, out, cell=cell_id), trace, peaks, labels)
+        rows.append({"cell_id": cell_id, "spikes": int(peaks.size)})
     write_json(path_for(PathKind.RUN_METRICS_JSON, out), {"cells": rows})
 
 

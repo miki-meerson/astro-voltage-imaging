@@ -93,9 +93,9 @@ SAVE_BINNED_STA_MOVIES = True
 SAVE_FIJI_TIFS = False  # save each binned STA movie as an ImageJ .tif in <experiment>/sta_movies_tif/cell_<N>/ INSTEAD of the .npy in the run folder (needs SAVE_BINNED_STA_MOVIES)
 OVERWRITE = True
 CELL_IDS: list[int] | str = g.ALL_GROUP
-RESULT_TYPES = (g.ALL_GROUP, "simple", "complex")
+RESULT_TYPES = (g.ALL_GROUP,)
 BEHAVIORAL_GROUPS = ("active", "inactive")
-VALID_RESULT_TYPES = {g.ALL_GROUP, "simple", "complex", g.ANATOMY_GROUP, "behavioral"}
+VALID_RESULT_TYPES = {g.ALL_GROUP, g.ANATOMY_GROUP, "behavioral"}
 SUMMARY_CSV: str | None = None
 
 TIMING_PHASES = ("spikes+pool", "observed STA", "surrogate events", "surrogate STA", "baseline map", "clusters", "saving")  # seconds per cell, one log line
@@ -523,39 +523,27 @@ def list_cells() -> list[int]:
     return [cell_id for cell_id in found if cell_id in wanted]
 
 
-def kept_spike_peaks(d) -> tuple[np.ndarray, np.ndarray]:
-    """(peaks, lower-case labels) of a spike-label file with the spikes the user labelled "exclude" removed.
-
-    Excluded spikes must never enter any STA (all / anatomy / simple / complex / behavioral).
-    """
-    peaks = np.asarray(d["peaks_all"], dtype=np.int32)
-    labels = np.char.lower(np.asarray(d["labels"]).astype("U8"))
-    keep = labels != "exclude"
-    return peaks[keep], labels[keep]
-
-
-def load_kept_peaks(cell_id: int) -> tuple[np.ndarray, np.ndarray]:
-    """(peaks, lower-case labels) of all kept spikes of a cell (everything but "exclude"), in the numbering of the analysed movie."""
+def load_kept_peaks(cell_id: int) -> np.ndarray:
+    """The kept spikes of a cell, in the numbering of the analysed movie: every spike of its label file except the ones the user labelled
+    "exclude". Excluded spikes must never enter any STA (all / anatomy / behavioral)."""
     with np.load(path_for(PathKind.SPIKE_CELL_DIR, spike_analysis_dir(), cell=cell_id) / g.SPIKE_LABELS, allow_pickle=True) as d:
-        return kept_spike_peaks(d)
+        peaks = np.asarray(d["peaks_all"], dtype=np.int32)
+        labels = np.char.lower(np.asarray(d["labels"]).astype("U8"))
+    return peaks[labels != "exclude"]
 
 
 def load_spikes(
     cell_id: int, n_frames: int, pre: int, post: int, centers: np.ndarray | None = None, silence: tuple[int, int] = (0, 0),
-) -> tuple[dict[str, np.ndarray], dict[str, int]]:
-    """({group: spikes used}, {group: number of valid spikes before the silence rule}) for the groups all, simple and complex.
+) -> tuple[np.ndarray, int]:
+    """(spikes used, number of valid spikes before the silence rule) of a cell.
 
     `centers` (the run's valid centres, splice-free when exclude_spikes_near_cuts is on) also drops spikes near splices. `silence` = (frames
-    before, frames after): a spike is used only if the cell has no other kept spike (any group, also outside the valid centres) that close."""
-    peaks, labels = load_kept_peaks(cell_id)
-
-    def valid(p: np.ndarray) -> np.ndarray:
-        p = filter_valid_peaks(p, n_frames, pre, post).astype(np.int32)
-        return p[np.isin(p, centers)] if centers is not None else p
-
-    valid_groups = {g.ALL_GROUP: valid(peaks), "simple": valid(peaks[labels == "simple"]), "complex": valid(peaks[labels == "complex"])}
-    used = {group: isolated_spikes(p, peaks, *silence) for group, p in valid_groups.items()}
-    return used, {group: int(p.size) for group, p in valid_groups.items()}
+    before, frames after): a spike is used only if the cell has no other kept spike (also outside the valid centres) that close."""
+    peaks = load_kept_peaks(cell_id)
+    valid = filter_valid_peaks(peaks, n_frames, pre, post).astype(np.int32)
+    if centers is not None:
+        valid = valid[np.isin(valid, centers)]
+    return isolated_spikes(valid, peaks, *silence), int(valid.size)
 
 
 def load_behavioral_spikes(
@@ -569,7 +557,7 @@ def load_behavioral_spikes(
     """(spikes used in the behavioral movie, number of valid ones before the silence rule). The silence rule is applied to the original
     frame numbers, then the spikes are remapped into the behavioral movie."""
     source_frames = np.asarray(source_frames, dtype=np.int32)
-    peaks, _ = load_kept_peaks(cell_id)
+    peaks = load_kept_peaks(cell_id)
 
     def remap(p: np.ndarray) -> np.ndarray:
         frame_pos = np.searchsorted(source_frames, p)
@@ -584,7 +572,7 @@ def load_behavioral_spikes(
 def cell_surrogate_pool(cell_id: int, frames: np.ndarray, silence: tuple[int, int]) -> np.ndarray:
     """Indices into `frames` (the original frame numbers of the run's valid centres) where a chance copy of a spike of this cell may be drawn:
     no kept spike of the cell within the silence window. Built once per cell."""
-    peaks, _ = load_kept_peaks(cell_id)
+    peaks = load_kept_peaks(cell_id)
     return silence_pool(frames, peaks, *silence)
 
 
@@ -1300,17 +1288,16 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     timing = dict.fromkeys(TIMING_PHASES, 0.0)
     silence = cfg["silence"]
     with timed(timing, "spikes+pool"):
-        spike_groups, n_before = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None, silence)
+        spikes, n_before = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None, silence)
         pool = cell_surrogate_pool(cell_id, _VALID_CENTERS, silence)
     save_neuron_sta_metadata(out_dir, cell_id, pre, post, baseline)
-    motion_row = run_motion_diagnostics(cell_id, spike_groups[g.ALL_GROUP], pool, cfg, out_dir)
+    motion_row = run_motion_diagnostics(cell_id, spikes, pool, cfg, out_dir)
 
     result_types = cfg.get("result_types", RESULT_TYPES)
-    standard = [(result_type, spike_groups[result_type], n_before[result_type]) for result_type in result_types if result_type != g.ANATOMY_GROUP]
-    rows = analyze_groups(cell_id, standard, pre, post, baseline, windows, out_dir, silence, pool, timing) if standard else []  # one pass for all of them
+    rows = analyze_groups(cell_id, [(g.ALL_GROUP, spikes, n_before)], pre, post, baseline, windows, out_dir, silence, pool, timing) if g.ALL_GROUP in result_types else []
     if g.ANATOMY_GROUP in result_types:  # its own crop of the movie: a pass of its own
         kwargs = anatomy_analysis_kwargs(cell_id, pre, baseline, cfg.get("anatomy_settings"))
-        anatomy = [(g.ANATOMY_GROUP, spike_groups[g.ALL_GROUP], n_before[g.ALL_GROUP])]
+        anatomy = [(g.ANATOMY_GROUP, spikes, n_before)]
         rows.extend(analyze_groups(cell_id, anatomy, pre, post, baseline, windows, out_dir, silence, pool, timing, **kwargs))
     for row in rows:
         row.update(motion_row)

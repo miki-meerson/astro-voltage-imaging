@@ -151,23 +151,15 @@ def _spike_record(settings: Settings, spike_run: dict, cell: str, canonical_id: 
     """The peaks row of a confirmed cell, read from the spike run's saved files (which are also copied into the confirmed-cell folder)."""
     spike_out = run_dir(settings, int(spike_run["id"]), bool(spike_run["is_test"]))
     labels_path = path_for(PathKind.SPIKE_LABELS, spike_out, cell=cell)
-    peaks_path = path_for(PathKind.SPIKE_PEAKS, spike_out, cell=cell)
     labels = read_npz_arrays(labels_path, "The spike labels file", default={})
-    peaks = read_npz_arrays(peaks_path, "The spike peaks file", default={})
     params = read_npz_arrays(path_for(PathKind.SPIKE_PEAK_PARAMS, spike_out, cell=cell), "The spike peak settings file", default={})
-    all_peaks = labels.get("peaks_all", peaks.get("peaks_all", peaks.get("all_peak_frames", [])))
-    simple_peaks = labels.get("simple_peaks", labels.get("simple_peak_frames", labels.get("peaks_simple", peaks.get("simple_peak_frames", []))))
-    complex_peaks = labels.get("complex_peaks", labels.get("complex_peak_frames", labels.get("peaks_complex", peaks.get("complex_peak_frames", []))))
+    all_peaks = labels.get("peaks_all", [])
     spikes_dir = path_for(PathKind.CONFIRMED_SPIKES_DIR, settings.project_root, canonical_id=canonical_id, cell=cell)
     return {
         "all_peak_frames_json": _as_json_array(all_peaks),
-        "simple_peak_frames_json": _as_json_array(simple_peaks),
-        "complex_peak_frames_json": _as_json_array(complex_peaks),
         "n_all_peaks": int(np.asarray(all_peaks).size),
-        "n_simple_peaks": int(np.asarray(simple_peaks).size),
-        "n_complex_peaks": int(np.asarray(complex_peaks).size),
         "peak_detection_params_json": json.dumps({k: _jsonable(v) for k, v in params.items()}),
-        "source_artifact_path": _copy_source_artifact(labels_path if labels_path.exists() else peaks_path, spikes_dir),
+        "source_artifact_path": _copy_source_artifact(labels_path, spikes_dir),
     }
 
 

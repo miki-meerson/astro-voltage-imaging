@@ -6,14 +6,12 @@
   let trace = [], peaks = [], labels = [], selected = -1, fps = 1;
   let start = 0, stop = 1000;
   let initialDetectionParams = {}, detectTimer = null, detectRequestId = 0;
-  const colors = {simple: "#4fa3ff", complex: "#f0a33a", exclude: "#e05260"};
+  const colors = {spike: "#4fa3ff", exclude: "#e05260"};
+  const MIN_SPAN = 50;  // frames: the most zoomed-in view
   const plot = {left: 76, right: 22, top: 28, bottom: 62};
   // the detector settings (and their defaults) come from the server with the cell's data; nothing is defined here
   const paramFormat = {
     mad_factor: v => Number(v).toFixed(1),
-    min_amplitude: v => Number(v).toFixed(2),
-    min_width: v => Math.round(Number(v)).toString(),
-    min_subthreshold: v => Number(v).toFixed(2),
   };
 
   function resizeCanvas() {
@@ -168,33 +166,24 @@
     ctx.textBaseline = "alphabetic";
     ctx.fillText(`Frames ${start} - ${stop}  (${fmtTime(start)} - ${fmtTime(stop)})`, plot.left, 22);
     const legendY = 24;
-    let lx = canvas.width - 360;
-    for (const item of [["simple", colors.simple], ["complex", colors.complex], ["excluded", colors.exclude]]) {
+    let lx = canvas.width - 220;
+    for (const item of [["spike", colors.spike], ["excluded", colors.exclude]]) {
       ctx.fillStyle = item[1];
       ctx.beginPath();
       ctx.arc(lx, legendY - 5, 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#d6dde6";
       ctx.fillText(item[0], lx + 12, legendY);
-      lx += item[0] === "complex" ? 112 : 96;
+      lx += 96;
     }
   }
   function updateSelected() {
     const el = document.getElementById("selected-info");
     el.textContent = selected >= 0 ? `Frame ${peaks[selected]} / ${labels[selected]}` : "No Spike Selected";
   }
-  function updateDetectionStats(data = null) {
-    const counts = data || countLabels();
-    document.getElementById("detection-stats").textContent =
-      `${counts.n_total} peaks / ${counts.n_simple} simple / ${counts.n_complex} complex`;
-  }
-  function countLabels() {
-    let nSimple = 0, nComplex = 0;
-    for (const label of labels) {
-      if (label === "simple") nSimple += 1;
-      if (label === "complex") nComplex += 1;
-    }
-    return {n_total: peaks.length, n_simple: nSimple, n_complex: nComplex};
+  function updateDetectionStats() {
+    const excluded = labels.filter(label => label === "exclude").length;
+    document.getElementById("detection-stats").textContent = `${peaks.length} spikes (${excluded} excluded)`;
   }
   function getDetectionParams() {
     const params = {};
@@ -238,7 +227,7 @@
       labels = (data.labels || []).map(String);
       selected = -1;
       updateSelected();
-      updateDetectionStats(data);
+      updateDetectionStats();
       draw();
       status.textContent = "Preview updated. Save Edits to keep these peaks.";
     } catch (error) {
@@ -252,12 +241,64 @@
     else { peaks.push(frame); labels.push(label); selected = peaks.length - 1; }
     updateSelected(); updateDetectionStats(); draw();
   }
-  canvas.addEventListener("click", (event) => {
+  function canvasPoint(event) {
     const rect = canvas.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * canvas.width / rect.width;
-    const y = (event.clientY - rect.top) * canvas.height / rect.height;
-    if (x < plot.left || x > plot.left + plotWidth() || y < plot.top || y > plot.top + plotHeight()) return;
-    const frame = xToFrame(x);
+    return {x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height};
+  }
+  function insidePlot(p) {
+    return p.x >= plot.left && p.x <= plot.left + plotWidth() && p.y >= plot.top && p.y <= plot.top + plotHeight();
+  }
+  // the view is `span` frames from `first`, kept inside the trace
+  function setView(first, span) {
+    span = Math.max(Math.min(MIN_SPAN, trace.length), Math.min(trace.length, Math.round(span)));
+    start = Math.max(0, Math.min(trace.length - span, Math.round(first)));
+    stop = start + span;
+    draw();
+  }
+  // zoom so that the frame under the cursor stays under the cursor
+  function zoomAt(frame, factor) {
+    const span = stop - start, newSpan = span * factor;
+    setView(frame - (frame - start) / span * newSpan, newSpan);
+  }
+  const ZOOM_STEP = 1.25;
+  function zoomIn() { zoomAt((start + stop) / 2, 1 / ZOOM_STEP); }
+  function zoomOut() { zoomAt((start + stop) / 2, ZOOM_STEP); }
+  function fitAll() { setView(0, trace.length); }
+  function applyLabel(label) {
+    if (selected < 0) return;
+    if (label === "delete") { peaks.splice(selected, 1); labels.splice(selected, 1); selected = -1; }
+    else labels[selected] = label;
+    updateSelected(); updateDetectionStats(); draw();
+  }
+
+  canvas.addEventListener("wheel", (event) => {
+    const p = canvasPoint(event);
+    if (!insidePlot(p)) return;
+    event.preventDefault();
+    zoomAt(xToFrame(p.x), event.deltaY < 0 ? 1 / ZOOM_STEP : ZOOM_STEP);
+  }, {passive: false});
+
+  // drag = move the view; a click that did not move selects the nearest spike; a double-click adds a spike
+  let drag = null, dragged = false;
+  canvas.addEventListener("mousedown", (event) => {
+    const p = canvasPoint(event);
+    dragged = false;
+    if (event.button === 0 && insidePlot(p)) drag = {x: p.x, first: start, span: stop - start};
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (!drag) return;
+    const dx = canvasPoint(event).x - drag.x;
+    if (!dragged && Math.abs(dx) <= 4) return;
+    dragged = true;
+    canvas.style.cursor = "grabbing";
+    setView(drag.first - dx / plotWidth() * drag.span, drag.span);
+  });
+  window.addEventListener("mouseup", () => { drag = null; canvas.style.cursor = ""; });
+  canvas.addEventListener("click", (event) => {
+    if (dragged) { dragged = false; return; }
+    const p = canvasPoint(event);
+    if (!insidePlot(p)) return;
+    const frame = xToFrame(p.x);
     let best = -1, dist = Infinity;
     for (let i = 0; i < peaks.length; i++) {
       const d = Math.abs(peaks[i] - frame);
@@ -267,37 +308,27 @@
     updateSelected(); draw();
   });
   canvas.addEventListener("dblclick", (event) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * canvas.width / rect.width;
-    const y = (event.clientY - rect.top) * canvas.height / rect.height;
-    if (x < plot.left || x > plot.left + plotWidth() || y < plot.top || y > plot.top + plotHeight()) return;
-    addPeak(xToFrame(x), "simple");
+    const p = canvasPoint(event);
+    if (insidePlot(p)) addPeak(xToFrame(p.x), "spike");
   });
-  document.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
-    if (selected < 0) return;
-    const label = btn.dataset.label;
-    if (label === "delete") { peaks.splice(selected, 1); labels.splice(selected, 1); selected = -1; }
-    else labels[selected] = label;
-    updateSelected(); updateDetectionStats(); draw();
-  }));
-  function shift(frac) {
-    const span = stop - start, delta = Math.round(span * frac);
-    start = Math.max(0, Math.min(trace.length - span, start + delta));
-    stop = start + span; draw();
-  }
-  function zoom(factor) {
-    const mid = (start + stop) / 2;
-    const span = Math.max(100, Math.round((stop - start) * factor));
-    start = Math.max(0, Math.round(mid - span / 2));
-    stop = Math.min(trace.length, start + span);
-    start = Math.max(0, stop - span); draw();
-  }
-  document.getElementById("zoom-in").onclick = () => zoom(0.55);
-  document.getElementById("zoom-out").onclick = () => zoom(1.8);
-  document.getElementById("left").onclick = () => shift(-0.5);
-  document.getElementById("right").onclick = () => shift(0.5);
-  document.getElementById("add-simple").onclick = () => addPeak(document.getElementById("frame-input").value, "simple");
-  document.getElementById("add-complex").onclick = () => addPeak(document.getElementById("frame-input").value, "complex");
+  document.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => applyLabel(btn.dataset.label)));
+  document.addEventListener("keydown", (event) => {
+    if (event.target.matches("input, select, textarea")) return;
+    const span = stop - start;
+    if (event.key === "ArrowLeft") setView(start - span * 0.2, span);
+    else if (event.key === "ArrowRight") setView(start + span * 0.2, span);
+    else if (event.key === "+" || event.key === "=") zoomIn();
+    else if (event.key === "-") zoomOut();
+    else if (event.key === "Home") fitAll();
+    else if (event.key === "Delete" || event.key === "Backspace") applyLabel("delete");
+    else if (event.key === "x") applyLabel("exclude");
+    else return;
+    event.preventDefault();
+  });
+  document.getElementById("zoom-in").onclick = zoomIn;
+  document.getElementById("zoom-out").onclick = zoomOut;
+  document.getElementById("fit-all").onclick = fitAll;
+  document.getElementById("add-spike").onclick = () => addPeak(document.getElementById("frame-input").value, "spike");
   document.querySelectorAll("[data-detect-param]").forEach(input => {
     input.addEventListener("input", () => {
       updateParamOutput(input);

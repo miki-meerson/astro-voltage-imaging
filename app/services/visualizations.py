@@ -22,11 +22,9 @@ from utils.suite2p_utils import suite2p_roi_mask
 
 RESULT_ORDER = {
     g.ALL_GROUP: 0,
-    "simple": 1,
-    "complex": 2,
-    g.ANATOMY_GROUP: 3,
-    "behavioral_active": 4,
-    "behavioral_inactive": 5,
+    g.ANATOMY_GROUP: 1,
+    "behavioral_active": 2,
+    "behavioral_inactive": 3,
 }
 NEURON_COLOR = "#f7d154"
 DEP_COLOR = polarity.COLORS[polarity.DEPOLARIZING]

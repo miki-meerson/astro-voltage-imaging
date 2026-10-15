@@ -4,7 +4,7 @@
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   const plot = {left: 76, right: 22, top: 28, bottom: 62};
-  const colors = {simple: "#4fa3ff", complex: "#f0a33a", exclude: "#e05260"};
+  const colors = {spike: "#4fa3ff", exclude: "#e05260"};
   let trace = [], peaks = [], labels = [], fps = 1, start = 0, stop = 0;
 
   function resize() {

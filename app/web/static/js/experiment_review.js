@@ -49,7 +49,7 @@
     currentReviewChip.textContent = option?.dataset.reviewed === "1" ? "Reviewed" : "Unreviewed";
     currentReviewChip.classList.toggle("completed", option?.dataset.reviewed === "1");
     currentPeakSummary.textContent = info
-      ? `${info.n_peaks} peaks (${info.n_simple} simple, ${info.n_complex} complex, ${info.n_excluded} excluded)`
+      ? `${info.n_peaks} spikes (${info.n_excluded} excluded)`
       : "";
     prevCellButton.disabled = index <= 0;
     nextCellButton.disabled = index < 0 || index >= options.length - 1;

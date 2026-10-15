@@ -208,6 +208,8 @@ def confirm_suite2p(settings: Settings, experiment_id: int) -> int:
     forget_suite2p(exp["source_path"])  # the user says the extraction is done: read the Suite2p files again
     neurons = discover_neurons(exp["source_path"])
     repo.confirm_suite2p(settings, experiment_id, neurons, report, ANALYSIS_STEPS)
+    # the cells are new (the old analysis runs were cancelled above): detect their spikes now; editing them is manual, afterwards
+    launch_run(settings, create_run(settings, experiment_id, g.SPIKE_STEP, settings.defaults.get(g.SPIKE_STEP, {}), backend="local"))
     return len(neurons)
 
 

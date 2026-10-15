@@ -17,7 +17,7 @@ STA_CLUSTER_COLUMNS = (
     "mean_trace_json", "t_rel_json", "mask_artifact_path",
 )
 PEAKS_COLUMNS = (
-    "all_peak_frames_json", "simple_peak_frames_json", "complex_peak_frames_json", "n_all_peaks", "n_simple_peaks", "n_complex_peaks",
+    "all_peak_frames_json", "n_all_peaks",
     "peak_detection_params_json", "source_artifact_path",
 )
 

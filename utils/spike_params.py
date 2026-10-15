@@ -7,9 +7,6 @@ from __future__ import annotations
 # name -> (kind, default); the limits of what can be chosen are the min / max of the sliders in the editor page
 SPIKE_PARAM_SPECS = {
     "mad_factor": (float, 4.0),
-    "min_amplitude": (float, 0.30),
-    "min_width": (float, 18.0),
-    "min_subthreshold": (float, 0.10),
     "duplicate_window_frames": (int, 30),
     "align_radius_frames": (int, 5),
     "highpass_cutoff_hz": (float, 0.07),

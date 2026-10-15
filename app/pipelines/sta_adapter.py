@@ -13,7 +13,7 @@ from utils.hypotheses import run_settings
 from utils.paths_utils import PathKind, cell_dirs, path_for, sta_dir_of_run
 from utils.suite2p_utils import load_suite2p_context
 
-DEFAULT_RESULT_TYPES = [g.ALL_GROUP, "simple", "complex", "behavioral"]
+DEFAULT_RESULT_TYPES = [g.ALL_GROUP, "behavioral"]
 
 
 def _cluster(params: dict) -> dict:

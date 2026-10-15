@@ -68,7 +68,7 @@
 {% elif notice and notice.startswith("suite2p_confirmed_") %}
 <section class="panel">
   <span class="chip completed">Suite2p Refreshed</span>
-  <p class="muted">Discovered {{ notice.replace("suite2p_confirmed_", "") }} current cells. Previous analysis runs were cancelled and fresh spike, behavior, and anatomy runs were started.</p>
+  <p class="muted">Discovered {{ notice.replace("suite2p_confirmed_", "") }} current cells. Previous analysis runs were cancelled and spike detection was started for the new cells.</p>
 </section>
 {% elif notice and notice.startswith("data_reset_") %}
 <section class="panel">

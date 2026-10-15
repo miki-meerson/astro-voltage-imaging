@@ -1,17 +1,6 @@
-from dataclasses import dataclass
-
 import numpy as np
-from scipy.signal import find_peaks, peak_widths
+from scipy.signal import find_peaks
 from scipy.signal import butter, filtfilt
-
-
-@dataclass(frozen=True)
-class PeakLabels:
-    peaks_all: np.ndarray
-    labels: np.ndarray
-    simple_peaks: np.ndarray
-    complex_peaks: np.ndarray
-    excluded_peaks: np.ndarray
 
 
 def highpass_traces(traces: np.ndarray, fps: int, cutoff_hz: float, order: int = 3) -> np.ndarray:
@@ -66,84 +55,3 @@ def detect_peaks_mad(
     peaks, _ = find_peaks(detection_trace, height=mad_threshold(detection_trace, mad_factor))
     peaks = collapse_nearby_peaks(detection_trace, peaks, duplicate_window_frames)
     return align_peaks_to_trace(original_trace, peaks, align_radius_frames)
-
-
-def spike_features(
-    trace: np.ndarray,
-    peaks: np.ndarray,
-    fps: int,
-    subthreshold_window_seconds: float,
-    baseline_window_seconds: float,
-) -> dict[str, np.ndarray]:
-    peaks = np.asarray(peaks, dtype=np.int32)
-    if peaks.size == 0:
-        return {
-            "amplitude": np.empty(0, dtype=np.float32),
-            "width": np.empty(0, dtype=np.float32),
-            "subthreshold_depolarization": np.empty(0, dtype=np.float32),
-        }
-
-    widths = peak_widths(trace, peaks, rel_height=0.5)[0].astype(np.float32)
-    depol_window = max(3, int(round(subthreshold_window_seconds * fps)))
-    baseline_window = max(3, int(round(baseline_window_seconds * fps)))
-    gap = max(1, int(round(0.03 * fps)))
-
-    amplitudes = np.empty(peaks.size, dtype=np.float32)
-    subthreshold = np.empty(peaks.size, dtype=np.float32)
-    for i, peak in enumerate(peaks):
-        baseline_lo = max(0, int(peak) - depol_window - baseline_window)
-        baseline_hi = max(baseline_lo + 1, int(peak) - depol_window)
-        depol_lo = max(0, int(peak) - depol_window)
-        depol_hi = max(depol_lo + 1, int(peak) - gap)
-        baseline = float(np.median(trace[baseline_lo:baseline_hi]))
-        amplitudes[i] = float(trace[peak] - baseline)
-        subthreshold[i] = float(np.mean(trace[depol_lo:depol_hi]) - baseline)
-
-    return {
-        "amplitude": amplitudes,
-        "width": widths,
-        "subthreshold_depolarization": subthreshold,
-    }
-
-
-def classify_spikes(
-    trace: np.ndarray,
-    peaks: np.ndarray,
-    fps: int,
-    min_amplitude: float,
-    min_width: float,
-    min_subthreshold: float,
-    subthreshold_window_seconds: float = 0.2,
-    baseline_window_seconds: float = 1.5,
-) -> tuple[PeakLabels, dict[str, np.ndarray]]:
-    peaks = np.asarray(peaks, dtype=np.int32)
-    features = spike_features(trace, peaks, fps, subthreshold_window_seconds, baseline_window_seconds)
-    labels = np.full(peaks.size, "simple", dtype="U8")
-
-    if peaks.size == 0:
-        features["score"] = np.empty(0, dtype=np.float32)
-    else:
-        amplitude = features["amplitude"]
-        width = features["width"]
-        subthreshold = features["subthreshold_depolarization"]
-        complex_mask = (amplitude >= min_amplitude) & (width >= min_width) & (subthreshold >= min_subthreshold)
-        labels[complex_mask] = "complex"
-        features["score"] = np.minimum.reduce(
-            [
-                amplitude / min_amplitude,
-                width / min_width,
-                subthreshold / min_subthreshold,
-            ]
-        ).astype(np.float32)
-
-    labels = np.char.lower(labels)
-    return (
-        PeakLabels(
-            peaks_all=peaks,
-            labels=labels,
-            simple_peaks=peaks[labels == "simple"],
-            complex_peaks=peaks[labels == "complex"],
-            excluded_peaks=peaks[labels == "exclude"],
-        ),
-        features,
-    )
