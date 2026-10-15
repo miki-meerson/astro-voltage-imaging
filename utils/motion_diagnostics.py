@@ -72,7 +72,7 @@ def motion_sta_stats(
     post: int,
     baseline_window: tuple[int, int],
     analysis_window: tuple[int, int],
-    flag_alpha: float = 0.01,
+    flag_alpha: float,
 ) -> dict:
     """Event-triggered average of each motion series vs the random-frame null of the STA maps.
 

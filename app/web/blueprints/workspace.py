@@ -16,7 +16,7 @@ from app.services.hypothesis_summary import cell_table, chosen_step, hypothesis_
 from app.services.run_views import build_validation_rows, run_view, validation_all_ok
 from app.services.runs import STA_RESULT_TYPES, sta_steps
 from app.services.spikes import current_suite2p_neurons, experiment_spike_review, spikes_edited_after_sta
-from app.services.visualizations import cell_result_cards
+from app.services.visualizations import cell_motion, cell_result_cards
 from app.services.workspace import page_data
 from app.web.common import FlatBlueprint, get_settings
 from utils import globals_utils as g
@@ -120,7 +120,7 @@ def experiment_cells(experiment_id):
     cells, table, message = _cell_list(settings, experiment_id, step, request.args)
     wanted = request.args.get("cell", type=int)
     selected = next((cell for cell in cells if cell["cell"] == wanted), None) if table is not None else None
-    sta_run, stale, cards = latest_run(settings, experiment_id, step), None, []
+    sta_run, stale, cards, motion, motion_message = latest_run(settings, experiment_id, step), None, [], None, ""
     spike_run = latest_run(settings, experiment_id, g.SPIKE_STEP)
     if selected is not None:
         edited = spikes_edited_after_sta(settings, spike_run, sta_run, selected["cell"])
@@ -129,8 +129,12 @@ def experiment_cells(experiment_id):
             cards = cell_result_cards(settings, neuron_repository.neuron_row(settings, selected["id"]), step)
         except FileNotFoundError as exc:
             message = str(exc)
+        try:
+            motion = cell_motion(settings, neuron_repository.neuron_row(settings, selected["id"]), step)
+        except FileNotFoundError as exc:  # the cards can exist without the motion test (an older run): say so next to the test
+            motion_message = str(exc)
     return render_template("cells.html", **data, hypotheses=[hypothesis_name(s) for s in sta_steps()], selected_hypothesis=hypothesis_name(step), cells=cells, message=message,
-                           selected=selected, sta_run=sta_run, stale=stale, cards=cards, only_significant=request.args.get("significant") == "1", only_anatomy=request.args.get("anatomy") == "1")
+                           selected=selected, sta_run=sta_run, stale=stale, cards=cards, motion=motion, motion_message=motion_message, only_significant=request.args.get("significant") == "1", only_anatomy=request.args.get("anatomy") == "1")
 
 
 @bp.get("/experiments/<int:experiment_id>/runs")

@@ -48,10 +48,9 @@
 .spk-wrap:fullscreen .plot { height: 100vh !important; }
 .spk-full { position: absolute; top: 6px; right: 8px; z-index: 3; min-height: 0; padding: 1px 8px; font-size: var(--fs-sm); opacity: .5; }
 .spk-wrap:hover .spk-full { opacity: 1; }
-.analysis-image { display: block; width: 100%; object-fit: contain; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); }
 .zv { position: relative; overflow: hidden; height: var(--h, 320px); min-height: 140px; resize: vertical; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); touch-action: none; cursor: grab; }
 .zv:active { cursor: grabbing; }
-.zv > .analysis-image, .zv > .smv-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; width: auto; border: none; border-radius: 0; }
+.zv > .smv-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; width: auto; border: none; border-radius: 0; }
 .zv:fullscreen { height: 100vh !important; resize: none; }
 .zv-bar { position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; z-index: 5; opacity: .35; transition: opacity .15s; }
 .zv:hover .zv-bar, .zv:fullscreen .zv-bar { opacity: 1; }
@@ -87,6 +86,4 @@
 .controls { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
 .controls input[type=range] { flex: 1 1 120px; width: auto; min-width: 100px; padding: 0; }
 #smv-trace, #smv-groups { height: 150px; margin-top: 0; }
-details.panel-section { margin-top: var(--s4); padding: var(--s3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-details.panel-section summary { cursor: pointer; }
 @media (max-width: 1000px) { .movie-layout { grid-template-columns: minmax(0, 1fr); } }

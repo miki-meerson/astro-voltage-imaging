@@ -28,12 +28,7 @@ RESULT_ORDER = {
     "behavioral_inactive": 3,
 }
 NEURON_COLOR = "#f7d154"
-DEP_COLOR = polarity.COLORS[polarity.DEPOLARIZING]
-HYPER_COLOR = polarity.COLORS[polarity.HYPERPOLARIZING]
-BG = "#10151c"
 PANEL = "#0b0f14"
-TEXT = "#edf3fa"
-MUTED = "#9aa8b7"
 
 
 def _font(size: int):
@@ -84,21 +79,6 @@ def _fit_tile(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     work = image.resize((max(1, int(round(image.width * scale))), max(1, int(round(image.height * scale)))), Image.Resampling.BICUBIC)
     tile.alpha_composite(work.convert("RGBA"), ((size[0] - work.width) // 2, (size[1] - work.height) // 2))
     return tile
-
-
-def _nice_ticks(lo: float, hi: float, n: int = 5) -> list[float]:
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        return [lo, hi]
-    raw = (hi - lo) / max(1, n - 1)
-    power = 10 ** np.floor(np.log10(raw))
-    step = next((m * power for m in (1, 2, 5, 10) if m * power >= raw), raw)
-    first = np.ceil(lo / step) * step
-    ticks = []
-    value = first
-    while value <= hi + step * 0.5:
-        ticks.append(float(value))
-        value += step
-    return ticks
 
 
 def _message(title: str, message: str) -> BytesIO:
@@ -283,95 +263,38 @@ MOTION_SERIES_LABELS = {
 }
 
 
-def _draw_motion_tile(rels, observed, null_mean, null_sd, title: str, p: float, z: float, size: tuple[int, int]) -> Image.Image:
-    """Spike-triggered average of one motion series (colored) over its random-frame null (grey band, +-2 sd)."""
-    tile = Image.new("RGB", size, "#0b0f14")
-    draw = ImageDraw.Draw(tile)
-    w, h = size
-    pad_l, pad_r, pad_t, pad_b = 62, 14, 30, 34
-    plot = (pad_l, pad_t, w - pad_r, h - pad_b)
-    draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=8, fill="#0b0f14", outline="#26303a", width=1)
-    significant = bool(np.isfinite(p) and p <= 0.01)
-    draw.text((12, 9), title, fill=TEXT, font=_font(14), anchor="lm")
-    stat = "no spikes" if not np.isfinite(p) else f"p={p:.3f}  z={z:.1f}"
-    draw.text((w - 12, 9), stat, fill=DEP_COLOR if significant else MUTED, font=_font(14), anchor="rm")
-    rels = np.asarray(rels, dtype=float)
-    obs = np.asarray(observed, dtype=float)
-    mu = np.asarray(null_mean, dtype=float)
-    sd = np.asarray(null_sd, dtype=float)
-    if not np.isfinite(obs).any():
-        draw.text((w // 2, h // 2), "no data", fill=MUTED, font=_font(15), anchor="mm")
-        return tile
-    lo = np.nanmin(np.r_[obs, mu - 2 * sd])
-    hi = np.nanmax(np.r_[obs, mu + 2 * sd])
-    pad = max((hi - lo) * 0.08, 1e-9)
-    y0, y1 = lo - pad, hi + pad
-    x0, x1 = float(rels.min()), float(rels.max())
-
-    def xy(t, v):
-        return (
-            int(round(plot[0] + (float(t) - x0) / max(x1 - x0, 1e-9) * (plot[2] - plot[0]))),
-            int(round(plot[3] - (float(v) - y0) / max(y1 - y0, 1e-12) * (plot[3] - plot[1]))),
-        )
-
-    draw.rectangle(plot, outline="#33404e", width=1)
-    for value in _nice_ticks(y0, y1, 4):
-        if not (y0 <= value <= y1):
-            continue
-        _, py = xy(x0, value)
-        draw.line([(plot[0], py), (plot[2], py)], fill="#1d2630", width=1)
-        draw.text((plot[0] - 6, py), f"{value:.3g}", fill="#aeb9c6", font=_font(12), anchor="rm")
-    for value in _nice_ticks(x0, x1, 5):
-        px, _ = xy(value, y0)
-        draw.text((px, plot[3] + 8), f"{value:g}", fill="#aeb9c6", font=_font(12), anchor="ma")
-    band = [xy(t, m + 2 * s) for t, m, s in zip(rels, mu, sd)] + [xy(t, m - 2 * s) for t, m, s in zip(rels[::-1], mu[::-1], sd[::-1])]
-    if len(band) > 3:
-        draw.polygon(band, fill="#222c37")
-    if x0 <= 0 <= x1:
-        zx = xy(0, y0)[0]
-        draw.line([(zx, plot[1]), (zx, plot[3])], fill="#5d6a78", width=1)
-    pts = [xy(t, v) for t, v in zip(rels, obs)]
-    if len(pts) > 1:
-        draw.line(pts, fill="#071015", width=5)
-        draw.line(pts, fill=DEP_COLOR if significant else NEURON_COLOR, width=3)
-    return tile
+def _motion_verdict(flag: bool, min_p: float, alpha: float, p_floor: float) -> tuple[str, str]:
+    """(kind, sentence) of the motion test of a cell: kind is flag, unresolved, none or few_spikes."""
+    if flag:
+        return "flag", f"The spikes of this cell are time-locked to motion (smallest p = {min_p:.3f}, limit {alpha:g}). Treat its clusters with caution."
+    if p_floor > alpha:
+        return "unresolved", f"Cannot resolve p <= {alpha:g}: only {int(round(1 / p_floor)) - 1} random copies (the smallest possible p is {p_floor:.3f}). Read the curves against the grey band."
+    if np.isfinite(min_p):
+        return "none", f"No spike-locked motion found (smallest p = {min_p:.3f}, limit {alpha:g}). The shifts are the motion that was corrected; motion left after the correction shows only in the registration quality."
+    return "few_spikes", "There are not enough spikes for the motion test."
 
 
-def render_motion_sta(settings: Settings, neuron_row, step: str) -> BytesIO:
-    """Cell Detail: is this cell's spiking time-locked to motion / registration quality? (diagnostic only; run of the hypothesis `step`)"""
+def cell_motion(settings: Settings, neuron_row, step: str) -> dict:
+    """The motion test of a cell from the run of the hypothesis `step`, as plain numbers for the page to draw: {n_peaks, min_p, alpha, verdict, text,
+    series: [{name, label, rels, observed, null_mean, null_sd, p, z}]}. Raises FileNotFoundError when the run or the test result is missing."""
     sta_run = run_repository.latest_run(settings, int(neuron_row["experiment_id"]), step)
     if sta_run is None:
-        return _message("Motion diagnostics", "No completed STA maps run is available for this experiment.")
-    cell_id = int(neuron_row["pipeline_neuron_id"])
-    path = path_for(PathKind.MOTION_STA, sta_dir_of_run(run_dir(settings, int(sta_run["id"]), bool(sta_run["is_test"]))), cell=cell_id)
+        raise FileNotFoundError(f"No completed run of hypothesis '{hypothesis_name(step)}' is available for this experiment.")
+    path = path_for(PathKind.MOTION_STA, sta_dir_of_run(run_dir(settings, int(sta_run["id"]), bool(sta_run["is_test"]))), cell=int(neuron_row["pipeline_neuron_id"]))
     if not path.exists():
-        return _message("Motion diagnostics", "Not computed for this cell. Re-run STA Maps (motion diagnostics need shifts that match the analysed frames).")
+        raise FileNotFoundError("The motion test was not computed for this cell. The STA Maps step writes it: rerun the analysis for this hypothesis.")
+
+    def numbers(values):
+        return [None if not np.isfinite(v) else round(float(v), 6) for v in np.asarray(values, dtype=float).ravel()]
+
     with np.load(path, allow_pickle=True) as d:
         names = [str(n) for n in d["series_names"]]
-        rels = np.asarray(d["rels_analysis"])
-        observed, null_mean, null_sd = d["observed"], d["null_mean"], d["null_sd"]
-        p, z = np.asarray(d["p"], dtype=float), np.asarray(d["z"], dtype=float)
-        flag, min_p, alpha = bool(d["flag"]), float(d["min_p"]), float(d["flag_alpha"])
-        p_floor = float(d["p_floor"])
+        rels = [int(v) for v in np.asarray(d["rels_analysis"]).ravel()]
+        flag, min_p, alpha, p_floor = bool(d["flag"]), float(d["min_p"]), float(d["flag_alpha"]), float(d["p_floor"])
+        series = [{
+            "name": name, "label": MOTION_SERIES_LABELS.get(name, name), "rels": rels, "observed": numbers(d["observed"][i]), "null_mean": numbers(d["null_mean"][i]),
+            "null_sd": numbers(d["null_sd"][i]), "p": numbers([d["p"][i]])[0], "z": numbers([d["z"][i]])[0],
+        } for i, name in enumerate(names)]
         n_peaks = int(d["n_peaks_used"])
-    tile_w, tile_h, gap, margin, head = 430, 210, 18, 22, 84
-    cols, nrows = 3, int(np.ceil(len(names) / 3))
-    width = margin * 2 + cols * tile_w + (cols - 1) * gap
-    height = head + nrows * tile_h + (nrows - 1) * gap + margin
-    canvas = Image.new("RGB", (width, height), BG)
-    draw = ImageDraw.Draw(canvas)
-    draw.text((margin, 24), f"{neuron_row['canonical_id']} | Cell {cell_id} | Spike-triggered motion ({n_peaks} spikes)", fill=TEXT, font=_font(22), anchor="la")
-    verdict = (
-        f"MOTION-LOCKED: spikes are time-locked to motion (min p={min_p:.3f} <= {alpha:g}); treat this cell's STA clusters with caution"
-        if flag else
-        f"Cannot resolve p <= {alpha:g}: only {int(round(1 / p_floor)) - 1} permutations (smallest possible p = {p_floor:.3f}). Read the curves vs the grey band, or re-run with more permutations"
-        if p_floor > alpha else
-        f"No spike-locked motion detected (min p={min_p:.3f} > {alpha:g}); shifts shown are the corrected motion, residual motion is only visible via registration quality"
-        if np.isfinite(min_p) else "Not enough spikes for the motion test"
-    )
-    draw.text((margin, 58), verdict, fill=DEP_COLOR if flag else MUTED, font=_font(15), anchor="la")
-    for i, name in enumerate(names):
-        r, c = divmod(i, cols)
-        tile = _draw_motion_tile(rels, observed[i], null_mean[i], null_sd[i], MOTION_SERIES_LABELS.get(name, name), float(p[i]), float(z[i]), (tile_w, tile_h))
-        canvas.paste(tile, (margin + c * (tile_w + gap), head + r * (tile_h + gap)))
-    return _image_response(canvas)
+    verdict, text = _motion_verdict(flag, min_p, alpha, p_floor)
+    return {"n_peaks": n_peaks, "min_p": None if not np.isfinite(min_p) else min_p, "alpha": alpha, "verdict": verdict, "text": text, "series": series}

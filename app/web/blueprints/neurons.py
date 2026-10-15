@@ -15,7 +15,7 @@ from app.services.spikes import (
     spike_review_info,
     stale_suite2p_cell_message,
 )
-from app.services.visualizations import render_motion_sta, render_result_map
+from app.services.visualizations import render_result_map
 from app.web.common import FlatBlueprint, get_settings
 from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
@@ -35,15 +35,6 @@ def neuron_sta_map(neuron_id):
     if n is None:
         return render_template("error.html", title="Missing Cell", message="Cell not found"), 404
     return send_file(render_result_map(settings, n, _step(), request.args.get("type", "")), mimetype="image/png")
-
-
-@bp.get("/neurons/<int:neuron_id>/motion-sta.png")
-def neuron_motion_sta(neuron_id):
-    settings = get_settings()
-    n = neuron_repository.neuron_row(settings, neuron_id)
-    if n is None:
-        return render_template("error.html", title="Missing Cell", message="Cell not found"), 404
-    return send_file(render_motion_sta(settings, n, _step()), mimetype="image/png")
 
 
 @bp.get("/neurons/<int:neuron_id>/anatomy-crop/stack")

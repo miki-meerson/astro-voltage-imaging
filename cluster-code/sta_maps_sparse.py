@@ -86,7 +86,7 @@ MIN_CLUSTER_FOOTPRINT_FULLRES_PX = 0.0  # min spatial footprint, in full-resolut
 MIN_CLUSTER_FRAMES = 0  # min number of frames a cluster must span
 EXCLUDE_SPIKES_NEAR_CUTS = False  # drop spikes whose analysis window contains a splice where a bad segment was removed (the random-frame chance copies are drawn from the same splice-free frames)
 MOTION_DIAGNOSTICS = True  # diagnostic only: spike-triggered motion / registration-quality test per cell
-MOTION_FLAG_ALPHA = 0.01
+MOTION_FLAG_ALPHA = 0.05
 MOTION_REG_QUALITY_BIN = 0  # spatial bin of the movie used for the registration-quality series; 0 = auto
 
 SAVE_BINNED_STA_MOVIES = True
