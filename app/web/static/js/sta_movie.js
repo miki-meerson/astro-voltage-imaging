@@ -1,5 +1,6 @@
 (() => {
-  const NEURON_ID = JSON.parse(document.getElementById("page-data").textContent).neuronId;
+  const PAGE = JSON.parse(document.getElementById("page-data").textContent);
+  const NEURON_ID = PAGE.neuronId, HYPOTHESIS = PAGE.hypothesis;
   const root = document.getElementById("smv");
   if (!root) return;
   const $ = id => document.getElementById(id);
@@ -218,7 +219,7 @@
   trace.addEventListener("pointerup", () => { scrubbing = false; });
   window.addEventListener("resize", () => { if (M) { drawTrace(); drawGroups(); } });
 
-  fetch(`/neurons/${NEURON_ID}/anatomy-crop/stack`)
+  fetch(`/neurons/${NEURON_ID}/anatomy-crop/stack?h=${encodeURIComponent(HYPOTHESIS)}`)
     .then(async res => {
       if (!res.ok) { let m = `Movie unavailable (${res.status})`; try { m = (await res.json()).error || m; } catch (_) {} throw new Error(m); }
       return res.arrayBuffer();

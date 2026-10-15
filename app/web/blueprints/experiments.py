@@ -1,7 +1,6 @@
-"""Experiment pages: registry (index, add, scan), analysis page, notes, review data, experiment movie, run launch."""
+"""Experiment registry (index, add, scan, remove, reset, star), notes, validation, the analysis launch and the data endpoints of the experiment pages."""
 from __future__ import annotations
 
-import json
 import threading
 
 from flask import jsonify, redirect, render_template, request, url_for
@@ -9,7 +8,6 @@ from flask import jsonify, redirect, render_template, request, url_for
 from app.db import experiment_repository as repo
 from app.db.run_repository import latest_run, latest_step_statuses
 from app.services import caches
-from app.services.anatomy_cluster_summary import anatomy_cluster_summary
 from app.services.behavior_view import behavior_payload
 from app.services.experiments import (
     ANALYSIS_STEPS,
@@ -21,20 +19,13 @@ from app.services.experiments import (
     start_analysis,
     validate_experiment,
 )
+from app.services.hypothesis_summary import anatomy_cluster_summary, chosen_step
 from app.services.movies import pb_movie_path
-from app.services.run_views import (
-    STEP_LABELS,
-    run_view,
-    build_validation_rows,
-    validation_all_ok,
-)
-from app.services.runs import ACTIVE_STATUSES, create_run, default_sta_step, launch_run, pipeline_status, sta_steps
-from app.services.spikes import current_suite2p_neurons, review_cache_key, spike_review_info, spikes_edited_after_sta
-from app.services.sta_results import STA_RESULT_TYPES, sta_significant_summary
+from app.services.run_views import STEP_LABELS
+from app.services.runs import pipeline_status
 from app.web.common import FlatBlueprint, get_settings, movie_frame_response, movie_meta_response
 from app.web.security import safe_next
 from utils import globals_utils as g
-from utils.hypotheses import is_sta_step
 
 bp = FlatBlueprint("experiments", __name__)
 
@@ -111,62 +102,18 @@ def favorite_experiment(experiment_id):
 
 @bp.get("/experiments/<int:experiment_id>")
 def experiment(experiment_id):
-    settings = get_settings()
-    stage = repo.workflow_stage_of(settings, experiment_id)
-    if stage is None:
-        return render_template("error.html", title="Missing Experiment", message="Experiment not found"), 404
-    if stage == repo.STAGE_ANALYSIS_READY:
-        return redirect(url_for("experiment_analysis", experiment_id=experiment_id, **request.args))
-    return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, **request.args))
+    return redirect(url_for("experiment_overview", experiment_id=experiment_id, **request.args))
 
 
 @bp.get("/experiments/<int:experiment_id>/anatomy-clusters.json")
 def experiment_anatomy_clusters(experiment_id):
     settings = get_settings()
     try:
-        return jsonify(anatomy_cluster_summary(settings, experiment_id))
+        return jsonify(anatomy_cluster_summary(settings, experiment_id, chosen_step(request.args.get("h"))))
     except FileNotFoundError as exc:
         return jsonify({"available": False, "message": str(exc)}), 404
     except (ValueError, OSError, KeyError) as exc:
         return jsonify({"available": False, "message": str(exc)}), 400
-
-
-@bp.get("/experiments/<int:experiment_id>/analysis")
-def experiment_analysis(experiment_id):
-    settings = get_settings()
-    selected_neuron_id = request.args.get("neuron", "")
-    data = repo.experiment_page_data(settings, experiment_id, ANALYSIS_STEPS)
-    if data is None:
-        return render_template("error.html", title="Missing Experiment", message="Experiment not found"), 404
-    exp = data["exp"]
-    neurons = current_suite2p_neurons(exp["source_path"], data["neurons"])
-    runs = [run_view(r, settings) for r in data["runs"]]
-    analysis_latest = {step: run_view(row, settings) for step, row in data["latest_real_runs"].items()}
-    confirmed_count = data["confirmed_count"]
-    notes = data["notes"]
-    if selected_neuron_id and not any(str(n["id"]) == str(selected_neuron_id) for n in neurons):
-        selected_neuron_id = ""
-    active = any(r["status"] in ACTIVE_STATUSES for r in runs)
-    report = json.loads(exp["validation_report"] or "{}")
-    validation_rows = build_validation_rows(report)
-    return render_template(
-        "experiment.html",
-        exp=exp,
-        neurons=neurons,
-        runs=runs,
-        validation_rows=validation_rows,
-        validation_all_ok=validation_all_ok(validation_rows) and exp["validation_state"] == "valid",
-        active=active,
-        step_labels=STEP_LABELS,
-        analysis_latest=analysis_latest,
-        sta_steps=sta_steps(),
-        sta_result_types=STA_RESULT_TYPES,
-        sta_defaults=dict(settings.defaults.get("sta", {})),
-        notice=request.args.get("notice"),
-        confirmed_count=confirmed_count,
-        selected_neuron_id=selected_neuron_id,
-        notes=notes,
-    )
 
 
 @bp.post("/experiments/<int:experiment_id>/notes")
@@ -203,26 +150,6 @@ def validate_again(experiment_id):
     return redirect(url_for("experiment", experiment_id=experiment_id))
 
 
-@bp.post("/experiments/<int:experiment_id>/run")
-def run_step(experiment_id):
-    settings = get_settings()
-    try:
-        step = request.form["step"]
-        stage = repo.workflow_stage_of(settings, experiment_id)
-        if stage is None:
-            raise ValueError("Experiment not found.")
-        if is_sta_step(step):
-            raise ValueError("STA steps are started with Run analysis, which runs every hypothesis.")
-        if step in ANALYSIS_STEPS and stage != repo.STAGE_ANALYSIS_READY:
-            raise ValueError("Analysis steps can run only after preprocessing and Suite2p have been confirmed.")
-        params = json.loads(request.form.get("params") or "{}") if request.form.get("params") else settings.defaults.get(step, {})
-        rid = create_run(settings, experiment_id, step, dict(params), backend="local")
-        launch_run(settings, rid)
-        return redirect(url_for("experiment_analysis", experiment_id=experiment_id, new_run=rid) + "#runs")
-    except (ValueError, OSError) as exc:
-        return render_template("error.html", title="Run Failed", message=str(exc)), 400
-
-
 def _form_int(name: str) -> dict:
     """{name: the integer of that form field} when the field is filled in (the field's own min attribute keeps it at 1 or more)."""
     return {name: int(request.form[name])} if request.form.get(name) else {}
@@ -234,8 +161,9 @@ def run_analysis(experiment_id):
     try:
         # the STA parameters the form can set besides the result types; per_sign_null is an opt-in statistic option, pre-ticked only when the config default has it on
         sta_options = {**_form_int("spatial_bin"), **_form_int("anatomy_spatial_bin"), "per_sign_null": request.form.get("per_sign_null") == "1"}
-        start_analysis(settings, experiment_id, request.form.getlist("result_types"), sta_options)
-        return redirect(url_for("experiment_analysis", experiment_id=experiment_id) + "#runs")
+        hypothesis = request.form.get("hypothesis")  # the rerun button of one hypothesis names it; the main button runs them all
+        start_analysis(settings, experiment_id, request.form.getlist("result_types"), sta_options, [hypothesis] if hypothesis else None)
+        return redirect(url_for("experiment_overview", experiment_id=experiment_id))
     except (ValueError, OSError) as exc:
         return render_template("error.html", title="Run Analysis Failed", message=str(exc)), 400
 
@@ -254,49 +182,3 @@ def experiment_movie_meta(experiment_id):
 @bp.get("/experiments/<int:experiment_id>/movie/frame")
 def experiment_movie_frame(experiment_id):
     return movie_frame_response(experiment_id, pb_movie_path)
-
-
-@bp.get("/experiments/<int:experiment_id>/sta-significant-cells/data")
-def sta_significant_cells_data(experiment_id):
-    settings = get_settings()
-    if not repo.experiment_exists(settings, experiment_id):
-        return jsonify({"error": "Experiment not found"}), 404
-    summary = dict(sta_significant_summary(settings, experiment_id))
-    sta_run, spike_run = latest_run(settings, experiment_id, default_sta_step()), latest_run(settings, experiment_id, g.SPIKE_STEP)
-    stale = []
-    if sta_run is not None and spike_run is not None:
-        for pipeline_neuron_id in repo.pipeline_neuron_ids(settings, experiment_id):
-            if spikes_edited_after_sta(settings, spike_run, sta_run, pipeline_neuron_id) is not None:
-                stale.append(int(pipeline_neuron_id))
-    summary["stale_cells"] = sorted(stale)
-    return jsonify(summary)
-
-
-@bp.get("/experiments/<int:experiment_id>/cell-review/data")
-def cell_review_data(experiment_id):
-    settings = get_settings()
-    source_path = repo.experiment_source_path(settings, experiment_id)
-    if source_path is None:
-        return jsonify({"error": "Experiment not found"}), 404
-    spike_run = latest_run(settings, experiment_id, g.SPIKE_STEP)
-    neurons = repo.experiment_neurons(settings, experiment_id)
-    # the answer only depends on the label files, the review marks and iscell.npy: reuse it while none of them changed (PERF-01)
-    key = review_cache_key(settings, experiment_id, spike_run, neurons, source_path)
-    if key is not None:
-        cached = caches.CELL_REVIEW.get(key)
-        if cached is not None:
-            return jsonify(cached)
-    neurons = current_suite2p_neurons(source_path, neurons)
-    review = {}
-    for n in neurons:
-        review[str(n["id"])] = spike_review_info(settings, spike_run, str(n["pipeline_neuron_id"]))
-    reviewed_count = sum(1 for info in review.values() if info["reviewed"])
-    payload = {
-        "has_spike_run": spike_run is not None,
-        "reviewed_count": reviewed_count,
-        "total_count": len(neurons),
-        "review": review,
-    }
-    if key is not None:
-        caches.CELL_REVIEW.put(key, payload)
-    return jsonify(payload)

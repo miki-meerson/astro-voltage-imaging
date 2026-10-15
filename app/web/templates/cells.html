@@ -1,0 +1,155 @@
+{% extends "workspace.html" %}
+{% block tab %}
+{% set keep = {"h": selected_hypothesis, "significant": "1" if only_significant else None, "anatomy": "1" if only_anatomy else None} %}
+<div class="split">
+  <section class="panel cell-list" style="margin:0">
+    <div class="panel-head"><h3>Cells</h3><span class="muted small">{{ cells|length }} shown</span></div>
+    <form method="get" class="stack">
+      <input type="hidden" name="h" value="{{ selected_hypothesis }}">
+      {% if selected %}<input type="hidden" name="cell" value="{{ selected.cell }}">{% endif %}
+      <label class="check"><input type="checkbox" name="significant" value="1" {% if only_significant %}checked{% endif %} onchange="this.form.submit()"> significant only</label>
+      <label class="check" title="Cells with a significant cluster in the anatomy result type"><input type="checkbox" name="anatomy" value="1" {% if only_anatomy %}checked{% endif %} onchange="this.form.submit()"> anatomy significant only</label>
+    </form>
+    <div class="table-wrap" style="margin-top:8px">
+      <table>
+        <thead><tr><th>Cell</th><th class="num">Spikes</th><th></th></tr></thead>
+        <tbody>
+          {% for cell in cells %}
+          <tr{% if selected and selected.cell == cell.cell %} class="selected"{% endif %}>
+            <td><a href="{{ url_for('experiment_cells', experiment_id=exp.id, cell=cell.cell, **keep) }}">Cell {{ cell.cell }}</a></td>
+            <td class="num">{{ cell.spikes if cell.spikes is defined else "" }}</td>
+            <td>
+              {% if cell.significant %}<span class="chip completed" title="a significant cluster in some result type">sig</span>{% endif %}
+              {% if cell.anatomy %}<span class="chip running" title="a significant cluster in the anatomy result type">anat</span>{% endif %}
+              {% if cell.motion == "motion_suspected" %}<span class="chip warn" title="the spikes of this cell line up with image motion">motion?</span>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="muted">No cells to show.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" style="margin:0">
+    <div class="panel-head">
+      <div>
+        <h2>{% if selected %}Cell {{ selected.cell }}{% else %}Cell{% endif %}</h2>
+        {% if sta_run %}<p class="muted small">Hypothesis <b>{{ selected_hypothesis }}</b>, run {{ sta_run.id }}</p>{% endif %}
+      </div>
+      <form method="get" class="toolbar">
+        {% if selected %}<input type="hidden" name="cell" value="{{ selected.cell }}">{% endif %}
+        {% if only_significant %}<input type="hidden" name="significant" value="1">{% endif %}
+        {% if only_anatomy %}<input type="hidden" name="anatomy" value="1">{% endif %}
+        <label class="field">Hypothesis
+          <select name="h" onchange="this.form.submit()">
+            {% for name in hypotheses %}<option value="{{ name }}"{% if name == selected_hypothesis %} selected{% endif %}>{{ name }}</option>{% endfor %}
+          </select>
+        </label>
+        {% if selected %}<a class="button secondary" href="{{ url_for('experiment_spikes', experiment_id=exp.id, cell=selected.cell) }}">Edit spikes</a>{% endif %}
+      </form>
+    </div>
+
+    {% if message %}
+    <div class="empty">{{ message }}</div>
+    {% elif not selected %}
+    <div class="empty">Choose a cell on the left.</div>
+    {% else %}
+    {% if stale %}<div class="callout warn">{{ stale }}</div>{% endif %}
+    <script type="application/json" id="page-data">{{ {"neuronId": selected.id, "hypothesis": selected_hypothesis}|tojson }}</script>
+    <script type="application/json" id="cards-data">{{ cards|tojson }}</script>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="value">{{ selected.spikes }}{% if selected.spikes_before is defined %} <span class="muted small">of {{ selected.spikes_before }}</span>{% endif %}</div>
+        <div class="label">spikes used{% if selected.spikes_before is defined and selected.spikes_before > selected.spikes %} ({{ selected.spikes_before - selected.spikes }} removed by the silence rule){% endif %}</div>
+      </div>
+      <div class="stat"><div class="value">{{ cards | selectattr("n_significant") | list | length }}</div><div class="label">result types with a significant cluster</div></div>
+      <div class="stat"><div class="value">{{ cards | sum(attribute="n_significant") }}</div><div class="label">significant clusters</div></div>
+      <div class="stat">
+        <div class="value">{% if selected.motion == "ok" %}<span class="chip completed">ok</span>{% elif selected.motion == "motion_suspected" %}<span class="chip warn">motion?</span>{% else %}<span class="chip off">not tested</span>{% endif %}</div>
+        <div class="label">motion test (do the spikes line up with image motion?)</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:20px">Results by result type</h3>
+    <p class="muted small">Every card shows the same two plots: the mean image with the significant clusters outlined (the cell outline is yellow), and the change from baseline inside the clusters.</p>
+    <div class="results">
+      {% for card in cards %}
+      <div class="card{% if card.n_significant %} sig{% endif %}">
+        <div class="card-head">
+          <b>{{ card.title }}</b>
+          <span class="chip {{ 'completed' if card.n_significant else 'off' }}">{% if card.n_significant %}{{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% else %}no significant cluster{% endif %}</span>
+        </div>
+        <img class="map" loading="lazy" src="/neurons/{{ selected.id }}/sta-map.png?h={{ selected_hypothesis }}&type={{ card.result_type }}&run={{ sta_run.id }}" alt="Mean image of cell {{ selected.cell }} with the clusters of {{ card.title }}">
+        <canvas class="result-plot" data-card="{{ loop.index0 }}"></canvas>
+        <div class="cluster-list">
+          {% for cluster in card.clusters %}
+          <div class="cluster-row"><span class="sign {{ 'dep' if cluster.polarity == 'depolarizing' else 'hyper' }}">{{ cluster.polarity }}</span> frames {{ cluster.first_rel }} &hellip; {{ cluster.last_rel }} &middot; p {{ "%.3f"|format(cluster.p) }} &middot; {{ cluster.n_px }} px</div>
+          {% else %}
+          <div class="cluster-row">{{ card.n_peaks }} spikes &middot; no significant cluster</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <h3 style="margin-top:24px">Cropped STA movie</h3>
+    <section id="smv">
+      <p class="muted small">Anatomy result. Sign-corrected: brighter / red = <span class="sign dep">depolarization</span>, darker / blue = <span class="sign hyper">hyperpolarization</span> (the raw GEVI fluorescence goes the other way). <span id="smv-info"></span></p>
+      <div class="movie-layout">
+        <div class="stack">
+          <div class="zv" data-cap="0.75" style="--h:420px"><div class="smv-stage" id="smv-stage"><canvas id="smv-base"></canvas><canvas id="smv-ovl"></canvas></div></div>
+          <div class="controls">
+            <button type="button" id="smv-play" class="secondary small">Play</button>
+            <input type="range" id="smv-scrub" min="0" max="0" value="0" step="1">
+            <button type="button" id="smv-spike" class="secondary small" title="Frame 0: the detected spike time that every frame of this average is aligned to">Spike</button>
+          </div>
+          <div id="smv-readout" class="muted small"></div>
+        </div>
+        <div class="stack">
+          <div class="controls">
+            <label class="field">Display
+              <select id="smv-mode" title="The movie is the spike-triggered average as relative change (dF/F). The clusters were found on the change from the pre-spike baseline, which is easier to see. Both modes show the biological sign: brighter = depolarization"><option value="change">Change from baseline</option><option value="raw">Relative change (dF/F, as saved)</option></select>
+            </label>
+            <label class="field">Contrast<select id="smv-contrast"><option value="global">Global contrast</option><option value="frame">Per-frame contrast</option></select></label>
+            <label class="field">Markers<select id="smv-marks" title="Cluster markers sit on top of the voltage signal; arrows are the least intrusive"><option value="arrows">Arrows only</option><option value="full">Arrows + outlines + ROI</option><option value="none">No markers</option></select></label>
+            <label class="check" title="Display only: blur by about 1 pixel, like the smoothing the cluster test applies"><input type="checkbox" id="smv-smooth" checked> smooth</label>
+          </div>
+          <div>
+            <p class="muted small">The neuron's own dF/F around the same spikes (as recorded, up = brighter). Click or drag to move through time.</p>
+            <canvas id="smv-trace" class="plot"></canvas>
+          </div>
+          <div>
+            <p class="muted small">Change from baseline: the pixels of the significant anatomy clusters (red = depolarizing, blue = hyperpolarizing) against all other pixels of the crop (grey); shaded: the 5th to 95th percentile of random patches of other pixels. <span id="smv-groups-note"></span></p>
+            <canvas id="smv-groups" class="plot"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <details class="panel-section">
+      <summary><b>Motion test</b> <span class="muted small">are the spikes of this cell time-locked to image motion?</span></summary>
+      <p class="muted small">Spike-triggered average of the applied registration shifts and per-frame registration quality (coloured) against the same random-frame null used for the maps (grey band, &plusmn;2 sd). A red curve means this cell's spikes are time-locked to motion, so its clusters may be motion artifacts.</p>
+      <img class="analysis-image" loading="lazy" src="/neurons/{{ selected.id }}/motion-sta.png?h={{ selected_hypothesis }}&run={{ sta_run.id }}" alt="Spike-triggered motion diagnostics for cell {{ selected.cell }}">
+    </details>
+
+    <h3 style="margin-top:24px">Spikes of this cell</h3>
+    <div class="spk-wrap">
+      <button type="button" class="secondary spk-full" title="Full screen" onclick="var w=this.parentNode; document.fullscreenElement===w ? document.exitFullscreen() : w.requestFullscreen()">&#x26F6; Full screen</button>
+      <canvas id="spike-preview-{{ selected.id }}" class="plot" data-neuron-id="{{ selected.id }}" style="height:240px"></canvas>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+{% if selected and not message %}
+<script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
+<script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
+<script src="{{ url_for('static', filename='js/cell_results.js') }}"></script>
+<script src="{{ url_for('static', filename='js/sta_movie.js') }}"></script>
+<script src="{{ url_for('static', filename='js/spike_preview.js') }}"></script>
+{% endif %}
+{% endblock %}

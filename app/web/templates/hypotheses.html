@@ -1,0 +1,96 @@
+{% extends "workspace.html" %}
+{% block tab %}
+<script type="application/json" id="page-data">{{ {"expId": exp.id, "hypothesis": selected}|tojson }}</script>
+
+<section class="panel">
+  <div class="panel-head"><h2>Run analysis</h2></div>
+  {% include "_run_analysis.html" %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>Hypotheses tested on this experiment</h2>
+      <p class="muted">Each hypothesis is its own analysis (its own window around the spike) and fills in when its run completes. Click a hypothesis to select it for the clusters below and for the Cells tab.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Hypothesis</th><th>Tested window (s)</th><th>Status</th><th>Result type</th>
+        <th class="num">Cells tested</th><th class="num">Few spikes</th><th class="num">Spikes (median)</th>
+        <th class="num">Significant</th><th class="num">Expected by chance</th><th class="num">p vs chance</th>
+      </tr></thead>
+      <tbody>
+        {% for s in summaries %}
+        {% set rts = s.results.result_types.items() | list if s.results else [] %}
+        {% for name, r in (rts or [(None, None)]) %}
+        <tr{% if s.name == selected %} class="selected"{% endif %}>
+          {% if loop.first %}
+          <td rowspan="{{ loop.length }}"><a href="{{ url_for('experiment_hypotheses', experiment_id=exp.id, h=s.name) }}"><b>{{ s.name }}</b></a><div class="muted small">{{ s.description }}</div></td>
+          <td rowspan="{{ loop.length }}">{{ "%g"|format(s.settings.tested_window_seconds[0]) }} &hellip; {{ "%g"|format(s.settings.tested_window_seconds[1]) }}</td>
+          <td rowspan="{{ loop.length }}">
+            <span class="chip {{ s.status }}">{{ s.status.replace("_", " ") }}</span>
+            {% if s.waiting_for %}<div class="muted small">waiting for: {{ s.waiting_for | join(", ") }}</div>{% endif %}
+            {% if s.results and s.status != "completed" %}<div class="muted small">results of run {{ s.results.run_id }}</div>{% endif %}
+            {% if s.results_warning %}<div class="muted small">{{ s.results_warning }}</div>{% endif %}
+            {% if analysis_ready and s.status not in ("running", "pending", "waiting", "queued") %}<div><button class="secondary small" type="submit" form="run-analysis-form" name="hypothesis" value="{{ s.name }}">{{ "Rerun" if s.status != "not_run" else "Run" }}</button></div>{% endif %}
+          </td>
+          {% endif %}
+          {% if r %}
+          <td>{{ name }}</td>
+          <td class="num">{{ r.cells_tested }}</td>
+          <td class="num">{{ r.cells_few_spikes }}</td>
+          <td class="num">{{ "%g"|format(r.spikes_median) if r.spikes_median is not none else "&ndash;"|safe }}</td>
+          <td class="num">{{ r.cells_significant }}{% if r.cells_significant_motion_suspected %} <span class="muted small" title="significant cells whose spikes line up with image motion">({{ r.cells_significant_motion_suspected }} motion?)</span>{% endif %}</td>
+          <td class="num">{{ "%.1f"|format(r.cells_expected_by_chance) }}</td>
+          <td class="num">{{ "%.3f"|format(r.p_versus_chance) if r.p_versus_chance is not none else "&ndash;"|safe }}</td>
+          {% else %}
+          <td colspan="7" class="muted">{% if s.status == "not_run" %}not run yet{% else %}no results yet{% endif %}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if n_tests > 1 %}
+  <div class="callout warn">{{ n_tests }} tests (hypothesis &times; result type) were run on this experiment. The more tests, the more cells come out significant by chance: compare each count with the "expected by chance" of its own row, and treat a single significant cell as a lead, not a result.</div>
+  {% endif %}
+</section>
+
+<section class="panel" id="anatomy-clusters-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Anatomy clusters</h2>
+      <p id="ac-summary" class="muted">Loading...</p>
+    </div>
+    <form method="get" class="toolbar">
+      <label class="field">Hypothesis
+        <select name="h" onchange="this.form.submit()">
+          {% for s in summaries %}<option value="{{ s.name }}"{% if s.name == selected %} selected{% endif %}>{{ s.name }}</option>{% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
+  <p class="muted small">Cells with at least one significant cluster in the <b>anatomy</b> result type and no motion suspicion. Every significant anatomy cluster of those cells is included. Click a point to open the cell.</p>
+  <div class="ac-controls">
+    <label class="check"><input type="checkbox" id="ac-individual" checked> individual cluster traces</label>
+    <label class="check"><input type="checkbox" id="ac-sem" checked> &plusmn; SEM</label>
+    <label class="check">y range
+      <select id="ac-yrange" style="width:auto"><option value="all">fit all traces</option><option value="mean">fit the mean (zoom)</option></select></label>
+    <span id="ac-excluded" class="muted"></span>
+  </div>
+  <div class="ac-grid">
+    <div><canvas id="ac-traces"></canvas></div>
+    <div><canvas id="ac-scatter"></canvas></div>
+  </div>
+  <div id="ac-test" style="margin-top:12px"></div>
+  <div id="ac-tip"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/form_rules.js') }}"></script>
+<script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
+<script src="{{ url_for('static', filename='js/anatomy_clusters.js') }}"></script>
+{% endblock %}

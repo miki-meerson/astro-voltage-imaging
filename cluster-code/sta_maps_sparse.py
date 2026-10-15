@@ -90,7 +90,7 @@ MOTION_FLAG_ALPHA = 0.01
 MOTION_REG_QUALITY_BIN = 0  # spatial bin of the movie used for the registration-quality series; 0 = auto
 
 SAVE_BINNED_STA_MOVIES = True
-SAVE_FIJI_TIFS = False  # save each binned STA movie as an ImageJ .tif in <experiment>/sta_movies_tif/cell_<N>/ INSTEAD of the .npy in the run folder (needs SAVE_BINNED_STA_MOVIES)
+SAVE_FIJI_TIFS = False  # save each binned STA movie as an ImageJ .tif in <experiment>/sta_movies_tif/<hypothesis>/cell_<N>/ INSTEAD of the .npy in the run folder (needs SAVE_BINNED_STA_MOVIES)
 OVERWRITE = True
 CELL_IDS: list[int] | str = g.ALL_GROUP
 RESULT_TYPES = (g.ALL_GROUP,)
@@ -411,7 +411,7 @@ _EXPORT_FPS: float | None = None
 
 
 def export_fiji_sta(cell_id: int, group: str, observed_sta: np.ndarray, pre: int, n_spikes: int) -> bool:
-    """The binned STA movie as an ImageJ .tif in the experiment folder (sta_movies_tif/cell_<N>/sta_<group>_bin<B>.tif).
+    """The binned STA movie as an ImageJ .tif in the experiment folder (sta_movies_tif/<hypothesis>/cell_<N>/sta_<group>_bin<B>.tif).
 
     Returns whether it was written. Never fails the STA: an export problem is only reported (the caller then keeps the .npy)."""
     global _EXPORT_FPS
@@ -420,7 +420,7 @@ def export_fiji_sta(cell_id: int, group: str, observed_sta: np.ndarray, pre: int
         if _EXPORT_FPS is None:
             _EXPORT_FPS = read_frame_rate(source)
         write_imagej_stack(
-            path_for(PathKind.STA_MOVIE_TIF, source, cell=cell_id, group=group, bin=SPATIAL_BIN),
+            path_for(PathKind.STA_MOVIE_TIF, source, hypothesis=HYPOTHESIS["hypothesis"], cell=cell_id, group=group, bin=SPATIAL_BIN),
             observed_sta,
             _EXPORT_FPS,
             pre,

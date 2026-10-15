@@ -12,8 +12,9 @@ from app.services.movies import (
     pb_movie_path,
 )
 from app.services.preprocessing import PREPROCESSING_STEPS, latest_preprocessing_params, rerun_preprocessing_step
-from app.services.run_views import STEP_LABELS, run_view
+from app.services.run_views import run_view
 from app.services.runs import create_run, launch_run
+from app.services.workspace import page_data
 from app.web.common import FlatBlueprint, get_settings
 from utils import globals_utils as g
 from utils.file_utils import path_within
@@ -26,15 +27,11 @@ bp = FlatBlueprint("preprocessing", __name__)
 @bp.get("/experiments/<int:experiment_id>/preprocessing")
 def experiment_preprocessing(experiment_id):
     settings = get_settings()
-    data = repo.preprocessing_page_data(settings, experiment_id)
+    data = page_data(settings, experiment_id, "preprocessing")
     if data is None:
         return render_template("error.html", title="Missing Experiment", message="Experiment not found"), 404
-    exp = data["experiment"]
-    runs = [run_view(r, settings) for r in data["runs"]]
-    pre_steps = data["steps"]
-    preprocessing_params = latest_preprocessing_params(settings, experiment_id)
-    notes = data["notes"]
-    active = any(r["status"] in {"pending", "queued", "running"} for r in runs)
+    exp = data["exp"]
+    runs = [run_view(r, settings) for r in data["runs"] if r["step"] == g.PREPROCESSING_STEP]
     pb_available = any(
         path is not None and path.exists()
         for path in (pb_movie_path(exp["source_path"], "astro"), pb_movie_path(exp["source_path"], "neuron"))
@@ -43,19 +40,13 @@ def experiment_preprocessing(experiment_id):
         {"kind": kind, "label": kind.title(), "available": path_for(PathKind.PB_QC_PLOT, exp["source_path"], pb_kind=kind).exists()}
         for kind in PB_KINDS
     ]
-    pb_review_available = pb_available or any(plot["available"] for plot in pb_qc_plots)
     return render_template(
-        "preprocessing.html",
-        exp=exp,
-        runs=runs,
-        pre_steps=pre_steps,
-        active=active,
+        "preprocessing.html", **{**data, "runs": runs},
+        pre_steps=repo.preprocessing_page_data(settings, experiment_id)["steps"],
         pb_available=pb_available,
-        pb_review_available=pb_review_available,
+        pb_review_available=pb_available or any(plot["available"] for plot in pb_qc_plots),
         pb_qc_plots=pb_qc_plots,
-        preprocessing_params=preprocessing_params,
-        notes=notes,
-        step_labels=STEP_LABELS,
+        preprocessing_params=latest_preprocessing_params(settings, experiment_id),
         known_steps=PREPROCESSING_STEPS,
         notice=request.args.get("notice"),
     )
@@ -101,7 +92,7 @@ def confirm_suite2p_route(experiment_id):
     try:
         n = confirm_suite2p(settings, experiment_id)
         caches.clear_experiment_result_caches()
-        return redirect(url_for("experiment_analysis", experiment_id=experiment_id, notice=f"suite2p_confirmed_{n}"))
+        return redirect(url_for("experiment_spikes", experiment_id=experiment_id, notice=f"suite2p_confirmed_{n}"))
     except Exception as exc:
         return render_template("error.html", title="Suite2p Confirm Failed", message=str(exc)), 400
 

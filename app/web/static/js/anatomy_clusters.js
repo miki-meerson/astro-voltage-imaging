@@ -1,5 +1,6 @@
 (function () {
-  const EXP_ID = JSON.parse(document.getElementById("page-data").textContent).expId;
+  const PAGE = JSON.parse(document.getElementById("page-data").textContent);
+  const EXP_ID = PAGE.expId, HYPOTHESIS = PAGE.hypothesis;
   const COL = Polarity.COLORS;
   const $ = id => document.getElementById(id);
   let D = null, pts = [];
@@ -96,8 +97,7 @@
   $("ac-scatter").addEventListener("click", e => {
     const r = e.currentTarget.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     const hit = pts.map(p => ({p, d: Math.hypot(p.x - mx, p.y - my)})).filter(o => o.d < 10).sort((a, b) => a.d - b.d)[0];
-    const sel = document.getElementById("neuron-select");
-    if (hit && hit.p.c.neuron_id && sel) { sel.value = String(hit.p.c.neuron_id); sel.dispatchEvent(new Event("change")); const cv = document.getElementById("cell-view"); if (cv) cv.scrollIntoView({behavior: "smooth"}); }
+    if (hit) window.location.href = `/experiments/${EXP_ID}/cells?cell=${hit.p.c.cell}&h=${encodeURIComponent(HYPOTHESIS)}`;
   });
   const ROWS = [
     ["cells_with_cluster", "Cells with a significant cluster", v => v.toFixed(0), "more cells than chance"],
@@ -117,18 +117,18 @@
     }).join("");
     el.innerHTML = `
       <h3 style="margin:0 0 4px">Is this more than chance?</h3>
-      <p class="muted" style="font-size:12px; margin:0 0 6px">For every cell we kept ${g.n_fakes_per_cell} fake versions of its result (the spike times shifted in time, so spikes no longer line up with the movie). We ran the very same cluster search on the fakes, so fake clusters are picked exactly like the real ones. Then we built ${g.n_draws.toLocaleString()} fake groups (one fake per cell, ${g.n_cells} cells) and counted how often a fake group looked at least as striking as the real one. That fraction is the p-value. Fake columns: typical value and the middle 95% of the fake groups. Five numbers are tested, so one p below 0.05 by luck is not surprising.</p>
+      <p class="muted" style="font-size:12px; margin:0 0 6px">For every cell we kept ${g.n_fakes_per_cell} fake versions of its result (the spike times replaced by random frames of the recording, so spikes no longer line up with the movie). We ran the very same cluster search on the fakes, so fake clusters are picked exactly like the real ones. Then we built ${g.n_draws.toLocaleString()} fake groups (one fake per cell, ${g.n_cells} cells) and counted how often a fake group looked at least as striking as the real one. That fraction is the p-value. Fake columns: typical value and the middle 95% of the fake groups. Five numbers are tested, so one p below 0.05 by luck is not surprising.</p>
       <div class="table-wrap"><table><tr><th>What we compare</th><th>Real</th><th>Fake groups</th><th>p</th><th>Verdict</th></tr>${rows}</table></div>`;
     const pf = g.polarity_in_fakes;
     if (pf && pf.hyperpolarizing_share_fake != null) {
       const share = pf.hyperpolarizing_share_fake, lopsided = share >= 0.9 || share <= 0.1;
-      el.insertAdjacentHTML("beforeend", `<p style="font-size:13px; margin:8px 0 0; padding:6px 10px; border:1px solid ${lopsided ? "#b8860b" : "var(--line)"}; border-radius:6px; color:${lopsided ? "#f0c040" : "var(--muted)"}">${lopsided ? "&#9888; " : ""}<b>Polarity check:</b> in the fake data ${pf.n_fake_clusters.toLocaleString()} "significant" clusters were found, and <b>${(share * 100).toFixed(1)}%</b> of them are hyperpolarizing (real clusters: ${pf.hyperpolarizing_share_real == null ? "n/a" : (pf.hyperpolarizing_share_real * 100).toFixed(0) + "%"}). ${lopsided ? "The statistic finds ${share >= 0.9 ? "hyperpolarizing clusters far more easily than depolarizing" : "depolarizing clusters far more easily than hyperpolarizing"} ones even in noise, so a lopsided polarity of the real clusters says nothing, and real ${share >= 0.9 ? "depolarizing" : "hyperpolarizing"} clusters are hard to detect." : "The fake clusters are mixed in polarity."}</p>`);
+      el.insertAdjacentHTML("beforeend", `<p style="font-size:13px; margin:8px 0 0; padding:6px 10px; border:1px solid ${lopsided ? "#b8860b" : "var(--line)"}; border-radius:6px; color:${lopsided ? "#f0c040" : "var(--muted)"}">${lopsided ? "&#9888; " : ""}<b>Polarity check:</b> in the fake data ${pf.n_fake_clusters.toLocaleString()} "significant" clusters were found, and <b>${(share * 100).toFixed(1)}%</b> of them are hyperpolarizing (real clusters: ${pf.hyperpolarizing_share_real == null ? "n/a" : (pf.hyperpolarizing_share_real * 100).toFixed(0) + "%"}). ${lopsided ? `The statistic finds ${share >= 0.9 ? "hyperpolarizing clusters far more easily than depolarizing" : "depolarizing clusters far more easily than hyperpolarizing"} ones even in noise, so a lopsided polarity of the real clusters says nothing, and real ${share >= 0.9 ? "depolarizing" : "hyperpolarizing"} clusters are hard to detect.` : "The fake clusters are mixed in polarity."}</p>`);
     }
   }
   const redraw = () => { if (D && D.available) { drawTraces(); drawScatter(); } };
   $("ac-individual").addEventListener("change", redraw); $("ac-sem").addEventListener("change", redraw); $("ac-yrange").addEventListener("change", redraw);
   window.addEventListener("resize", redraw);
-  fetch(`/experiments/${EXP_ID}/anatomy-clusters.json`)
+  fetch(`/experiments/${EXP_ID}/anatomy-clusters.json?h=${encodeURIComponent(HYPOTHESIS)}`)
     .then(r => r.json())
     .then(d => {
       D = d;

@@ -75,6 +75,13 @@ def hypothesis_for(step: str) -> Hypothesis:
     raise ValueError(f"Step {step} is not in the hypothesis catalogue ({catalogue_file(PROJECT_ROOT).name}).")
 
 
+STA_RESULT_TYPES = [  # the result types a run can be asked for (name, label on the page), in the order they are run
+    (g.ALL_GROUP, "All"),
+    (g.ANATOMY_GROUP, "Anatomy"),
+    ("behavioral", "Behavioral"),
+]
+
+
 def feeding_steps(result_types) -> set[str]:
     """The steps whose outputs an STA run of these result types reads: spike, behavior, and anatomy when that result type is marked."""
     return {g.SPIKE_STEP, g.BEHAVIOR_STEP} | ({g.ANATOMY_STEP} if g.ANATOMY_GROUP in result_types else set())

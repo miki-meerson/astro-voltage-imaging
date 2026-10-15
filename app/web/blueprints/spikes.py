@@ -1,7 +1,7 @@
-"""Spike editor page and its data / detect / save endpoints."""
+"""The data, detect and save endpoints of the spike editor (the editor itself is on the Spikes tab, workspace.py)."""
 from __future__ import annotations
 
-from flask import jsonify, render_template, request
+from flask import jsonify, request
 import numpy as np
 
 from app.db import neuron_repository
@@ -22,20 +22,6 @@ from utils.spikes_utils import detect_peaks_mad, highpass_traces
 from utils.suite2p_utils import suite2p_trace_dff
 
 bp = FlatBlueprint("spikes", __name__)
-
-
-@bp.get("/neurons/<int:neuron_id>/spikes")
-def spike_editor(neuron_id):
-    settings = get_settings()
-    n, spike_run = neuron_repository.neuron_with_latest_run(settings, neuron_id, g.SPIKE_STEP)
-    if n is None:
-        return render_template("error.html", title="Missing Cell", message="Cell not found"), 404
-    if spike_run is None:
-        return render_template("error.html", title="No Spike Run", message="Run spike detection before editing spikes."), 400
-    stale_message = stale_suite2p_cell_message(n["source_path"], n["pipeline_neuron_id"])
-    if stale_message:
-        return render_template("error.html", title="Stale Suite2p Cell", message=stale_message), 400
-    return render_template("spikes.html", neuron=dict(n), embedded=request.args.get("embedded") == "1")
 
 
 @bp.get("/neurons/<int:neuron_id>/spikes/data")

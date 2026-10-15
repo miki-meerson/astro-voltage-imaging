@@ -7,7 +7,8 @@ from flask import jsonify, redirect, render_template, request, send_file, url_fo
 
 from app.db import run_repository
 from app.services.run_views import run_stderr, run_stdout, run_view
-from app.services.runs import rerun_failed_steps
+from app.services.runs import ACTIVE_STATUSES, rerun_failed_steps
+from app.services.workspace import page_data
 from app.web.common import FlatBlueprint, get_settings
 from utils.file_utils import path_within
 
@@ -32,7 +33,8 @@ def run_detail(run_id):
     if run is None:
         return render_template("error.html", title="Missing Run", message="Run not found"), 404
     rv = run_view(run, settings)
-    return render_template("run.html", run=rv, stdout=run_stdout(rv), stderr=run_stderr(rv), active=rv["status"] in {"pending", "queued", "running"})
+    data = page_data(settings, int(run["experiment_id"]), "runs")
+    return render_template("run.html", **{**data, "active": rv["status"] in ACTIVE_STATUSES}, run=rv, stdout=run_stdout(rv), stderr=run_stderr(rv))
 
 
 @bp.get("/runs/<int:run_id>/logs")

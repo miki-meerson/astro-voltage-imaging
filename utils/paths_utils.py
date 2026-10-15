@@ -36,7 +36,7 @@ class PathKind(Enum):
     NEURON_PB_MOVIE = auto()
     BAD_SEGMENTS = auto()
     SUITE2P_PLANE0 = auto()
-    STA_MOVIE_TIF = auto()  # fields: cell, group, bin
+    STA_MOVIE_TIF = auto()  # fields: hypothesis, cell, group, bin
     # preprocessing steps: what they write (anchor: experiment)
     SPLIT_DIR = auto()
     SPLIT_ASTRO_MOVIE = auto()
@@ -144,7 +144,7 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.NEURON_PB_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.PB_CORRECTED_DIR, g.NEURON_PB_MOVIE)),
     PathKind.BAD_SEGMENTS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.QC_DIR, g.BAD_SEGMENTS)),
     PathKind.SUITE2P_PLANE0: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.FOR_SUITE2P_DIR, g.SUITE2P_DIR, g.PLANE0_DIR)),
-    PathKind.STA_MOVIE_TIF: _Spec(_E, (g.STA_MOVIES_TIF_DIR, _CELL, g.STA_MOVIE_TIF_TEMPLATE)),
+    PathKind.STA_MOVIE_TIF: _Spec(_E, (g.STA_MOVIES_TIF_DIR, g.HYPOTHESIS_DIR_TEMPLATE, _CELL, g.STA_MOVIE_TIF_TEMPLATE)),
     PathKind.SPLIT_DIR: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.SPLIT_DIR)),
     PathKind.SPLIT_ASTRO_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.SPLIT_DIR, g.SPLIT_ASTRO_MOVIE)),
     PathKind.SPLIT_NEURON_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.SPLIT_DIR, g.SPLIT_NEURON_MOVIE)),

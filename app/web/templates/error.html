@@ -1,1 +1,1 @@
-{% extends "base.html" %}{% block body %}<section class="panel"><h1>{{ title }}</h1><p>{{ message }}</p><p><a href="/">Back</a></p></section>{% endblock %}
+{% extends "base.html" %}{% block body %}<section class="panel"><h1>{{ title }}</h1><div class="callout error">{{ message }}</div><p><a class="button secondary" href="javascript:history.back()">Back</a> <a href="/">Experiments</a></p></section>{% endblock %}

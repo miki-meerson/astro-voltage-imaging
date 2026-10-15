@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from app.db.core import connect, tx
+from app.db.experiment_repository import STAGE_PREPROCESSING_REVIEW
 from app.settings import Settings
 
 # columns update_run may set (the names are put into the SQL text, so only these are accepted)
@@ -283,8 +284,8 @@ def complete_preprocessing_run(settings: Settings, run_id: int, experiment_id: i
         conn.execute("UPDATE analysis_runs SET status='completed',ended_at=?,exit_code=0,output_manifest_json=? WHERE id=?", (ended_at, json.dumps(manifest), run_id))
         _replace_artifacts(conn, run_id, manifest)
         conn.execute(
-            "UPDATE experiments SET workflow_stage='preprocessing_review',preprocessing_review_state='unreviewed',updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (experiment_id,),
+            "UPDATE experiments SET workflow_stage=?,preprocessing_review_state='unreviewed',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (STAGE_PREPROCESSING_REVIEW, experiment_id),
         )
 
 

@@ -1,13 +1,13 @@
 (function () {
   const PAGE_DATA = JSON.parse(document.getElementById("page-data").textContent);
-  const NEURON_ID = PAGE_DATA.neuronId, EMBEDDED = PAGE_DATA.embedded;
+  const NEURON_ID = PAGE_DATA.neuronId;
   const canvas = document.getElementById("spike-canvas");
   const ctx = canvas.getContext("2d");
   let trace = [], peaks = [], labels = [], selected = -1, fps = 1;
   let start = 0, stop = 1000;
   let initialDetectionParams = {}, detectTimer = null, detectRequestId = 0;
   const colors = {spike: "#4fa3ff", exclude: "#e05260"};
-  const MIN_SPAN = 50;  // frames: the most zoomed-in view
+  const MIN_SPAN = 20;  // frames: the most zoomed-in view
   const plot = {left: 76, right: 22, top: 28, bottom: 62};
   // the detector settings (and their defaults) come from the server with the cell's data; nothing is defined here
   const paramFormat = {
@@ -164,6 +164,15 @@
     ctx.font = "18px Segoe UI";
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
+    if (selection) {
+      ctx.fillStyle = "rgba(74, 163, 255, 0.22)";
+      ctx.strokeStyle = "rgba(74, 163, 255, 0.9)";
+      ctx.lineWidth = 1;
+      const x0 = Math.min(selection.x0, selection.x1), w = Math.abs(selection.x1 - selection.x0);
+      ctx.fillRect(x0, plot.top, w, plotHeight());
+      ctx.strokeRect(x0, plot.top, w, plotHeight());
+    }
+    ctx.fillStyle = "#d6dde6";
     ctx.fillText(`Frames ${start} - ${stop}  (${fmtTime(start)} - ${fmtTime(stop)})`, plot.left, 22);
     const legendY = 24;
     let lx = canvas.width - 220;
@@ -278,27 +287,42 @@
     zoomAt(xToFrame(p.x), event.deltaY < 0 ? 1 / ZOOM_STEP : ZOOM_STEP);
   }, {passive: false});
 
-  // drag = move the view; a click that did not move selects the nearest spike; a double-click adds a spike
-  let drag = null, dragged = false;
+  // drag across the trace = mark the section to zoom into; shift + drag = move the view; a click that did not move selects the nearest spike;
+  // ctrl + click adds a spike; a double-click shows the whole trace again
+  let drag = null, dragged = false, selection = null;
   canvas.addEventListener("mousedown", (event) => {
     const p = canvasPoint(event);
     dragged = false;
-    if (event.button === 0 && insidePlot(p)) drag = {x: p.x, first: start, span: stop - start};
+    if (event.button === 0 && insidePlot(p)) drag = {x: p.x, first: start, span: stop - start, pan: event.shiftKey};
   });
   window.addEventListener("mousemove", (event) => {
     if (!drag) return;
-    const dx = canvasPoint(event).x - drag.x;
-    if (!dragged && Math.abs(dx) <= 4) return;
+    const x = Math.max(plot.left, Math.min(plot.left + plotWidth(), canvasPoint(event).x));
+    if (!dragged && Math.abs(x - drag.x) <= 4) return;
     dragged = true;
-    canvas.style.cursor = "grabbing";
-    setView(drag.first - dx / plotWidth() * drag.span, drag.span);
+    if (drag.pan) {
+      canvas.style.cursor = "grabbing";
+      setView(drag.first - (x - drag.x) / plotWidth() * drag.span, drag.span);
+    } else {
+      selection = {x0: drag.x, x1: x};
+      draw();
+    }
   });
-  window.addEventListener("mouseup", () => { drag = null; canvas.style.cursor = ""; });
+  window.addEventListener("mouseup", () => {
+    if (drag && selection) {
+      const first = xToFrame(Math.min(selection.x0, selection.x1)), last = xToFrame(Math.max(selection.x0, selection.x1));
+      selection = null;
+      setView(first, last - first);
+    }
+    drag = null;
+    canvas.style.cursor = "";
+  });
   canvas.addEventListener("click", (event) => {
     if (dragged) { dragged = false; return; }
     const p = canvasPoint(event);
     if (!insidePlot(p)) return;
     const frame = xToFrame(p.x);
+    if (event.ctrlKey || event.metaKey) { addPeak(frame, "spike"); return; }
     let best = -1, dist = Infinity;
     for (let i = 0; i < peaks.length; i++) {
       const d = Math.abs(peaks[i] - frame);
@@ -308,8 +332,7 @@
     updateSelected(); draw();
   });
   canvas.addEventListener("dblclick", (event) => {
-    const p = canvasPoint(event);
-    if (insidePlot(p)) addPeak(xToFrame(p.x), "spike");
+    if (insidePlot(canvasPoint(event))) fitAll();
   });
   document.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => applyLabel(btn.dataset.label)));
   document.addEventListener("keydown", (event) => {
@@ -325,9 +348,6 @@
     else return;
     event.preventDefault();
   });
-  document.getElementById("zoom-in").onclick = zoomIn;
-  document.getElementById("zoom-out").onclick = zoomOut;
-  document.getElementById("fit-all").onclick = fitAll;
   document.getElementById("add-spike").onclick = () => addPeak(document.getElementById("frame-input").value, "spike");
   document.querySelectorAll("[data-detect-param]").forEach(input => {
     input.addEventListener("input", () => {
@@ -355,11 +375,17 @@
     });
     const data = await res.json();
     if (data.ok) {
-      status.textContent = `Saved ${data.n_peaks} spikes. Returning to cell view...`;
-      window.location.href = `/neurons/${NEURON_ID}${EMBEDDED ? "?embedded=1" : ""}`;
+      status.textContent = `Saved ${data.n_peaks} spikes. The cell is marked as reviewed.`;
     } else {
       status.textContent = data.error || "Save failed.";
     }
+  };
+  const markReviewed = document.getElementById("mark-reviewed");
+  markReviewed.onclick = async () => {
+    const status = document.getElementById("save-status");
+    const res = await fetch(`/neurons/${NEURON_ID}/review/mark`, {method: "POST"});
+    const data = await res.json();
+    status.textContent = data.ok ? "Marked as reviewed." : (data.error || "Could not mark the cell as reviewed.");
   };
   fetch(`/neurons/${NEURON_ID}/spikes/data`).then(async r => {
     const data = await r.json();

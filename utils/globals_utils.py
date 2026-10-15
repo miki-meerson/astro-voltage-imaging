@@ -16,7 +16,8 @@ ASTRO_PB_MOVIE = "astro_photobleaching_corrected.tif"
 NEURON_PB_MOVIE = "neuron_photobleaching_corrected.tif"
 BAD_SEGMENTS = "bad_segments.json"
 RAW_MOVIE = "Image_scan_1_region_0_0.tif"
-STA_MOVIES_TIF_DIR = "sta_movies_tif"  # <experiment>/sta_movies_tif/cell_<N>/sta_<group>_bin<B>.tif (Fiji copies of the STA movies)
+STA_MOVIES_TIF_DIR = "sta_movies_tif"  # <experiment>/sta_movies_tif/<hypothesis>/cell_<N>/sta_<group>_bin<B>.tif (Fiji copies of the STA movies)
+HYPOTHESIS_DIR_TEMPLATE = "{hypothesis}"
 
 # ---- an STA run folder: <run>/sta_algorithm_home/sta-analysis/cell_<N>/... -----------------------------------------------------------------
 STA_ALGORITHM_HOME_DIR = "sta_algorithm_home"

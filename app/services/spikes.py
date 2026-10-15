@@ -7,8 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
+from app.db import experiment_repository, run_repository
+from app.services import caches
 from app.services.runs import run_dir
 from app.services.suite2p_data import experiment_stat_cells
+from utils import globals_utils as g
 from utils.file_utils import read_npz_arrays, write_json
 from utils.paths_utils import PathKind, path_for
 from utils.spike_params import SPIKE_PARAM_SPECS, spike_params_with_defaults
@@ -168,3 +171,21 @@ def review_cache_key(settings, experiment_id: int, spike_run, neurons: list[dict
     except (OSError, TypeError):
         iscell_stamp = 0
     return (int(experiment_id), int(spike_run["id"]), tuple(int(n["id"]) for n in neurons), newest, labels_seen, marks_seen, iscell_stamp)
+
+
+def experiment_spike_review(settings, experiment_id: int) -> dict:
+    """What the Spikes tab lists: {has_spike_run, reviewed_count, total_count, cells: [{id, cell, reviewed, n_peaks, n_excluded}]} for the current Suite2p
+    cells of an experiment. Reused while no label file, review mark or iscell.npy changed (the key says so)."""
+    source_path = experiment_repository.experiment_source_path(settings, experiment_id)
+    spike_run = run_repository.latest_run(settings, experiment_id, g.SPIKE_STEP)
+    neurons = experiment_repository.experiment_neurons(settings, experiment_id)
+    key = review_cache_key(settings, experiment_id, spike_run, neurons, source_path)
+    cached = caches.CELL_REVIEW.get(key) if key is not None else None
+    if cached is not None:
+        return cached
+    cells = [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), **spike_review_info(settings, spike_run, str(n["pipeline_neuron_id"]))}
+             for n in current_suite2p_neurons(source_path, neurons)]
+    result = {"has_spike_run": spike_run is not None, "reviewed_count": sum(c["reviewed"] for c in cells), "total_count": len(cells), "cells": cells}
+    if key is not None:
+        caches.CELL_REVIEW.put(key, result)
+    return result

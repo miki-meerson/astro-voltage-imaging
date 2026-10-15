@@ -7,11 +7,11 @@ import re
 import shutil
 
 from app.db import experiment_repository as repo, run_repository
-from app.services.runs import ACTIVE_STATUSES, STEPS, create_run, feeding_steps, hypothesis_for, launch_run, sta_steps
-from app.services.sta_results import STA_RESULT_TYPES
+from app.services.runs import ACTIVE_STATUSES, STA_RESULT_TYPES, STEPS, create_run, feeding_steps, hypothesis_for, launch_run, sta_steps
 from app.services.suite2p_data import experiment_stat_cells, forget_suite2p
 from app.settings import Settings
 from utils.file_utils import path_within
+from utils.hypotheses import hypothesis_name
 from utils.suite2p_utils import roi_center
 from utils.thorsync_utils import find_ts_h5_files, list_h5_datasets
 from utils.paths_utils import PathKind, path_for
@@ -163,14 +163,15 @@ def launch_default_steps(settings: Settings, experiment_id: int) -> None:
         launch_run(settings, create_run(settings, experiment_id, g.PREPROCESSING_STEP, params, backend="cluster"))
 
 
-def start_analysis(settings: Settings, experiment_id: int, result_types, sta_options: dict | None = None) -> list[int]:
+def start_analysis(settings: Settings, experiment_id: int, result_types, sta_options: dict | None = None, hypotheses=None) -> list[int]:
     """Start the analysis of ONE experiment for the marked result types (and only those); returns the ids of the runs it created.
 
     Needs the analysis-ready stage. Creates the feeding steps (spike, behavior, and anatomy when marked) that have no completed run and no run in
     progress yet: a completed run is never replaced (edited spike labels must stay). Then creates one STA run per hypothesis (not for a hypothesis
     that already has a run in progress), with the hypothesis settings and the marked result types: 'pending' and launched at once when every
     feeding step has completed, else 'waiting' (_launch_sta_if_ready in runs.py starts it when the last feeding step completes).
-    sta_options: extra STA parameters of the request (for example the spatial bins); the hypothesis settings win over them."""
+    sta_options: extra STA parameters of the request (for example the spatial bins); the hypothesis settings win over them.
+    hypotheses: the names of the hypotheses to run (None: all of them); a rerun of one hypothesis passes its name."""
     stage = repo.workflow_stage_of(settings, experiment_id)
     defaults = settings.defaults
 
@@ -178,6 +179,9 @@ def start_analysis(settings: Settings, experiment_id: int, result_types, sta_opt
         raise ValueError("Analysis can run only after preprocessing and Suite2p have been confirmed.")
     # the marked result types, once each in the order of STA_RESULT_TYPES (the page only offers known types and cannot submit none: form_rules.js)
     types = [name for name, _ in STA_RESULT_TYPES if name in set(result_types)]
+    known = {hypothesis_name(step) for step in sta_steps()}
+    if hypotheses is not None and not set(hypotheses) <= known:
+        raise ValueError(f"Unknown hypothesis: {', '.join(sorted(set(hypotheses) - known))}.")
     needed = feeding_steps(types)
     completed = run_repository.steps_with_status(settings, experiment_id, ("completed",))
     in_progress = run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES)
@@ -188,10 +192,19 @@ def start_analysis(settings: Settings, experiment_id: int, result_types, sta_opt
     sta_defaults = {"anatomy_spatial_bin": 1, **defaults.get("sta", {}), **(sta_options or {})}
     sta = [create_run(settings, experiment_id, step, {**sta_defaults, **hypothesis_for(step).settings(), "result_types": types},
                       backend="cluster", status="pending" if ready else "waiting")
-           for step in sta_steps() if step not in in_progress]  # one run per hypothesis that has no run in progress yet
+           for step in sta_steps() if step not in in_progress and (hypotheses is None or hypothesis_name(step) in hypotheses)]  # one run per chosen hypothesis that has no run in progress yet
     for run_id in feeding + (sta if ready else []):  # every STA run exists before a feeding run starts, so one that completes at once finds the waiting runs
         launch_run(settings, run_id)
     return feeding + sta
+
+
+def start_spike_detection(settings: Settings, experiment_id: int) -> int:
+    """Start the spike detection of the experiment's Suite2p cells as a new run; returns its id. A detection already in progress is not doubled."""
+    if g.SPIKE_STEP in run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES):
+        raise ValueError("Spike detection is already running for this experiment.")
+    run_id = create_run(settings, experiment_id, g.SPIKE_STEP, settings.defaults.get(g.SPIKE_STEP, {}), backend="local")
+    launch_run(settings, run_id)
+    return run_id
 
 
 def confirm_preprocessing(settings: Settings, experiment_id: int) -> None:
@@ -208,8 +221,7 @@ def confirm_suite2p(settings: Settings, experiment_id: int) -> int:
     forget_suite2p(exp["source_path"])  # the user says the extraction is done: read the Suite2p files again
     neurons = discover_neurons(exp["source_path"])
     repo.confirm_suite2p(settings, experiment_id, neurons, report, ANALYSIS_STEPS)
-    # the cells are new (the old analysis runs were cancelled above): detect their spikes now; editing them is manual, afterwards
-    launch_run(settings, create_run(settings, experiment_id, g.SPIKE_STEP, settings.defaults.get(g.SPIKE_STEP, {}), backend="local"))
+    start_spike_detection(settings, experiment_id)  # the cells are new (the old analysis runs were cancelled above): detect their spikes now; editing them is manual, afterwards
     return len(neurons)
 
 

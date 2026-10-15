@@ -1,0 +1,94 @@
+/* Layout and look of the widgets that only some pages have (movie viewers, plots, the spike editor, the cell panel).
+   Colours come from the tokens of design.css; movies, images and plot canvases keep their dark background in both themes. */
+
+/* ---- corrected movie review (Preprocessing tab) ---- */
+.pb-review-grid, .pb-plot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
+.pb-plot-grid { margin-top: var(--s3); }
+.pb-plot { display: grid; gap: var(--s2); min-width: 0; }
+.pb-plot img { display: block; width: 100%; max-height: 560px; object-fit: contain; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); }
+.movie-shell { display: grid; gap: var(--s3); }
+.movie-stage { position: relative; display: grid; place-items: center; min-height: 280px; overflow: hidden; background: #05080c; border: 1px solid var(--plot-line); border-radius: var(--radius); }
+.movie-stage img { display: block; width: 100%; max-height: 520px; object-fit: contain; }
+.movie-stage .movie-buffer { grid-area: 1 / 1; opacity: 0; visibility: hidden; }
+.movie-stage .movie-buffer.active { opacity: 1; visibility: visible; }
+.movie-message { position: absolute; inset: 0; display: grid; place-items: center; padding: var(--s5); color: #9aa8b7; text-align: center; background: rgba(5, 8, 12, 0.86); }
+.movie-controls { display: grid; grid-template-columns: auto minmax(180px, 1fr) 96px; gap: var(--s2); align-items: center; }
+.movie-controls input[type="range"] { padding: 0; }
+.intensity-wrap { display: grid; gap: var(--s2); margin-top: var(--s4); }
+.intensity-legend, .behavior-legend { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+.behavior-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.qc-metrics { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s2); }
+.legend-line { display: inline-block; width: 28px; height: 0; border-top: 3px solid var(--accent); vertical-align: middle; margin-right: 6px; }
+.legend-line.astro { border-color: #37c6a6; }
+.legend-line.neuron { border-color: #4aa3ff; }
+.legend-line.velocity { border-color: var(--text); }
+.legend-line.threshold { border-top: 2px dashed var(--wait-fg); }
+.legend-fill { display: inline-block; width: 26px; height: 10px; border-radius: 3px; border: 1px solid var(--line); }
+.legend-fill.active { background: rgba(55, 198, 166, 0.55); }
+.legend-fill.inactive { background: rgba(74, 163, 255, 0.5); }
+.legend-fill.unlabeled { background: rgba(228, 173, 69, 0.5); }
+
+/* ---- anatomy clusters (Hypotheses tab) ---- */
+#anatomy-clusters-panel .ac-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--s3); align-items: start; }
+#anatomy-clusters-panel canvas { display: block; width: 100%; height: 340px; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); }
+#anatomy-clusters-panel .ac-controls { display: flex; gap: var(--s4); flex-wrap: wrap; align-items: center; font-size: var(--fs-sm); margin: var(--s2) 0; }
+#ac-tip { position: fixed; z-index: 50; pointer-events: none; background: #17202a; color: #e7edf4; border: 1px solid #333e4b; border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--fs-sm); display: none; }
+
+/* ---- spike editor (Spikes tab) ---- */
+.detector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s3); margin-top: var(--s3); }
+.detector-control { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; min-width: 0; padding: var(--s3); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
+.detector-control label { color: var(--muted); font-size: var(--fs-sm); font-weight: 650; }
+.detector-control output { min-width: 54px; text-align: right; font-variant-numeric: tabular-nums; }
+.detector-control input[type="range"] { grid-column: 1 / -1; padding: 0; }
+.detector-status { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; margin-top: var(--s3); }
+.spike-canvas { height: clamp(420px, 62vh, 820px); cursor: crosshair; }
+
+/* ---- the cell panel (Cells tab) ---- */
+.cell-list { max-height: 78vh; overflow: auto; }
+.spk-wrap { position: relative; margin-top: var(--s2); }
+.spk-wrap:fullscreen { background: var(--plot-bg); }
+.spk-wrap:fullscreen .plot { height: 100vh !important; }
+.spk-full { position: absolute; top: 6px; right: 8px; z-index: 3; min-height: 0; padding: 1px 8px; font-size: var(--fs-sm); opacity: .5; }
+.spk-wrap:hover .spk-full { opacity: 1; }
+.analysis-image { display: block; width: 100%; object-fit: contain; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); }
+.zv { position: relative; overflow: hidden; height: var(--h, 320px); min-height: 140px; resize: vertical; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); touch-action: none; cursor: grab; }
+.zv:active { cursor: grabbing; }
+.zv > .analysis-image, .zv > .smv-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; width: auto; border: none; border-radius: 0; }
+.zv:fullscreen { height: 100vh !important; resize: none; }
+.zv-bar { position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; z-index: 5; opacity: .35; transition: opacity .15s; }
+.zv:hover .zv-bar, .zv:fullscreen .zv-bar { opacity: 1; }
+.zv-bar button { min-height: 0; padding: 1px 7px; font-size: var(--fs-sm); line-height: 18px; background: #17202a; color: #e7edf4; border: 1px solid #333e4b; border-radius: 4px; cursor: pointer; }
+.smv-stage canvas { position: absolute; left: 0; top: 0; }
+#smv-base { image-rendering: pixelated; }
+.smv-controls { display: flex; gap: 6px; align-items: center; margin-top: 5px; flex-wrap: wrap; font-size: var(--fs-sm); }
+.smv-controls input[type=range] { flex: 1 1 120px; min-width: 80px; }
+.smv-controls button, .smv-controls select { min-height: 0; padding: 1px 8px; font-size: var(--fs-sm); }
+.smv-controls select { width: auto; max-width: 100%; }
+
+@media (max-width: 1100px) {
+  #anatomy-clusters-panel .ac-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1000px) {
+  .pb-review-grid, .pb-plot-grid { grid-template-columns: 1fr; }
+  .movie-controls { grid-template-columns: 1fr; }
+}
+
+
+/* ---- results of a cell: one card per result type, all the same size ---- */
+.results { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--s4); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3); display: grid; gap: var(--s2); align-content: start; min-width: 0; }
+.card.sig { border-color: var(--ok-fg); }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
+.card .map { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius-sm); }
+.result-plot { display: block; width: 100%; height: 160px; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius-sm); }
+.cluster-list { display: grid; gap: 2px; }
+.cluster-row { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; font-size: var(--fs-sm); color: var(--muted); }
+
+/* ---- the cropped movie: the frame on the left, the controls and two plots on the right ---- */
+.movie-layout { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); gap: var(--s4); align-items: start; }
+.controls { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.controls input[type=range] { flex: 1 1 120px; width: auto; min-width: 100px; padding: 0; }
+#smv-trace, #smv-groups { height: 150px; margin-top: 0; }
+details.panel-section { margin-top: var(--s4); padding: var(--s3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+details.panel-section summary { cursor: pointer; }
+@media (max-width: 1000px) { .movie-layout { grid-template-columns: minmax(0, 1fr); } }

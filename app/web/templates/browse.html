@@ -2,25 +2,22 @@
 {% block body %}
 <div class="page-head">
   <div>
-    <h1>Browse Folders</h1>
-    <p class="subtitle">{{ current }}</p>
+    <h1>Browse folders</h1>
+    <p class="path">{{ current }}</p>
   </div>
   <form method="post" action="/experiments/add">
     <input type="hidden" name="path" value="{{ current }}">
-    <button>Use This Folder</button>
+    <button>Use this folder</button>
   </form>
 </div>
 
 <section class="panel">
-  <div class="tile-grid">
+  <div class="stats">
     {% if parent %}
-    <a class="tile" href="/browse?path={{ parent|urlencode }}">..</a>
+    <a class="stat" href="/browse?path={{ parent|urlencode }}"><div class="value">..</div><div class="label">up one folder</div></a>
     {% endif %}
     {% for d in dirs %}
-    <a class="tile" href="/browse?path={{ d|urlencode }}">
-      <strong>{{ d.name }}</strong>
-      <p class="path">{{ d }}</p>
-    </a>
+    <a class="stat" href="/browse?path={{ d|urlencode }}"><b>{{ d.name }}</b><div class="path">{{ d }}</div></a>
     {% endfor %}
   </div>
 </section>

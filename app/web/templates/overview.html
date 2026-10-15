@@ -1,0 +1,85 @@
+{% extends "workspace.html" %}
+{% block tab %}
+<script type="application/json" id="page-data">{{ {"expId": exp.id}|tojson }}</script>
+
+<div class="callout info">
+  <b>Next:</b> {{ next.text }}
+  <a class="button small" href="{{ url_for('experiment_' ~ next.tab, experiment_id=exp.id) }}">Open {{ (tabs | selectattr("key", "equalto", next.tab) | first).label }}</a>
+</div>
+
+<div class="grid-2">
+  <section class="panel">
+    <div class="panel-head"><h2>Run analysis</h2></div>
+    {% include "_run_analysis.html" %}
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead><tr><th>Hypothesis</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          {% for h in hypotheses %}
+          <tr>
+            <td><b>{{ h.name }}</b><div class="muted small">{{ h.description }}</div></td>
+            <td><span class="chip {{ h.status }}">{{ h.status.replace("_", " ") }}</span>{% if h.waiting_for %} <span class="muted small">waiting for: {{ h.waiting_for | join(", ") }}</span>{% endif %}</td>
+            <td class="num">
+              {% if analysis_ready and h.status not in ("running", "pending", "waiting", "queued") %}
+              <button class="secondary small" type="submit" form="run-analysis-form" name="hypothesis" value="{{ h.name }}">{{ "Rerun" if h.status != "not_run" else "Run" }}</button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% include "_experiment_notes.html" %}
+</div>
+
+<section class="panel" id="behavior-results">
+  <div class="panel-head">
+    <div>
+      <h2>Behavior split</h2>
+      <p id="behavior-summary" class="muted">Loading behavior results...</p>
+    </div>
+    <span id="behavior-run" class="chip">No run</span>
+  </div>
+  <div class="behavior-legend" aria-label="Behavior split legend">
+    <span><i class="legend-line velocity"></i> Mouse velocity</span>
+    <span><i class="legend-fill active"></i> Active frames</span>
+    <span><i class="legend-fill inactive"></i> Inactive frames</span>
+    <span><i class="legend-fill unlabeled"></i> Covered but unlabeled</span>
+    <span><i class="legend-line threshold"></i> Speed threshold</span>
+  </div>
+  <canvas id="behavior-canvas" class="plot" style="height:340px"></canvas>
+</section>
+
+{% if not validation_ok %}
+<section class="panel">
+  <div class="panel-head"><h2>Validation</h2><span class="chip {{ exp.validation_state }}">{{ exp.validation_state }}</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>File</th></tr></thead>
+      <tbody>
+        {% for row in validation_rows %}
+        <tr><td>{{ row.name }}</td><td><span class="chip {{ 'completed' if row.status == 'OK' else 'failed' }}">{{ row.status }}</span></td><td class="path">{{ row.detail }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" action="/experiments/{{ exp.id }}/validate" style="margin-top:12px"><button class="secondary">Validate again</button></form>
+</section>
+{% endif %}
+
+<details class="panel">
+  <summary>More: reset or remove this experiment</summary>
+  <p class="muted">Both ask first. Reset deletes the app data of this experiment (runs, cells, outputs) but keeps it registered; remove takes it out of the app.</p>
+  <div class="toolbar">
+    <form method="post" action="/experiments/{{ exp.id }}/reset-data" onsubmit="return confirm('Delete app data, DB run records, cells, and runtime outputs for this experiment, but keep it in the app?');"><button class="danger">Reset data</button></form>
+    <form method="post" action="/experiments/{{ exp.id }}/remove" onsubmit="return confirm('Remove this experiment from the app and block future scans from re-adding it?');"><button class="danger">Remove</button></form>
+  </div>
+</details>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
+<script src="{{ url_for('static', filename='js/experiment_behavior.js') }}"></script>
+<script src="{{ url_for('static', filename='js/form_rules.js') }}"></script>
+{% endblock %}

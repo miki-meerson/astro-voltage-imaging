@@ -1,126 +1,93 @@
 {% extends "base.html" %}
 {% block head_extra %}{% if active %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% set stage_labels = {"preprocessing_pending": "preprocessing", "preprocessing_running": "preprocessing running", "preprocessing_review": "confirm preprocessing", "awaiting_suite2p": "Suite2p", "analysis_ready": "analysis"} %}
 {% block body %}
 <div class="page-head">
   <div>
     <h1>Experiments</h1>
-    <p class="subtitle">Uploaded experiment registry, preprocessing status, and analysis readiness.</p>
+    <p class="muted">Registered experiments and where each one is in the pipeline.</p>
+  </div>
+  <div class="toolbar">
+    <a class="button {{ 'secondary' if favorites_only else '' }}" href="/">All</a>
+    <a class="button {{ '' if favorites_only else 'secondary' }}" href="/?favorites=1">Starred</a>
   </div>
 </div>
 
-<div class="grid">
-  <section class="panel">
-    <h2>Upload Experiment</h2>
-    <form method="post" action="/experiments/add" class="form-row">
-      <input name="path" placeholder="Z:\...\z18-x2" required>
-      <a class="button secondary" href="/browse">Browse</a>
-      <button>Add and Run</button>
-    </form>
-    <p class="muted">Raw experiments enter preprocessing. Processed experiments with Suite2p outputs enter analysis.</p>
-  </section>
-
-  <section class="panel">
-    <h2>Discovery Scan</h2>
-    <form method="post" action="/scan" class="form-row">
-      <input name="parent" value="{{ settings.scan_parent }}">
-      <button>Run Scan</button>
-    </form>
-    <p class="muted">Manual scan. Newly added raw experiments automatically start preprocessing on the cluster.</p>
-  </section>
-
-  <section class="panel">
-    <h2>Rerun Failed</h2>
-    <div class="toolbar">
-      <form method="post" action="/runs/rerun-failed"><button>All Failed</button></form>
-      {% for step in rerun_steps %}
-      <form method="post" action="/runs/rerun-failed">
-        <input type="hidden" name="step" value="{{ step }}">
-        <button class="secondary">{{ step_labels[step] }}</button>
+<details class="panel">
+  <summary>Add experiments, scan a folder, rerun failed steps</summary>
+  <div class="grid-3" style="margin-top:12px">
+    <div>
+      <h3>Add an experiment</h3>
+      <form method="post" action="/experiments/add" class="stack">
+        <input name="path" placeholder="Z:\...\z18-x2" required>
+        <div class="toolbar"><a class="button secondary" href="/browse">Browse</a><button>Add and run</button></div>
       </form>
-      {% endfor %}
+      <p class="muted small">Raw experiments enter preprocessing on the cluster. Processed experiments with Suite2p outputs enter analysis.</p>
     </div>
-    <p class="muted">Creates a fresh run for each experiment whose latest failed step has no active rerun.</p>
-  </section>
-</div>
+    <div>
+      <h3>Scan a folder</h3>
+      <form method="post" action="/scan" class="stack">
+        <input name="parent" value="{{ settings.scan_parent }}">
+        <div><button>Run scan</button></div>
+      </form>
+      <p class="muted small">Newly found raw experiments start preprocessing by themselves.</p>
+      {% if last_scan %}<p class="muted small">Last scan: {{ last_scan.started_at }} to {{ last_scan.completed_at }}</p><pre>{{ last_scan.summary_json }}</pre>{% endif %}
+    </div>
+    <div>
+      <h3>Rerun failed</h3>
+      <div class="toolbar">
+        <form method="post" action="/runs/rerun-failed"><button>All failed</button></form>
+        {% for step in rerun_steps %}
+        <form method="post" action="/runs/rerun-failed"><input type="hidden" name="step" value="{{ step }}"><button class="secondary">{{ step_labels[step] }}</button></form>
+        {% endfor %}
+      </div>
+      <p class="muted small">Makes a fresh run for each experiment whose newest run of that step failed.</p>
+    </div>
+  </div>
+</details>
 
 <div class="table-wrap">
-  <div class="table-toolbar">
-    <a class="button {{ 'secondary' if favorites_only else '' }}" href="/">All Experiments</a>
-    <a class="button {{ '' if favorites_only else 'secondary' }}" href="/?favorites=1">Starred Experiments</a>
-  </div>
   <table>
-    <tr>
-      <th></th>
-      <th>Experiment</th>
-      <th>Date Desc</th>
-      <th>Metadata</th>
-      <th>Validation</th>
-      <th>Stage</th>
-      <th>Neurons</th>
-      <th>Jobs</th>
-      <th>Source</th>
-      <th>Views</th>
-      <th></th>
-    </tr>
-    {% for e in experiments %}
-    <tr>
-      <td>
-        <form method="post" action="/experiments/{{ e.id }}/favorite">
-          <input type="hidden" name="favorite" value="{{ 0 if e.is_favorite else 1 }}">
-          <input type="hidden" name="next" value="{{ request.full_path }}">
-          <button class="icon-button" title="{{ 'Unstar' if e.is_favorite else 'Star' }}" aria-label="{{ 'Unstar experiment' if e.is_favorite else 'Star experiment' }}">
-            <i class="{{ 'fa-solid' if e.is_favorite else 'fa-regular' }} fa-star"></i>
-          </button>
-        </form>
-      </td>
-      <td><a href="/experiments/{{ e.id }}">{{ e.canonical_id }}</a></td>
-      <td>{{ e.recording_date }}</td>
-      <td>{{ e.cage }} / {{ e.mouse_name }} / {{ e.behavior }} / {{ e.fov }} / z{{ e.z_plane }} x{{ e.zoom }}</td>
-      <td><span class="chip {{ e.validation_state }}">{{ e.validation_state }}</span></td>
-      <td><span class="chip">{{ e.workflow_stage }}</span></td>
-      <td>{{ e.neuron_count }}</td>
-      <td>
-        {% if e.job_status == "running" %}
-        <span class="running">running: {{ step_labels[e.job_step] if step_labels and e.job_step in step_labels else e.job_step|title }}</span>
-        {% elif e.job_status == "pending" %}
-        <span class="pending">pending: {{ step_labels[e.job_step] if step_labels and e.job_step in step_labels else e.job_step|title }}</span>
-        {% elif e.job_status == "failed" %}
-        <span class="failed">failed: {{ step_labels[e.job_step] if step_labels and e.job_step in step_labels else e.job_step|title }}</span>
-        {% elif e.job_status == "completed" %}
-        <span class="completed">completed</span>
-        {% elif e.job_status == "partial" %}
-        <span class="muted">{{ e.completed_steps }} of {{ e.total_steps }} steps completed</span>
-        {% else %}
-        <span class="muted">no runs</span>
-        {% endif %}
-      </td>
-      <td class="path">{{ e.source_path }}</td>
-      <td>
-        <div class="toolbar">
-          <a class="button secondary" href="/experiments/{{ e.id }}/preprocessing">Preprocessing</a>
-          <a class="button secondary" href="/experiments/{{ e.id }}/analysis">Analysis</a>
-        </div>
-      </td>
-      <td>
-        <div class="toolbar">
-          <form method="post" action="/experiments/{{ e.id }}/reset-data" onsubmit="return confirm('Delete app data, DB run records, cells, and runtime outputs for this experiment, but keep it in the app?');">
-            <button class="danger">Reset Data</button>
+    <thead><tr><th></th><th>Experiment</th><th>Date</th><th>Mouse / FOV / z</th><th>Where it is</th><th>Validation</th><th class="num">Cells</th><th></th></tr></thead>
+    <tbody>
+      {% for e in experiments %}
+      <tr>
+        <td>
+          <form method="post" action="/experiments/{{ e.id }}/favorite">
+            <input type="hidden" name="favorite" value="{{ 0 if e.is_favorite else 1 }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button class="secondary small" title="{{ 'Unstar' if e.is_favorite else 'Star' }}" aria-label="{{ 'Unstar experiment' if e.is_favorite else 'Star experiment' }}">{{ "&#9733;"|safe if e.is_favorite else "&#9734;"|safe }}</button>
           </form>
-          <form method="post" action="/experiments/{{ e.id }}/remove" onsubmit="return confirm('Remove this experiment from the app and block future scans from re-adding it?');">
-            <button class="danger">Remove</button>
-          </form>
-        </div>
-      </td>
-    </tr>
-    {% endfor %}
+        </td>
+        <td><a href="/experiments/{{ e.id }}"><b>{{ e.canonical_id }}</b></a></td>
+        <td>{{ e.recording_date }}</td>
+        <td>{{ e.cage }} / {{ e.mouse_name }} / {{ e.behavior }} / {{ e.fov }} / z{{ e.z_plane }} x{{ e.zoom }}</td>
+        <td>
+          <span class="chip">{{ stage_labels.get(e.workflow_stage, e.workflow_stage) }}</span>
+          {% if e.job_status in ("running", "pending", "failed") %}
+          <span class="chip {{ e.job_status }}">{{ e.job_status }}: {{ step_labels[e.job_step] if e.job_step in step_labels else e.job_step|title }}</span>
+          {% elif e.job_status == "completed" %}<span class="chip completed">all steps completed</span>
+          {% elif e.job_status == "partial" %}<span class="muted small">{{ e.completed_steps }} of {{ e.total_steps }} steps completed</span>{% endif %}
+        </td>
+        <td><span class="chip {{ e.validation_state }}">{{ e.validation_state }}</span></td>
+        <td class="num">{{ e.neuron_count }}</td>
+        <td>
+          <div class="toolbar">
+            <a class="button small" href="/experiments/{{ e.id }}">Open</a>
+            <details>
+              <summary class="muted small">&hellip;</summary>
+              <div class="toolbar" style="margin-top:6px">
+                <form method="post" action="/experiments/{{ e.id }}/reset-data" onsubmit="return confirm('Delete app data, DB run records, cells, and runtime outputs for this experiment, but keep it in the app?');"><button class="danger small">Reset data</button></form>
+                <form method="post" action="/experiments/{{ e.id }}/remove" onsubmit="return confirm('Remove this experiment from the app and block future scans from re-adding it?');"><button class="danger small">Remove</button></form>
+              </div>
+            </details>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No experiments yet: add one above.</td></tr>
+      {% endfor %}
+    </tbody>
   </table>
 </div>
-
-{% if last_scan %}
-<section class="panel">
-  <h2>Latest Scan</h2>
-  <p class="muted">{{ last_scan.started_at }} to {{ last_scan.completed_at }}</p>
-  <pre>{{ last_scan.summary_json }}</pre>
-</section>
-{% endif %}
 {% endblock %}

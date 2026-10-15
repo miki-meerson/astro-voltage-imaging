@@ -15,14 +15,16 @@ import tifffile
 
 from app.db import experiment_repository, run_repository
 from app.services import caches, polarity
-from app.services.runs import default_sta_step, run_dir
-from app.services.sta_results import anatomy_clusters_in_crop
+from app.services.runs import run_dir
 from app.services.suite2p_data import experiment_stat_cells, experiment_suite2p_context
 from utils import globals_utils as g
+from utils.cluster_context import significant_clusters
+from utils.cluster_result import cluster_basic_fields, cluster_pixels_fullres
+from utils.hypotheses import hypothesis_name
 from utils.movie_utils import read_frame_rate
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for, run_dir_of_sta_dir, sta_dir_of_run
-from utils.sta_trace_utils import event_triggered_mean
+from utils.sta_trace_utils import event_triggered_mean, pixels_in_crop
 from utils.suite2p_utils import roi_pixels_in_crop, suite2p_trace_dff
 from utils.tif_export import saved_run_name
 
@@ -37,23 +39,46 @@ class CellMovieFiles:
     sta_run_id: int
 
 
-def cell_movie_files(settings, neuron_id: int) -> CellMovieFiles:
-    """Look up the cell and its experiment's latest completed STA run and return the paths of the saved files (nothing is read from them)."""
+def cell_movie_files(settings, neuron_id: int, step: str) -> CellMovieFiles:
+    """Look up the cell and its experiment's latest completed run of the hypothesis `step` and return the paths of the saved files (nothing is read from them)."""
     cell = experiment_repository.neuron_with_experiment(settings, neuron_id)
     if cell is None:
         raise ValueError("Cell not found.")
-    run = run_repository.latest_run(settings, int(cell["experiment_id"]), default_sta_step())
+    run = run_repository.latest_run(settings, int(cell["experiment_id"]), step)
     if run is None:
-        raise FileNotFoundError("No completed STA run was found for this experiment: run STA Maps first.")
+        raise FileNotFoundError(f"No completed run of hypothesis '{hypothesis_name(step)}' was found for this experiment: run the analysis for it first.")
     sta_dir = sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))
     number = int(cell["pipeline_neuron_id"])
     return CellMovieFiles(
-        movie_tif=path_for(PathKind.STA_MOVIE_TIF, cell["source_path"], cell=number, group=g.ANATOMY_GROUP, bin=1),
+        movie_tif=path_for(PathKind.STA_MOVIE_TIF, cell["source_path"], hypothesis=hypothesis_name(step), cell=number, group=g.ANATOMY_GROUP, bin=1),
         anatomy_npz=path_for(PathKind.ANATOMY_RESULT, sta_dir, cell=number),
         source_path=cell["source_path"],
         pipeline_neuron_id=number,
         sta_run_id=int(run["id"]),
     )
+
+
+def anatomy_clusters_in_crop(anatomy_npz: Path, crop: dict) -> list[dict]:
+    """Significant anatomy clusters of this cell (read from its anatomy result file), in the pixel coordinates of the cropped STA movie.
+
+    Reads only the small keys of the anatomy result (never the permutations), so it is fast.
+    """
+    out = []
+    with np.load(anatomy_npz, allow_pickle=True) as d:
+        ay0, _, ax0, _ = (int(v) for v in np.asarray(d["anatomy_crop_bounds"]).ravel())
+        b = int(np.asarray(d["spatial_bin"]).item())
+        window_start = int(np.asarray(d["analysis_window"], dtype=int)[0])
+        for c in significant_clusters(d, limit=None):
+            ys, xs = cluster_pixels_fullres(np.asarray(c["mask3d"], dtype=bool).any(axis=0), (ay0, 0, ax0, 0), b)
+            pixels = np.unique(np.array(pixels_in_crop(ys, xs, crop)).reshape(-1, 2), axis=0)  # sorted, no duplicates
+            if not len(pixels):
+                continue
+            out.append({
+                **cluster_basic_fields(c, window_start),
+                "centroid": [float(pixels[:, 0].mean()), float(pixels[:, 1].mean())],
+                "pixels": pixels.tolist(),
+            })
+    return out
 
 
 def _check_saved_files(movie_tif: Path, anatomy_npz: Path, cell: int) -> None:

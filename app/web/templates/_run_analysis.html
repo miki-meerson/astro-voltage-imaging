@@ -1,0 +1,23 @@
+{# The form that starts the analysis (every hypothesis, or one when its Rerun button is used). Needs: exp, analysis_ready, result_types, sta_defaults. #}
+{% if not analysis_ready %}
+<div class="empty">The analysis can run after preprocessing and Suite2p have been confirmed (see the Preprocessing tab).</div>
+{% else %}
+<form id="run-analysis-form" method="post" action="/experiments/{{ exp.id }}/run-analysis" class="stack" data-require-one="result_types" data-require-message="Tick at least one result type">
+  <div>
+    <p class="muted small">Only the marked result types run. One experiment at a time; spike detection is not repeated, behavior and anatomy are made first when they are missing.</p>
+    <div class="check-strip">
+      {% for value, label in result_types %}
+      <label class="check"><input type="checkbox" name="result_types" value="{{ value }}" checked> {{ label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="grid-2">
+    <label class="field">STA spatial bin<input type="number" name="spatial_bin" min="1" step="1" value="{{ sta_defaults.get('spatial_bin', 1) }}"></label>
+    <label class="field">Anatomy spatial bin<input type="number" name="anatomy_spatial_bin" min="1" step="1" value="{{ sta_defaults.get('anatomy_spatial_bin', 1) }}"></label>
+  </div>
+  <label class="check" title="Off: one voxel threshold and one cluster-mass null for both signs. On: separate thresholds and nulls for depolarizing and hyperpolarizing clusters; cluster p = 2 x the p within its own sign (capped at 1).">
+    <input type="checkbox" name="per_sign_null" value="1" {% if sta_defaults.get('per_sign_null', False) %}checked{% endif %}> Separate null per sign
+  </label>
+  <div><button type="submit">Run analysis</button> <span class="muted small">runs every hypothesis for the marked result types</span></div>
+</form>
+{% endif %}

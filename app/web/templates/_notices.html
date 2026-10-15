@@ -1,0 +1,14 @@
+{# The one-line messages a page can show after an action (?notice=...). #}
+{% if notice == "already_registered" %}
+<div class="callout info">This experiment was already in the registry, so no duplicate record was created.</div>
+{% elif notice and notice.startswith("suite2p_confirmed_") %}
+<div class="callout info">Suite2p confirmed: {{ notice.replace("suite2p_confirmed_", "") }} cells found. Spike detection was started for them; it is on the Runs tab.</div>
+{% elif notice and notice.startswith("data_reset_") %}
+<div class="callout info">The app data of this experiment was cleared. The experiment is still registered and can be processed again.</div>
+{% elif notice == "preprocessing_confirmed" %}
+<div class="callout info">Preprocessing confirmed. Run Suite2p by hand, then confirm it below.</div>
+{% elif notice and notice.startswith("rerun_") %}
+<div class="callout info">{{ notice.replace("rerun_", "").replace("_", " ").title() }} was queued; the preprocessing steps after it follow.</div>
+{% elif notice == "redetecting" %}
+<div class="callout info">Spike detection was started for all cells. Your earlier edits stay in the earlier run; the new run replaces them when it finishes.</div>
+{% endif %}

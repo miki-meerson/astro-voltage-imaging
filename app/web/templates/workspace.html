@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{# The frame of every experiment page: title, step bar, tabs, notices. A page fills the block "tab". #}
+{% set active_tab = (tabs | selectattr("active") | first).key %}
+{% block title %}{{ exp.canonical_id }} · {{ (tabs | selectattr("active") | first).label }}{% endblock %}
+{% block head_extra %}{% if active and active_tab in ("overview", "preprocessing", "runs") %}<meta http-equiv="refresh" content="15">{% endif %}{% block tab_head %}{% endblock %}{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>{{ exp.canonical_id }}</h1>
+    <p class="muted">{{ exp.cage }} / {{ exp.mouse_name }} / {{ exp.behavior }} / {{ exp.fov }} / z{{ exp.z_plane }} x{{ exp.zoom }} &middot; {{ exp.recording_date }} &middot; {{ neurons|length }} cells</p>
+  </div>
+</div>
+
+<ol class="stepper">
+  {% for step in steps %}
+  <li class="step {{ step.state }}{% if step.tab == active_tab %} current{% endif %}">
+    <a href="{{ url_for('experiment_' ~ step.tab, experiment_id=exp.id) }}"><span class="n">{{ step.n }}</span>{{ step.label }}{% if step.detail %} <small>{{ step.detail }}</small>{% endif %}</a>
+  </li>
+  {% endfor %}
+</ol>
+
+<nav class="tabs">
+  {% for tab in tabs %}
+  <a class="tab{% if tab.active %} active{% endif %}" href="{{ url_for(tab.endpoint, experiment_id=exp.id, h=request.args.get('h')) }}">{{ tab.label }}</a>
+  {% endfor %}
+</nav>
+
+{% include "_notices.html" %}
+{% block tab %}{% endblock %}
+{% endblock %}

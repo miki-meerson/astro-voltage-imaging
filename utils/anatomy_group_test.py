@@ -1,6 +1,6 @@
 """Are the significant anatomy clusters of an experiment more alike than clusters found in fake spike trains?
 
-Plain version: every cell has 200 saved "fake" versions of its STA (its spike times shifted in time, which breaks any real link
+Plain version: every cell has 200 saved "fake" versions of its STA (its spike times replaced by random frames of the recording, which breaks any real link
 between spikes and the movie). We run the very same cluster search on each fake, so fake clusters are chosen exactly like real
 ones. Then we build many fake groups (one fake per cell) and ask how often a fake group looks as striking as the real one.
 

@@ -1,49 +1,42 @@
-{% extends "base.html" %}
-{% block head_extra %}{% if active %}<meta http-equiv="refresh" content="30">{% endif %}{% endblock %}
-{% block body %}
+{% extends "workspace.html" %}
+{% block tab %}
 <div class="page-head">
   <div>
-    <h1>Run {{ run.id }} / {{ run.label }}</h1>
-    <p class="subtitle">{{ run.canonical_id }}</p>
+    <h2>Run {{ run.id }} &middot; {{ run.label }}</h2>
+    <p class="muted"><a href="{{ url_for('experiment_runs', experiment_id=exp.id) }}">&lsaquo; all runs of {{ exp.canonical_id }}</a></p>
   </div>
   <span class="chip {{ run.status }}">{{ run.status }}</span>
 </div>
 
 <div class="grid-3">
   <section class="panel">
-    <h2>Progress</h2>
-    <div class="progress {{ run.status }}" style="--value: {{ run.progress }}%"><span></span></div>
-    <p class="muted">{{ run.started_at or "Did not start" }} {{ run.ended_at or "running" }}</p>
+    <h3>Progress</h3>
+    <div class="progress" style="--value: {{ run.progress }}%"><span></span></div>
+    <p class="muted">{{ run.started_at or "Did not start" }} &ndash; {{ run.ended_at or "not ended" }}</p>
   </section>
   <section class="panel">
-    <h2>Saved To</h2>
+    <h3>Saved to</h3>
     <p class="path">{{ run.output_dir }}</p>
     <p class="muted">{{ run.artifact_count }} file(s) recorded.</p>
   </section>
   <section class="panel">
-    <h2>Execution</h2>
-    <p>{{ run.backend }} / exit code {{ run.exit_code if run.exit_code is not none else "pending" }}</p>
-    {% if run.failure_reason %}
-    <p class="failed">{{ run.failure_reason }}</p>
-    {% endif %}
+    <h3>Execution</h3>
+    <p>{{ run.backend }} &middot; exit code {{ run.exit_code if run.exit_code is not none else "pending" }}</p>
+    {% if run.failure_reason %}<div class="callout error">{{ run.failure_reason }}</div>{% endif %}
   </section>
 </div>
 
-<div class="grid">
-  <section class="panel">
-    <h2>Stdout</h2>
-    <pre id="stdout-log">{{ stdout or "No stdout yet." }}</pre>
-  </section>
-  <section class="panel">
-    <h2>Stderr</h2>
-    <pre id="stderr-log">{{ stderr or "No stderr yet." }}</pre>
-  </section>
+<div class="grid-2">
+  <section class="panel"><h3>Stdout</h3><pre id="stdout-log">{{ stdout or "No stdout yet." }}</pre></section>
+  <section class="panel"><h3>Stderr</h3><pre id="stderr-log">{{ stderr or "No stderr yet." }}</pre></section>
 </div>
 
 <section class="panel">
-  <h2>Parameters</h2>
+  <h3>Settings of this run</h3>
   <pre>{{ run.parameters_json }}</pre>
 </section>
+{% endblock %}
+{% block scripts %}
 {% if active %}
 <script type="application/json" id="page-data">{{ {"runId": run.id}|tojson }}</script>
 <script src="{{ url_for('static', filename='js/run_logs.js') }}"></script>

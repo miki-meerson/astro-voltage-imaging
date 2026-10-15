@@ -47,7 +47,7 @@ class LRUCache:
             return len(self._data)
 
 
-STA_SIGNIFICANT = LRUCache(8, "sta_significant")        # key: (run_id, csv mtime_ns, csv size)
+STA_CELL_TABLE = LRUCache(8, "sta_cell_table")          # key: (run_id, csv mtime_ns, csv size) -> the per-cell flags of an STA run
 BEHAVIOR_PAYLOAD = LRUCache(8, "behavior_payload")      # key: (run_id, npz mtime_ns)
 MOVIE_META = LRUCache(16, "movie_meta")                 # key: (path, mtime_ns)
 MOVIE_ARRAY = LRUCache(3, "movie_array")                # holds np.memmap objects (open file handles): keep it tiny
@@ -55,7 +55,8 @@ MOVIE_JPEG = LRUCache(160, "movie_jpeg")                # key: (path, mtime_ns, 
 MEAN_INTENSITY = LRUCache(8, "mean_intensity")
 STA_STACK = LRUCache(6, "sta_stack")                    # key -> binary payload of the cropped STA movie
 CELL_REVIEW = LRUCache(16, "cell_review")               # key: (experiment, spike run, max mtime of label files and iscell.npy)
-STA_SUMMARY_PNG = LRUCache(80, "sta_summary_png")       # rendered cell-page STA summary images, bytes
+STA_SUMMARY_PNG = LRUCache(120, "sta_summary_png")      # rendered map images of the cell results, bytes
+MEAN_IMAGE = LRUCache(16, "mean_image")                 # key: (movie file, mtime) -> mean image of a binned movie (small)
 CLUSTER_RESULT = LRUCache(240, "cluster_result")        # key: (npz path, mtime_ns) -> parsed cluster result
 SUITE2P_STAT = LRUCache(16, "suite2p_stat")             # key: experiment folder -> ROI stats of the accepted cells (small); see suite2p_data.py
 SUITE2P_CONTEXT = LRUCache(3, "suite2p_context")        # key: experiment folder -> stats + fluorescence matrices (tens of MB): only the last 3 experiments
@@ -63,6 +64,6 @@ SUITE2P_CONTEXT = LRUCache(3, "suite2p_context")        # key: experiment folder
 
 def clear_experiment_result_caches() -> None:
     """Drop the summaries derived from the STA / spike / behavior results of an experiment."""
-    STA_SIGNIFICANT.clear()
+    STA_CELL_TABLE.clear()
     BEHAVIOR_PAYLOAD.clear()
     CELL_REVIEW.clear()

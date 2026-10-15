@@ -1,7 +1,7 @@
 """Fiji / ImageJ copies of the STA movies, written next to the experiment's other outputs when the movies are created.
 
-Layout: <experiment folder>/sta_movies_tif/cell_<N>/sta_<group>_bin<B>.tif (paths: utils/paths_utils.py, PathKind.STA_MOVIE_TIF), one file per
-binned STA movie of the STA run (all, anatomy, behavioural groups). sta_anatomy_bin1.tif is the cropped full-resolution movie
+Layout: <experiment folder>/sta_movies_tif/<hypothesis>/cell_<N>/sta_<group>_bin<B>.tif (paths: utils/paths_utils.py, PathKind.STA_MOVIE_TIF), one file per
+binned STA movie of the STA run of a hypothesis (a rerun replaces only the files of its own hypothesis) (all, anatomy, behavioural groups). sta_anatomy_bin1.tif is the cropped full-resolution movie
 the app shows on the cell page. Float32 ImageJ stacks (TYX), biological sign (bright = depolarization), one slice label per frame (time
 relative to the spike). Written by the STA cluster job (cluster-code/sta_maps_sparse.py). Every file carries `run=<STA run folder name>` in its ImageJ info text.
 """

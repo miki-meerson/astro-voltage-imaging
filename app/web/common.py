@@ -15,7 +15,7 @@ from utils.movie_utils import read_frame_rate
 class _FlatSetupState(BlueprintSetupState):
     """Register rules under their plain endpoint name ("neuron", not "neurons.neuron").
 
-    The templates and the redirects use url_for("experiment_analysis", ...) etc.; keeping the endpoint names
+    The templates and the redirects use url_for("experiment_overview", ...) etc.; keeping the endpoint names
     unchanged means the split into blueprints does not touch any of them.
     """
 

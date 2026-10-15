@@ -13,6 +13,7 @@ from app.settings import Settings
 
 # workflow stages of an experiment (experiments.workflow_stage)
 STAGE_PREPROCESSING_PENDING = "preprocessing_pending"
+STAGE_PREPROCESSING_REVIEW = "preprocessing_review"  # preprocessing finished, waiting for the user to confirm it
 STAGE_AWAITING_SUITE2P = "awaiting_suite2p"
 STAGE_ANALYSIS_READY = "analysis_ready"
 # review states (experiments.preprocessing_review_state / suite2p_review_state)
@@ -104,7 +105,7 @@ def pipeline_neuron_ids(settings: Settings, experiment_id: int) -> list[str]:
 
 def experiment_page_data(settings: Settings, experiment_id: int, analysis_steps) -> dict | None:
     """Everything the analysis page reads from the database, or None when the experiment is unknown:
-    {exp, neurons, runs (newest first), latest_real_runs {step: newest real run row of each of analysis_steps}, confirmed_count, notes}."""
+    {exp, neurons, runs (newest first), latest_real_runs {step: newest real run row of each of analysis_steps}, notes}."""
     with connect(settings) as conn:
         exp = conn.execute("SELECT * FROM experiments WHERE id=?", (experiment_id,)).fetchone()
         if exp is None:
@@ -125,7 +126,6 @@ def experiment_page_data(settings: Settings, experiment_id: int, analysis_steps)
             ).fetchone()
             if row is not None:
                 latest[step] = dict(row)
-        confirmed_count = conn.execute("SELECT COUNT(*) AS n FROM confirmed_neurons WHERE experiment_id=?", (experiment_id,)).fetchone()["n"]
         notes = rows(
             conn,
             """
@@ -136,7 +136,7 @@ def experiment_page_data(settings: Settings, experiment_id: int, analysis_steps)
             """,
             (experiment_id,),
         )
-    return {"exp": dict(exp), "neurons": neurons, "runs": runs, "latest_real_runs": latest, "confirmed_count": confirmed_count, "notes": notes}
+    return {"exp": dict(exp), "neurons": neurons, "runs": runs, "latest_real_runs": latest, "notes": notes}
 
 
 # ---- notes ------------------------------------------------------------------------------------------------------------------------------------

@@ -5,11 +5,11 @@ from flask import Flask
 
 from app.db.core import migrate
 from app.settings import load_settings
-from app.web.blueprints import experiments, files, neurons, preprocessing, runs, spikes
+from app.web.blueprints import experiments, files, neurons, preprocessing, runs, spikes, workspace
 from app.web.logging_setup import configure_logging, init_error_handling
 from app.web.security import init_security
 
-BLUEPRINTS = (experiments.bp, preprocessing.bp, neurons.bp, spikes.bp, runs.bp, files.bp)
+BLUEPRINTS = (experiments.bp, workspace.bp, preprocessing.bp, neurons.bp, spikes.bp, runs.bp, files.bp)
 
 
 def create_app() -> Flask:
