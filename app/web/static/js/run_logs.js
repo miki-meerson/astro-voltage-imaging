@@ -16,6 +16,6 @@
       }
     } catch (_) {}
   }
-  setInterval(refreshLogs, 1500);
+  setInterval(refreshLogs, 5000);  // the log of a cluster job changes every few seconds at most
   refreshLogs();
 })();

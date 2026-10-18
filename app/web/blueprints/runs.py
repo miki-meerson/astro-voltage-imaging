@@ -34,7 +34,8 @@ def run_detail(run_id):
         return render_template("error.html", title="Missing Run", message="Run not found"), 404
     rv = run_view(run, settings)
     data = page_data(settings, int(run["experiment_id"]), "runs")
-    return render_template("run.html", **{**data, "active": rv["status"] in ACTIVE_STATUSES}, run=rv, stdout=run_stdout(rv), stderr=run_stderr(rv))
+    # the logs refresh themselves (run_logs.js): the page must not reload as well
+    return render_template("run.html", **{**data, "active": rv["status"] in ACTIVE_STATUSES}, refresh=False, run=rv, stdout=run_stdout(rv), stderr=run_stderr(rv))
 
 
 @bp.get("/runs/<int:run_id>/logs")

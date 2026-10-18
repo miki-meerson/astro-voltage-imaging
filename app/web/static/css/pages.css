@@ -43,6 +43,7 @@
 
 /* ---- the cell panel (Cells tab) ---- */
 .cell-list { max-height: 78vh; overflow: auto; }
+.cell-list th, .cell-list td { white-space: nowrap; padding: 6px 8px; }
 .spk-wrap { position: relative; margin-top: var(--s2); }
 .spk-wrap:fullscreen { background: var(--plot-bg); }
 .spk-wrap:fullscreen .plot { height: 100vh !important; }

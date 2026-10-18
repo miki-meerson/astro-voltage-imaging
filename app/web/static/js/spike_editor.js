@@ -8,7 +8,7 @@
   let initialDetectionParams = {}, detectTimer = null, detectRequestId = 0;
   const colors = {spike: "#4fa3ff", exclude: "#e05260"};
   const MIN_SPAN = 20;  // frames: the most zoomed-in view
-  const plot = {left: 76, right: 22, top: 28, bottom: 62};
+  const plot = {left: 96, right: 22, top: 28, bottom: 62};
   // the detector settings (and their defaults) come from the server with the cell's data; nothing is defined here
   const paramFormat = {
     mad_factor: v => Number(v).toFixed(1),

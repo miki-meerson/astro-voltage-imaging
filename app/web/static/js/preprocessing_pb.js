@@ -268,6 +268,8 @@
       renderQcMetrics(data);
     } catch (error) {
       summary.textContent = error.message || "Mean intensity data are unavailable.";
+      for (const id of ["intensity-canvas", "qc-metrics"]) document.getElementById(id).style.display = "none";  // nothing to draw
+      document.querySelector(".intensity-legend").style.display = "none";
     }
   }
   document.querySelectorAll("[data-movie-viewer]").forEach(root => initPreprocessingMovieViewer(root, root.dataset.movieViewer));

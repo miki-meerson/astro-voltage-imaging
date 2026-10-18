@@ -139,6 +139,7 @@
       if (c.motion_flagged) ex.push(`${c.motion_flagged} motion-suspected excluded (cells ${d.excluded.motion_flagged.join(", ")})`);
       if (c.no_motion_diagnostics) ex.push(`${c.no_motion_diagnostics} without motion diagnostics excluded (cells ${d.excluded.no_motion_diagnostics.join(", ")})`);
       $("ac-excluded").textContent = ex.join("; ");
+      document.querySelector("#anatomy-clusters-panel .ac-grid").style.display = c.clusters_shown ? "" : "none";  // nothing to draw: no empty boxes
       redraw();
       showTest(d.group_test);
     })

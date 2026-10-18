@@ -23,7 +23,7 @@ def completed_sta_run(settings, experiment_id: int, step: str) -> tuple[dict, st
     """The newest completed run of an STA step and the folder of its results (<run>/sta_algorithm_home/sta-analysis). Raises when there is none."""
     run = run_repository.latest_run(settings, int(experiment_id), step)
     if run is None:
-        raise FileNotFoundError(f"No completed run of {step} for this experiment: run the analysis for hypothesis '{hypothesis_name(step)}' first.")
+        raise FileNotFoundError(f"No completed run of hypothesis '{hypothesis_name(step)}' for this experiment: run the analysis for it first.")
     return run, sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))
 
 

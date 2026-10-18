@@ -53,8 +53,8 @@
 </section>
 
 {% if not validation_ok %}
-<section class="panel">
-  <div class="panel-head"><h2>Validation</h2><span class="chip {{ exp.validation_state }}">{{ exp.validation_state }}</span></div>
+<details class="panel"{% if exp.validation_state != "valid" %} open{% endif %}>
+  <summary><b>Validation</b> <span class="chip {{ exp.validation_state }}">{{ exp.validation_state }}</span> <span class="muted small">{{ validation_rows | rejectattr("status", "equalto", "OK") | list | length }} check(s) not OK</span></summary>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Check</th><th>Status</th><th>File</th></tr></thead>
@@ -66,7 +66,7 @@
     </table>
   </div>
   <form method="post" action="/experiments/{{ exp.id }}/validate" style="margin-top:12px"><button class="secondary">Validate again</button></form>
-</section>
+</details>
 {% endif %}
 
 <details class="panel">

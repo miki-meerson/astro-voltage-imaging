@@ -13,7 +13,7 @@ python -m app.web.start
 
 The app opens at `http://127.0.0.1:8765`. Settings are in `config.example.yml` (or the file named in the environment variable `ASTRO_PIPELINE_CONFIG`). The database and all outputs created by the app live in `runtime/`.
 
-Typical use: on the main page paste or browse to an experiment folder (`...\Hyp<n>\<side>\<date>-<state>\FOV<k>\z-<plane>-x<zoom>`), review preprocessing, confirm Suite2p, then spikes, behavior and STA run, and open the experiment and its cells. Source experiment folders are treated as read-only (the one exception, a re-creatable binned-movie cache, is described in the architecture document).
+Typical use: on the main page paste or browse to an experiment folder (`...\Hyp<n>\<side>\<date>-<state>\FOV<k>\z-<plane>-x<zoom>`), review preprocessing and confirm it, run Suite2p by hand and confirm it (spikes are then detected by themselves), check the spikes, press Run analysis (every hypothesis of the catalogue runs on the cluster), and open the Hypotheses and Cells tabs. Source experiment folders are treated as read-only (the one exception, a re-creatable binned-movie cache, is described in the architecture document).
 
 Tests (kept locally, not in git): `pytest tests/`.
 

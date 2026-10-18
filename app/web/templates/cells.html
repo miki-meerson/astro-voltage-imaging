@@ -82,7 +82,7 @@
           <b>{{ card.title }}</b>
           <span class="chip {{ 'completed' if card.n_significant else 'off' }}">{% if card.n_significant %}{{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% else %}no significant cluster{% endif %}</span>
         </div>
-        <img class="map" loading="lazy" src="/neurons/{{ selected.id }}/sta-map.png?h={{ selected_hypothesis }}&type={{ card.result_type }}&run={{ sta_run.id }}" alt="Mean image of cell {{ selected.cell }} with the clusters of {{ card.title }}">
+        <img class="map" src="/neurons/{{ selected.id }}/sta-map.png?h={{ selected_hypothesis }}&type={{ card.result_type }}&run={{ sta_run.id }}" alt="Mean image of cell {{ selected.cell }} with the clusters of {{ card.title }}">
         <canvas class="result-plot" data-card="{{ loop.index0 }}"></canvas>
         <div class="cluster-list">
           {% for cluster in card.clusters %}

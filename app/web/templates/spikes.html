@@ -39,7 +39,7 @@
             <td><a href="{{ url_for('experiment_spikes', experiment_id=exp.id, cell=cell.cell, unreviewed='1' if unreviewed_only else None) }}">Cell {{ cell.cell }}</a></td>
             <td class="num">{{ cell.n_peaks }}</td>
             <td class="num">{{ cell.n_excluded }}</td>
-            <td>{% if cell.reviewed %}<span class="chip completed">reviewed</span>{% endif %}</td>
+            <td>{% if cell.reviewed %}<span class="chip completed" title="reviewed">&#10003;</span>{% endif %}</td>
           </tr>
           {% else %}
           <tr><td colspan="4" class="muted">No cells to show.</td></tr>

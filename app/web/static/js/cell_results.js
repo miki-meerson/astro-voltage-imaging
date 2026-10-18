@@ -53,7 +53,7 @@
     ctx.fillStyle = "#aeb9c6";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    for (const v of niceTicks(-limit, limit, 5)) {
+    for (const v of niceTicks(-limit, limit, 5).filter(tick => tick >= -limit && tick <= limit)) {
       ctx.beginPath(); ctx.moveTo(plot.x0, y(v)); ctx.lineTo(plot.x1, y(v)); ctx.stroke();
       const pct = v * 100;
       ctx.fillText(`${Math.abs(pct) >= 10 || pct === 0 ? pct.toFixed(0) : pct.toFixed(1)}%`, plot.x0 - 8, y(v));
@@ -108,7 +108,7 @@
     ctx.fillStyle = "#aeb9c6";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    for (const v of niceTicks(lo, hi, 4)) {
+    for (const v of niceTicks(lo, hi, 4).filter(tick => tick >= lo && tick <= hi)) {
       ctx.beginPath(); ctx.moveTo(plot.x0, y(v)); ctx.lineTo(plot.x1, y(v)); ctx.stroke();
       ctx.fillText(Number(v.toPrecision(3)).toString(), plot.x0 - 8, y(v));
     }
