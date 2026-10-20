@@ -68,13 +68,14 @@ def anatomy_clusters_in_crop(anatomy_npz: Path, crop: dict) -> list[dict]:
         ay0, _, ax0, _ = (int(v) for v in np.asarray(d["anatomy_crop_bounds"]).ravel())
         b = int(np.asarray(d["spatial_bin"]).item())
         window_start = int(np.asarray(d["analysis_window"], dtype=int)[0])
+        time_bin = int(np.asarray(d["time_bin_frames"]).item()) if "time_bin_frames" in d else 1
         for c in significant_clusters(d, limit=None):
             ys, xs = cluster_pixels_fullres(np.asarray(c["mask3d"], dtype=bool).any(axis=0), (ay0, 0, ax0, 0), b)
             pixels = np.unique(np.array(pixels_in_crop(ys, xs, crop)).reshape(-1, 2), axis=0)  # sorted, no duplicates
             if not len(pixels):
                 continue
             out.append({
-                **cluster_basic_fields(c, window_start),
+                **cluster_basic_fields(c, window_start, time_bin),
                 "centroid": [float(pixels[:, 0].mean()), float(pixels[:, 1].mean())],
                 "pixels": pixels.tolist(),
             })
@@ -110,6 +111,7 @@ def _read_anatomy_header(anatomy_npz: Path) -> dict:
             "pre_frames": int(np.asarray(d["pre_frames"]).item()),
             "post_frames": int(np.asarray(d["post_frames"]).item()),
             "peaks": np.asarray(d["peaks"], dtype=np.int32),
+            "baseline_window": [int(v) for v in np.asarray(d["baseline_window"]).ravel()],
             "crop": {"y0": y0, "y1": y1, "x0": x0, "x1": x1, "width": x1 - x0, "height": y1 - y0},
         }
 
@@ -139,7 +141,7 @@ def sta_crop_stack_payload(movie_tif: Path, anatomy_npz: Path, source_path: str 
     cannot be read from Experiment.xml).
     """
     _check_saved_files(movie_tif, anatomy_npz, int(pipeline_neuron_id))
-    key = (int(pipeline_neuron_id), str(movie_tif), movie_tif.stat().st_mtime_ns, anatomy_npz.stat().st_mtime_ns, 7)
+    key = (int(pipeline_neuron_id), str(movie_tif), movie_tif.stat().st_mtime_ns, anatomy_npz.stat().st_mtime_ns, 8)
     hit = caches.STA_STACK.get(key)
     if hit is not None:
         return hit
@@ -161,7 +163,7 @@ def sta_crop_stack_payload(movie_tif: Path, anatomy_npz: Path, source_path: str 
               **_neuron_trace(source_path, int(pipeline_neuron_id), head["peaks"], pre, post, rel)}
     header = {
         "frames": int(movie.shape[0]), "height": int(movie.shape[1]), "width": int(movie.shape[2]),
-        "lo": lo, "hi": hi, "relative_frames": rel.tolist(), "fps": fps,
+        "lo": lo, "hi": hi, "relative_frames": rel.tolist(), "fps": fps, "baseline_window": head["baseline_window"],
         "n_peaks": int(head["peaks"].size), "crop": crop, "neuron": neuron, "gevi_flipped": polarity.RAW_SIGN_IS_INVERTED,
         "units": "relative_change", "anatomy_clusters": anatomy_clusters_in_crop(anatomy_npz, crop),
     }

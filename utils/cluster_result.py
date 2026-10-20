@@ -39,27 +39,34 @@ def cluster_offset_from_roi(mask2d: np.ndarray, crop, spatial_bin: int, roi_yx: 
     return cy - roi_yx[0], cx - roi_yx[1]
 
 
-def cluster_basic_fields(cluster: dict, window_start: int) -> dict:
-    """Sign (as saved), p-value, mass and the first/last frame of a cluster relative to the spike (window_start = first frame of the tested window)."""
+def tested_time_axis(analysis_window, n_steps: int, time_bin: int = 1) -> np.ndarray:
+    """The time (frames relative to the spike) of each step of a saved effect movie: every frame of the tested window, or the centre of each time bin."""
+    return int(analysis_window[0]) + time_bin * np.arange(n_steps) + (time_bin - 1) / 2
+
+
+def cluster_basic_fields(cluster: dict, window_start: int, time_bin: int = 1) -> dict:
+    """Sign (as saved), p-value, mass and the first/last frame of a cluster relative to the spike (window_start = first frame of the tested window;
+    time_bin = frames per step of the effect movie, so the last frame is the end of the last bin)."""
     frames = np.flatnonzero(np.asarray(cluster["mask3d"], dtype=bool).any(axis=(1, 2)))
     return {
         "sign": str(cluster.get("sign", "")), "p": float(cluster["p_value"]), "mass": float(cluster["mass"]),
-        "first_rel": int(window_start + frames.min()), "last_rel": int(window_start + frames.max()),
+        "first_rel": int(window_start + time_bin * frames.min()), "last_rel": int(window_start + time_bin * frames.max() + time_bin - 1),
     }
 
 
 def load_cluster_result(path: str | Path):
     """(effect, t_rel, sig, metadata) of a saved cluster result.
 
-    effect: observed effect movie (z-statistic that was tested); t_rel: frame numbers of the tested window; sig: list of (cluster dict, 2D mask)
+    effect: observed effect movie (z-statistic that was tested); t_rel: time of each of its steps (frame numbers; bin centres when binned); sig: list of (cluster dict, 2D mask)
     for the significant clusters (cluster["wide_trace"] = (t, dF/F trace)); metadata: spatial_bin,
-    behavioral_group, anatomy_crop_bounds, trace_effect, tested_window. Signs are as saved (STA convention, see app/services/polarity.py).
+    behavioral_group, anatomy_crop_bounds, trace_effect, tested_window, time_bin (frames per step; 1 in files without binning). Signs are as saved (STA convention, see app/services/polarity.py).
     """
     with np.load(path, allow_pickle=True) as d:
         effect = np.asarray(d["observed_effect_movie"], dtype=np.float32)
         # traces are drawn on a dF/F axis: use the raw effect, not the z-statistic that was tested
         trace_effect = np.asarray(d["observed_effect_raw_movie"], dtype=np.float32) if "observed_effect_raw_movie" in d else effect
         aw = np.asarray(d["analysis_window"], dtype=int)
+        time_bin = int(np.asarray(d["time_bin_frames"]).item()) if "time_bin_frames" in d else 1
         wide = dict(  # kept only for this call (can be large at bin 1)
             sta=np.asarray(d["observed_sta_movie"], dtype=np.float32),
             pre=int(np.asarray(d["pre_frames"]).item()),
@@ -73,8 +80,9 @@ def load_cluster_result(path: str | Path):
             "anatomy_crop_bounds": tuple(np.asarray(d["anatomy_crop_bounds"], dtype=int).tolist()) if "anatomy_crop_bounds" in d else None,
             "trace_effect": trace_effect,
             "tested_window": (int(aw[0]), int(aw[1])),
+            "time_bin": time_bin,
         }
-    t_rel = np.arange(int(aw[0]), int(aw[1]) + 1)
+    t_rel = tested_time_axis(aw, effect.shape[0], time_bin)
     sig = []
     for cluster in clusters:
         if not cluster.get("is_significant", False):
@@ -83,7 +91,8 @@ def load_cluster_result(path: str | Path):
         if mask is not None and mask.any():
             if mask.shape == wide["sta"].shape[1:]:
                 cluster["wide_trace"] = cluster_trace_wide(
-                    wide["sta"], wide["pre"], wide["post"], wide["baseline_window"], mask, TRACE_HALF_WINDOW_FRAMES
+                    wide["sta"], wide["pre"], wide["post"], wide["baseline_window"], mask,
+                    max(wide["pre"], wide["post"]) if time_bin > 1 else TRACE_HALF_WINDOW_FRAMES,  # a slow hypothesis shows its whole saved window
                 )
             sig.append((cluster, mask))
     del wide

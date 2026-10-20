@@ -46,7 +46,7 @@ def _cell_clusters(sta_dir: Path, cell: int, stat_cell) -> list[dict]:
         dy, dx = cluster_offset_from_roi(np.asarray(mask, dtype=bool), meta["anatomy_crop_bounds"], spatial_bin, roi_yx)
         t, trace = cluster["wide_trace"]
         records.append({
-            "cell": cell, **cluster_basic_fields(cluster, meta["tested_window"][0]),
+            "cell": cell, **cluster_basic_fields(cluster, meta["tested_window"][0], meta["time_bin"]),
             "n_px": int(np.asarray(mask).sum()), "bin": spatial_bin,
             "dx": float(dx), "dy": float(dy), "dist": float(np.hypot(dx, dy)),
             "t": [int(v) for v in t], "trace": [round(float(v), 6) for v in trace],

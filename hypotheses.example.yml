@@ -4,11 +4,13 @@
 #
 # All times are seconds relative to the spike peak (negative = before the spike).
 #   pre_seconds / post_seconds   the saved window around each spike
-#   baseline_window_seconds      [start, end] part of the saved window used as the baseline of the effect
+#   baseline_window_seconds      [start, end] the one baseline period (must end before the tested window starts). Its median intensity
+#                                normalizes each spike (F0), and its average is what baseline_subtracted subtracts.
 #   tested_window_seconds        [start, end] part that is tested against the chance copies (must start after the baseline ends)
-#   f0_seconds                   stretch just before each spike whose median intensity normalizes that spike
 #   silence_before_seconds       a spike is used only if the cell has no other spike this close before it (0 = no condition)
 #   silence_after_seconds        ... and none this close after it (0 = no condition). The random frames of the chance copies follow the same rule.
+#   time_bin_seconds             the tested window is averaged in bins of this length before testing (0 = every frame is tested). Slow
+#                                hypotheses need it: a 10 s window of single frames would store thousands of maps per chance copy.
 #   statistic                    baseline_subtracted (the effect is the average minus the baseline)
 hypotheses:
   - name: fast
@@ -17,7 +19,29 @@ hypotheses:
     post_seconds: 3.0
     baseline_window_seconds: [-2.0, -0.38]
     tested_window_seconds: [-0.35, 0.35]
-    f0_seconds: 1.0
     silence_before_seconds: 2.0
     silence_after_seconds: 0.35
+    time_bin_seconds: 0
+    statistic: baseline_subtracted
+
+  - name: post_spike
+    description: Depolarization that starts at the spike peak, the change in the first 3 seconds after it (both directions are tested)
+    pre_seconds: 2.0
+    post_seconds: 3.0
+    baseline_window_seconds: [-2.0, -0.38]
+    tested_window_seconds: [0.0, 3.0]
+    silence_before_seconds: 2.0
+    silence_after_seconds: 3.0
+    time_bin_seconds: 0
+    statistic: baseline_subtracted
+
+  - name: slow_ramp
+    description: A slow build-up around the spike, from 7 s before to 3 s after it, in 0.5 s steps, against a baseline 12 to 9.5 s before it (both directions are tested)
+    pre_seconds: 12.0
+    post_seconds: 3.0
+    baseline_window_seconds: [-12.0, -9.5]
+    tested_window_seconds: [-7.0, 3.0]
+    silence_before_seconds: 5.0
+    silence_after_seconds: 0
+    time_bin_seconds: 0.5
     statistic: baseline_subtracted

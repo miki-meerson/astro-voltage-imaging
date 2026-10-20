@@ -17,7 +17,7 @@ from utils.cluster_result import cluster_basic_fields, load_cluster_result
 from utils.clusters_utils import mask_mean_trace
 from utils.db_utils import collect_cluster_result_metadata
 from utils.hypotheses import hypothesis_name
-from utils.movie_utils import get_mean_images
+from utils.movie_utils import get_mean_images, read_frame_rate
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths, sta_dir_of_run
 from utils.suite2p_utils import suite2p_roi_mask
 
@@ -174,9 +174,10 @@ def _load_result(path):
 
 
 def cell_result_cards(settings: Settings, neuron_row, step: str) -> list[dict]:
-    """One card per result type of a cell for the Cells tab: {result_type, title, n_peaks, n_significant, tested_window, clusters: [{polarity, p,
+    """One card per result type of a cell for the Cells tab: {result_type, title, n_peaks, n_significant, tested_window, fps, clusters: [{polarity, p,
     first_rel, last_rel, n_px, t, trace}]} with plain numbers only (the page draws the plots). Raises FileNotFoundError when there is nothing to show."""
     _, _, rows = _result_rows(settings, neuron_row, step)
+    fps = read_frame_rate(neuron_row["source_path"])
     cards = []
     for row in rows.itertuples():
         effect, t_rel, clusters, meta = _load_result(row.path)
@@ -187,12 +188,12 @@ def cell_result_cards(settings: Settings, neuron_row, step: str) -> list[dict]:
             wide = cluster.get("wide_trace")  # displayed over a wider window than the tested one
             t_plot, trace = wide if wide is not None else (t_rel, mask_mean_trace(meta["trace_effect"], mask))
             found.append({
-                **cluster_basic_fields(cluster, meta["tested_window"][0]), "polarity": polarity.polarity_from_sign(str(cluster.get("sign", ""))),
-                "n_px": int(np.asarray(mask).sum()), "t": [int(v) for v in t_plot], "trace": [round(float(v), 5) for v in np.asarray(trace).ravel()],
+                **cluster_basic_fields(cluster, meta["tested_window"][0], meta["time_bin"]), "polarity": polarity.polarity_from_sign(str(cluster.get("sign", ""))),
+                "n_px": int(np.asarray(mask).sum()), "t": [round(float(v), 2) for v in t_plot], "trace": [round(float(v), 5) for v in np.asarray(trace).ravel()],
             })
         cards.append({
             "result_type": str(row.result_type), "title": str(row.result_type).replace("_", " ").title(), "n_peaks": int(row.n_peaks),
-            "n_significant": int(row.n_significant_clusters), "tested_window": [int(v) for v in meta["tested_window"]], "clusters": found,
+            "n_significant": int(row.n_significant_clusters), "tested_window": [int(v) for v in meta["tested_window"]], "fps": fps, "clusters": found,
         })
     return cards
 
@@ -263,19 +264,19 @@ MOTION_SERIES_LABELS = {
 }
 
 
-def _motion_verdict(flag: bool, min_p: float, alpha: float, p_floor: float) -> tuple[str, str]:
+def _motion_verdict(flag: bool, p_family: float, alpha: float, p_floor: float) -> tuple[str, str]:
     """(kind, sentence) of the motion test of a cell: kind is flag, unresolved, none or few_spikes."""
     if flag:
-        return "flag", f"The spikes of this cell are time-locked to motion (smallest p = {min_p:.3f}, limit {alpha:g}). Treat its clusters with caution."
+        return "flag", f"The spikes of this cell are time-locked to motion (p = {p_family:.3f}, corrected over the 5 measures, limit {alpha:g}). Treat its clusters with caution."
     if p_floor > alpha:
         return "unresolved", f"Cannot resolve p <= {alpha:g}: only {int(round(1 / p_floor)) - 1} random copies (the smallest possible p is {p_floor:.3f}). Read the curves against the grey band."
-    if np.isfinite(min_p):
-        return "none", f"No spike-locked motion found (smallest p = {min_p:.3f}, limit {alpha:g}). The shifts are the motion that was corrected; motion left after the correction shows only in the registration quality."
+    if np.isfinite(p_family):
+        return "none", f"No spike-locked motion found (p = {p_family:.3f}, corrected over the 5 measures, limit {alpha:g}). The shifts are the motion that was corrected; motion left after the correction shows only in the registration quality."
     return "few_spikes", "There are not enough spikes for the motion test."
 
 
 def cell_motion(settings: Settings, neuron_row, step: str) -> dict:
-    """The motion test of a cell from the run of the hypothesis `step`, as plain numbers for the page to draw: {n_peaks, min_p, alpha, verdict, text,
+    """The motion test of a cell from the run of the hypothesis `step`, as plain numbers for the page to draw: {n_peaks, p, alpha, verdict, text, fps,
     series: [{name, label, rels, observed, null_mean, null_sd, p, z}]}. Raises FileNotFoundError when the run or the test result is missing."""
     sta_run = run_repository.latest_run(settings, int(neuron_row["experiment_id"]), step)
     if sta_run is None:
@@ -290,11 +291,12 @@ def cell_motion(settings: Settings, neuron_row, step: str) -> dict:
     with np.load(path, allow_pickle=True) as d:
         names = [str(n) for n in d["series_names"]]
         rels = [int(v) for v in np.asarray(d["rels_analysis"]).ravel()]
-        flag, min_p, alpha, p_floor = bool(d["flag"]), float(d["min_p"]), float(d["flag_alpha"]), float(d["p_floor"])
+        flag, p_family, alpha, p_floor = bool(d["flag"]), float(d["p_family"]), float(d["flag_alpha"]), float(d["p_floor"])
         series = [{
             "name": name, "label": MOTION_SERIES_LABELS.get(name, name), "rels": rels, "observed": numbers(d["observed"][i]), "null_mean": numbers(d["null_mean"][i]),
             "null_sd": numbers(d["null_sd"][i]), "p": numbers([d["p"][i]])[0], "z": numbers([d["z"][i]])[0],
         } for i, name in enumerate(names)]
         n_peaks = int(d["n_peaks_used"])
-    verdict, text = _motion_verdict(flag, min_p, alpha, p_floor)
-    return {"n_peaks": n_peaks, "min_p": None if not np.isfinite(min_p) else min_p, "alpha": alpha, "verdict": verdict, "text": text, "series": series}
+    verdict, text = _motion_verdict(flag, p_family, alpha, p_floor)
+    return {"n_peaks": n_peaks, "p": None if not np.isfinite(p_family) else p_family, "alpha": alpha, "verdict": verdict, "text": text, "series": series,
+            "fps": read_frame_rate(neuron_row["source_path"])}

@@ -29,7 +29,6 @@ CLUSTER_RESULT_ALGORITHM_KEYS = [
     "rng_seed",
     "pre_seconds",
     "post_seconds",
-    "f0_seconds",
     "baseline_window_seconds",
     "tested_window_seconds",
     "silence_before_seconds",

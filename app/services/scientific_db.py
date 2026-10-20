@@ -9,6 +9,7 @@ import numpy as np
 from app.db import confirmed_repository
 from app.services.runs import default_sta_step, run_dir
 from app.settings import Settings
+from utils.cluster_result import tested_time_axis
 from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, mask_mean_trace, saved_cluster_args
 from utils.db_utils import collect_cluster_result_metadata
 from utils.file_utils import path_within, read_npz_arrays
@@ -117,7 +118,6 @@ CONFIRMED_PARAMETER_KEYS = frozenset({
     "rng_seed",
     "pre_seconds",
     "post_seconds",
-    "f0_seconds",
     "baseline_window_seconds",
     "tested_window_seconds",
     "silence_before_seconds",
@@ -174,13 +174,14 @@ def _sta_record(settings: Settings, row, canonical_id: str, cell: str) -> dict:
         # stored traces are dF/F-like: use the raw effect, not the tested z-statistic
         trace_effect = np.asarray(d["observed_effect_raw_movie"], dtype=np.float32) if "observed_effect_raw_movie" in d else effect
         aw = np.asarray(d["analysis_window"], dtype=int)
+        time_bin = int(np.asarray(d["time_bin_frames"]).item()) if "time_bin_frames" in d else 1
         params = {
             key: _jsonable(np.asarray(d[key]).item() if np.asarray(d[key]).shape == () else np.asarray(d[key]))
             for key in d.files
             if key in CONFIRMED_PARAMETER_KEYS
         }
         clusters = extract_clusters(effect_movie=effect, **saved_cluster_args(d))  # honours per_sign_null when the file says so
-    t_rel = np.arange(int(aw[0]), int(aw[1]) + 1)
+    t_rel = tested_time_axis(aw, effect.shape[0], time_bin)
     masks = {}
     cluster_rows = []
     for cluster in clusters:

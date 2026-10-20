@@ -21,7 +21,7 @@ from utils.paths_utils import PathKind, path_for
 STATISTICS = ("baseline_subtracted",)  # the statistics the STA job can compute (more are added with the hypotheses that need them)
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,31}$")  # safe in file names, step names and urls
 WINDOW_SETTINGS = ("baseline_window_seconds", "tested_window_seconds")
-NUMBER_SETTINGS = ("pre_seconds", "post_seconds", "f0_seconds", "silence_before_seconds", "silence_after_seconds")
+NUMBER_SETTINGS = ("pre_seconds", "post_seconds", "silence_before_seconds", "silence_after_seconds", "time_bin_seconds")
 SETTINGS = ("name", "description", *NUMBER_SETTINGS, *WINDOW_SETTINGS, "statistic")
 
 
@@ -47,11 +47,11 @@ class Hypothesis:
     description: str
     pre_seconds: float  # saved window before the spike
     post_seconds: float  # saved window after the spike
-    baseline_window_seconds: tuple[float, float]  # the part of the saved window used as baseline
+    baseline_window_seconds: tuple[float, float]  # the baseline: its median normalizes each spike (F0) and its average is subtracted from the average (baseline_subtracted)
     tested_window_seconds: tuple[float, float]  # the part that is tested against the chance copies
-    f0_seconds: float  # length of the pre-spike stretch whose median normalizes each spike
     silence_before_seconds: float  # a spike is used only if no other spike of the cell is this close before it (0 = no condition)
     silence_after_seconds: float  # ... and none this close after it (0 = no condition); the random frames follow the same rule
+    time_bin_seconds: float  # the tested window is averaged in bins of this length (0 = every frame is tested)
     statistic: str
 
     def settings(self) -> dict:
@@ -62,9 +62,9 @@ class Hypothesis:
             "post_seconds": self.post_seconds,
             "baseline_window_seconds": list(self.baseline_window_seconds),
             "tested_window_seconds": list(self.tested_window_seconds),
-            "f0_seconds": self.f0_seconds,
             "silence_before_seconds": self.silence_before_seconds,
             "silence_after_seconds": self.silence_after_seconds,
+            "time_bin_seconds": self.time_bin_seconds,
             "statistic": self.statistic,
         }
 
@@ -88,18 +88,21 @@ def seconds_to_frames(seconds: float, fps: float) -> int:
     return int(round(float(seconds) * float(fps)))
 
 
-def frame_windows(settings: dict, fps: float) -> tuple:
-    """The hypothesis settings (seconds) as frames: (pre, post, f0_frames, pre_window, post_window, analysis_window, baseline_window).
+def time_bin_frames(settings: dict, fps: float) -> int:
+    """Frames per time bin of the tested window (1 = no binning: every frame is tested)."""
+    return max(1, seconds_to_frames(run_settings(settings)["time_bin_seconds"], fps))
 
-    pre / post: saved frames before / after the spike. f0_frames: the pre-spike stretch (at most pre) whose median normalizes a spike.
-    analysis_window: the tested window; baseline_window: the baseline; pre_window = (tested start, -1) and post_window = (0, tested end) are
+
+def frame_windows(settings: dict, fps: float) -> tuple:
+    """The hypothesis settings (seconds) as frames: (pre, post, pre_window, post_window, analysis_window, baseline_window).
+
+    pre / post: saved frames before / after the spike. analysis_window: the tested window; baseline_window: the baseline (F0 and the subtracted average); pre_window = (tested start, -1) and post_window = (0, tested end) are
     the two halves averaged for the post-minus-pre map. All windows are frames relative to the spike."""
     settings = run_settings(settings)
     pre, post = seconds_to_frames(settings["pre_seconds"], fps), seconds_to_frames(settings["post_seconds"], fps)
-    f0_frames = min(seconds_to_frames(settings["f0_seconds"], fps), pre)
     tested = tuple(seconds_to_frames(s, fps) for s in settings["tested_window_seconds"])
     baseline = tuple(seconds_to_frames(s, fps) for s in settings["baseline_window_seconds"])
-    return pre, post, f0_frames, (tested[0], -1), (0, tested[1]), tested, baseline
+    return pre, post, (tested[0], -1), (0, tested[1]), tested, baseline
 
 
 def sta_step(name: str) -> str:
@@ -168,6 +171,8 @@ def _hypothesis(entry: object, index: int, source: Path) -> Hypothesis:
         (base.inside(saved), f"baseline_window_seconds {base} must lie inside the saved window {saved}"),
         (tested.inside(saved), f"tested_window_seconds {tested} must lie inside the saved window {saved}"),
         (base.ends_before(tested), f"the baseline window must end before the tested window starts (baseline {base}, tested {tested})"),
+        (hypothesis.time_bin_seconds >= 0, "time_bin_seconds must be 0 (no binning) or more"),
+        (hypothesis.time_bin_seconds == 0 or hypothesis.time_bin_seconds <= tested.end - tested.start, f"time_bin_seconds {hypothesis.time_bin_seconds:g} is longer than the tested window {tested}"),
     ])
     return hypothesis
 
