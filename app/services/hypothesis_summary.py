@@ -15,6 +15,7 @@ from utils import globals_utils as g
 from utils.anatomy_summary import load_anatomy_summary
 from utils.file_utils import read_json
 from utils.hypotheses import hypothesis_name, sta_step
+from utils.movie_utils import read_frame_rate
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 
@@ -135,6 +136,8 @@ def anatomy_cluster_summary(settings, experiment_id: int, step: str | None = Non
     clusters = [dict(c, sign=polarity.polarity_from_sign(str(c.get("sign", ""))), neuron_id=db_ids.get(int(c["cell"]))) for c in saved["clusters"]]
     payload = {
         "available": True, "run_id": int(run["id"]), "cells": saved["cells"], "clusters": clusters,
+        "fps": read_frame_rate(experiment_repository.experiment_source_path(settings, int(experiment_id))),  # the times of the clusters are frames
+        "tested_window": read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA run parameters")["analysis_window"],
         "counts": saved["counts"], "excluded": saved["excluded"],
     }
     group_test = read_json(path_for(PathKind.GROUP_TEST, sta_dir), "The real-vs-fake group test", default=None)  # a separate cluster job: shown when it has run

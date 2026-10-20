@@ -60,8 +60,8 @@
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    for (const t of niceTicks(t0, t1, 5)) ctx.fillText(String(t), x(t), plot.y1 + 6);
-    ctx.fillText("frames from the spike", (plot.x0 + plot.x1) / 2, plot.y1 + 20);
+    for (const s of TimeAxis.ticks(t0 / card.fps, t1 / card.fps, 5, niceTicks)) ctx.fillText(String(s), x(s * card.fps), plot.y1 + 6);
+    ctx.fillText("seconds from the spike", (plot.x0 + plot.x1) / 2, plot.y1 + 20);
     if (t0 <= 0 && 0 <= t1) {
       ctx.strokeStyle = "#5d6a78";
       ctx.beginPath(); ctx.moveTo(x(0), plot.y0); ctx.lineTo(x(0), plot.y1); ctx.stroke();
@@ -81,7 +81,7 @@
   }
 
   // one motion series: the average around the spikes (the line, red when it is beyond chance) over what random frames give (grey band, +-2 sd)
-  function drawMotion(canvas, series, alpha) {
+  function drawMotion(canvas, series, alpha, fps, flagged) {
     const ratio = window.devicePixelRatio || 1, box = canvas.getBoundingClientRect();
     canvas.width = Math.round(box.width * ratio);
     canvas.height = Math.round(box.height * ratio);
@@ -114,8 +114,8 @@
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    for (const t of niceTicks(t0, t1, 5)) ctx.fillText(String(t), x(t), plot.y1 + 6);
-    ctx.fillText("frames from the spike", (plot.x0 + plot.x1) / 2, plot.y1 + 20);
+    for (const s of TimeAxis.ticks(t0 / fps, t1 / fps, 5, niceTicks)) ctx.fillText(String(s), x(s * fps), plot.y1 + 6);
+    ctx.fillText("seconds from the spike", (plot.x0 + plot.x1) / 2, plot.y1 + 20);
     ctx.fillStyle = "#222c37";
     ctx.beginPath();
     series.rels.forEach((t, i) => (i ? ctx.lineTo(x(t), y(series.null_mean[i] + 2 * series.null_sd[i])) : ctx.moveTo(x(t), y(series.null_mean[i] + 2 * series.null_sd[i]))));
@@ -126,7 +126,7 @@
       ctx.strokeStyle = "#5d6a78";
       ctx.beginPath(); ctx.moveTo(x(0), plot.y0); ctx.lineTo(x(0), plot.y1); ctx.stroke();
     }
-    ctx.strokeStyle = series.p !== null && series.p <= alpha ? token("--dep") : "#f7d154";
+    ctx.strokeStyle = flagged && series.p !== null && series.p <= alpha ? token("--dep") : "#f7d154";  // red only for a flagged cell (the p of one series is not corrected)
     ctx.lineWidth = 2;
     ctx.beginPath();
     series.rels.forEach((t, i) => (i ? ctx.lineTo(x(t), y(series.observed[i])) : ctx.moveTo(x(t), y(series.observed[i]))));
@@ -137,7 +137,7 @@
   const motion = motionElement ? JSON.parse(motionElement.textContent) : null;
   const redraw = () => {
     document.querySelectorAll("canvas.result-plot[data-card]").forEach(canvas => draw(canvas, cards[Number(canvas.dataset.card)]));
-    if (motion) document.querySelectorAll("canvas.motion-plot").forEach(canvas => drawMotion(canvas, motion.series[Number(canvas.dataset.motion)], motion.alpha));
+    if (motion) document.querySelectorAll("canvas.motion-plot").forEach(canvas => drawMotion(canvas, motion.series[Number(canvas.dataset.motion)], motion.alpha, motion.fps, motion.verdict === "flag"));
   };
   redraw();
   window.addEventListener("resize", redraw);

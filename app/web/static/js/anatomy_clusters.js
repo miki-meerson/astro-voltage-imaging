@@ -41,10 +41,10 @@
     if (showInd && !fitMean) D.clusters.forEach(c => c.trace.forEach(take));
     const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad; lo = Math.min(lo, 0); hi = Math.max(hi, 0);
     const X = f => L + (f - t[0]) / (t[t.length - 1] - t[0]) * (W - L - R), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
-    // tested window shading (-10..+10)
-    ctx.fillStyle = "rgba(120,140,170,0.10)"; ctx.fillRect(X(-10), T, X(10) - X(-10), H - T - B);
+    const [w0, w1] = D.tested_window, fps = D.fps;  // the tested window of this hypothesis (frames); times are shown in seconds
+    ctx.fillStyle = "rgba(120,140,170,0.10)"; ctx.fillRect(X(w0), T, X(w1) - X(w0), H - T - B);
     ctx.font = "11px sans-serif"; ctx.fillStyle = "#9aa8b7"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-    niceTicks(t[0], t[t.length - 1], 8).forEach(f => { ctx.strokeStyle = "#1c2630"; ctx.beginPath(); ctx.moveTo(X(f), T); ctx.lineTo(X(f), H - B); ctx.stroke(); ctx.fillText(fmt(f), X(f), H - B + 4); });
+    TimeAxis.ticks(t[0] / fps, t[t.length - 1] / fps, 8, niceTicks).forEach(s => { const f = s * fps; ctx.strokeStyle = "#1c2630"; ctx.beginPath(); ctx.moveTo(X(f), T); ctx.lineTo(X(f), H - B); ctx.stroke(); ctx.fillText(fmt(s), X(f), H - B + 4); });
     ctx.textAlign = "right"; ctx.textBaseline = "middle";
     niceTicks(lo, hi, 6).forEach(v => { ctx.strokeStyle = v === 0 ? "#3b4a5b" : "#1c2630"; ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(W - R, Y(v)); ctx.stroke(); ctx.fillStyle = "#9aa8b7"; ctx.fillText(fmt(v), L - 6, Y(v)); });
     ctx.strokeStyle = "#5a6b7d"; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(0), T); ctx.lineTo(X(0), H - B); ctx.stroke(); ctx.setLineDash([]);
@@ -56,11 +56,11 @@
     }
     ctx.restore();
     ctx.fillStyle = "#edf3fa"; ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    ctx.fillText("Frames from spike", L + (W - L - R) / 2, H - 4);
+    ctx.fillText("Seconds from spike", L + (W - L - R) / 2, H - 4);
     ctx.save(); ctx.translate(14, T + (H - T - B) / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(`Cluster mean trace, dF/F (%), ${Polarity.AXIS_NOTE}`, 0, 0); ctx.restore();
     ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = "12px sans-serif";
     let lx = L + 6; for (const [g, st] of Object.entries(stats)) { ctx.fillStyle = COL[g]; ctx.fillRect(lx, 7, 14, 3); ctx.fillStyle = "#edf3fa"; const label = `${g} (n=${st.n})`; ctx.fillText(label, lx + 18, 3); lx += 30 + ctx.measureText(label).width; }
-    ctx.fillStyle = "#6f7f90"; ctx.font = "10px sans-serif"; ctx.textAlign = "right"; ctx.fillText("shaded: tested window (-10..+10)", W - R, 3);
+    ctx.fillStyle = "#6f7f90"; ctx.font = "10px sans-serif"; ctx.textAlign = "right"; ctx.fillText(`shaded: tested window (${fmt(w0 / fps)}..${fmt(w1 / fps)} s)`, W - R, 3);
   }
 
   function drawScatter() {
@@ -90,7 +90,7 @@
     const hit = pts.map(p => ({p, d: Math.hypot(p.x - mx, p.y - my)})).filter(o => o.d < 10).sort((a, b) => a.d - b.d)[0];
     if (!hit) { tip.style.display = "none"; e.currentTarget.style.cursor = "default"; return; }
     const c = hit.p.c; e.currentTarget.style.cursor = "pointer";
-    tip.innerHTML = `Cell ${c.cell} &middot; ${Polarity.of(c.sign)}<br>distance ${c.dist.toFixed(1)} px &middot; p=${c.p == null ? 'n/a' : c.p.toFixed(3)} &middot; ${c.n_px} px (bin ${c.bin}), frames ${c.first_rel}..${c.last_rel}<br><span style="color:#9aa8b7">click to open the cell</span>`;
+    tip.innerHTML = `Cell ${c.cell} &middot; ${Polarity.of(c.sign)}<br>distance ${c.dist.toFixed(1)} px &middot; p=${c.p == null ? 'n/a' : c.p.toFixed(3)} &middot; ${c.n_px} px (bin ${c.bin}), ${(c.first_rel / D.fps).toFixed(2)}..${(c.last_rel / D.fps).toFixed(2)} s<br><span style="color:#9aa8b7">click to open the cell</span>`;
     tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px";
   });
   $("ac-scatter").addEventListener("mouseleave", () => { tip.style.display = "none"; });

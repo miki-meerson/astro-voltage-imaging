@@ -12,13 +12,14 @@
 
   const rel = f => M.relative_frames[f];
   const fmtRel = r => (r > 0 ? "+" : "") + r;
+  const fmtSec = r => { const s = r / Math.max(1e-9, M.fps); return (s > 0 ? "+" : "") + s.toFixed(2); };
   function percentileWindow(vals, lo, hi) {
     const a = Float32Array.from(vals).sort(); return [a[Math.floor(lo * (a.length - 1))], a[Math.floor(hi * (a.length - 1))]];
   }
   let baseMap = null;
-  function buildBaseMap() {  // per-pixel mean over the baseline frames (-58..-11), the same baseline the clusters were measured against
-    const n = M.width * M.height, idx = [];
-    M.relative_frames.forEach((r, i) => { if (r >= -58 && r <= -11) idx.push(i); });
+  function buildBaseMap() {  // per-pixel mean over the baseline window of the hypothesis, the same baseline the clusters were measured against
+    const n = M.width * M.height, idx = [], [b0, b1] = M.baseline_window;
+    M.relative_frames.forEach((r, i) => { if (r >= b0 && r <= b1) idx.push(i); });
     baseMap = new Float32Array(n);
     if (!idx.length) return;
     for (const f of idx) { const off = f * n; for (let i = 0; i < n; i++) baseMap[i] += data[off + i]; }
@@ -80,7 +81,7 @@
       const on = r >= c.first_rel && r <= c.last_rel, color = COL[c.sign] || COL.positive;
       if (full) {
         if (on) outline(ctx, c.pixels, color, 1, 2);
-        arrow(ctx, c.centroid[0], c.centroid[1], color, on ? 1 : 0.4, on ? 3 : 1.5, `cluster ${i + 1} (${fmtRel(c.first_rel)}..${fmtRel(c.last_rel)})`);
+        arrow(ctx, c.centroid[0], c.centroid[1], color, on ? 1 : 0.4, on ? 3 : 1.5, `cluster ${i + 1} (${fmtSec(c.first_rel)}..${fmtSec(c.last_rel)} s)`);
       } else if (on) {  // arrows only, and only while the cluster is active: nothing is drawn over the signal itself
         arrow(ctx, c.centroid[0], c.centroid[1], color, 1, 2, null);
       }
@@ -104,7 +105,7 @@
     if (tr.length) { ctx.strokeStyle = "#9bd0ff"; ctx.beginPath(); tr.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))); ctx.stroke(); }
     ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(X(frame), 0); ctx.lineTo(X(frame), h); ctx.stroke(); ctx.lineWidth = 1;
     ctx.fillStyle = "#9aa8b7"; ctx.font = "10px sans-serif"; ctx.textBaseline = "bottom";
-    ctx.fillText(`${fmtRel(rel(0))}`, 6, h - 1); ctx.fillText(`${fmtRel(rel(T - 1))}`, w - 24, h - 1);
+    ctx.fillText(`${fmtSec(rel(0))} s`, 6, h - 1); ctx.textAlign = "right"; ctx.fillText(`${fmtSec(rel(T - 1))} s`, w - 6, h - 1); ctx.textAlign = "left";
     ctx.fillStyle = COL.spike; if (f0i >= 0) ctx.fillText("spike", X(f0i) + 3, 30);
     if (M.neuron.trace_label) { ctx.fillStyle = "#9aa8b7"; ctx.textBaseline = "top"; ctx.fillText(`${M.neuron.trace_label} (as recorded); max ${(lim * 100).toFixed(0)}% dF/F`, 8, 2); ctx.textBaseline = "bottom"; }
   }
@@ -174,7 +175,7 @@
     const f0i = M.relative_frames.indexOf(0);
     if (f0i >= 0) { ctx.setLineDash([3, 3]); ctx.strokeStyle = COL.spike; ctx.beginPath(); ctx.moveTo(X(f0i), 4); ctx.lineTo(X(f0i), h - 16); ctx.stroke(); ctx.setLineDash([]); }
     ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(X(frame), 4); ctx.lineTo(X(frame), h - 16); ctx.stroke(); ctx.lineWidth = 1;
-    ctx.fillStyle = "#9aa8b7"; ctx.textBaseline = "bottom"; ctx.fillText(fmtRel(rel(0)), L, h - 1); ctx.fillText(fmtRel(rel(T - 1)), w - 26, h - 1);
+    ctx.fillStyle = "#9aa8b7"; ctx.textBaseline = "bottom"; ctx.fillText(`${fmtSec(rel(0))} s`, L, h - 1); ctx.textAlign = "right"; ctx.fillText(`${fmtSec(rel(T - 1))} s`, w - 8, h - 1); ctx.textAlign = "left";
     ctx.fillStyle = "#9aa8b7"; ctx.textBaseline = "top"; ctx.fillText("up = depolarization, down = hyperpolarization", L + 4, 0); ctx.textBaseline = "bottom";
     note.innerHTML = `Change from baseline${unit === "%" ? " (% dF/F; up = depolarization)" : unit}: ` +
       G.groups.map(g => `<span style="color:${COL[g.sign]}">${Polarity.of(g.sign)} cluster pixels (${g.idx.length} px)</span>`).join(", ") +
@@ -194,8 +195,7 @@
     info.textContent = `${M.width}x${M.height} px, ${M.n_peaks} spikes` + (tags.length ? "  |  " + tags.join(" + ") : "");
     info.style.color = tags.length ? COL.neuron : "";
     info.style.fontWeight = tags.length ? "700" : "";
-    const sec = rel(frame) / Math.max(1e-9, M.fps);
-    readout.textContent = `frame ${frame + 1}/${M.frames} | ${fmtRel(rel(frame))} frames (${sec > 0 ? "+" : ""}${sec.toFixed(3)} s)` +
+    readout.textContent = `frame ${frame + 1}/${M.frames} | ${fmtSec(rel(frame))} s (${fmtRel(rel(frame))} frames)` +
       (M.anatomy_clusters.length ? ` | ${M.anatomy_clusters.length} anatomy cluster${M.anatomy_clusters.length > 1 ? "s" : ""}` : " | no significant anatomy cluster");
   }
   function stop() { clearInterval(timer); timer = null; play.textContent = "Play"; }
