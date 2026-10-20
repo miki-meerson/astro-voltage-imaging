@@ -18,7 +18,10 @@ DEFAULT_SBATCH = "/usr/bin/sbatch"
 DEFAULT_SQUEUE = "/usr/bin/squeue"
 DEFAULT_SACCT = "/usr/bin/sacct"
 DEFAULT_TIMEOUT_SECONDS = 600
+DEFAULT_SUBMIT_TIMEOUT_SECONDS = 120  # a healthy sbatch answers in seconds: a longer wait means the login node is stuck
 DEFAULT_ATTEMPTS = 5
+DEFAULT_BUSY_WAIT_SECONDS = 900  # how long a command waits, in total, for a login node that cannot start processes before it gives up
+BUSY_MARKERS = ("fork: retry", "Resource temporarily unavailable")  # what the shell says when the per-user process limit of the login node is used up
 # connection problems: the only errors that are worth another attempt; anything else is a bug and propagates
 CONNECTION_ERRORS = (OSError, paramiko.SSHException, EOFError)
 # what a cluster call can raise: no/incomplete credentials or a broken connection (OSError), an SSH protocol error,
@@ -118,38 +121,99 @@ def _read_until_exit(channel, command: str, command_timeout: int) -> tuple[str, 
         time.sleep(0.1)
 
 
-def _ssh_once(cluster: dict, command: str, timeout: int | None) -> tuple[str, str, int]:
+_LOCK = threading.Lock()  # one command at a time on the one connection
+_CONNECTION: dict = {"key": None, "ssh": None}
+
+
+def _drop_connection() -> None:
+    """Close the shared connection (the next command opens a new one)."""
+    ssh, _CONNECTION["ssh"], _CONNECTION["key"] = _CONNECTION["ssh"], None, None
+    if ssh is not None:
+        _close_ssh(ssh)
+
+
+def _connection(cluster: dict, connect_timeout: int):
+    """The one ssh connection of the app, opened here and kept between commands, so that any number of submissions and status checks cost the login
+    node one session, not one each. A new one is opened only when there is none, it died or the credentials changed. Call with _LOCK held."""
     cred = _credentials(cluster)
-    default_timeout = int(cluster.get("paramiko_timeout_seconds") or DEFAULT_TIMEOUT_SECONDS)
-    command_timeout = int(timeout or cluster.get("command_timeout_seconds") or default_timeout)
-    connect_timeout = int(cluster.get("connect_timeout_seconds") or timeout or default_timeout)
+    key = (cred["hostname"], cred["port"], cred["username"])
+    ssh = _CONNECTION["ssh"]
+    transport = ssh.get_transport() if ssh is not None else None
+    if _CONNECTION["key"] == key and transport is not None and transport.is_active():
+        return ssh
+    _drop_connection()
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         ssh.connect(**cred, timeout=connect_timeout, banner_timeout=connect_timeout, auth_timeout=connect_timeout)
-        _, stdout, _ = ssh.exec_command(command, timeout=command_timeout)
-        stdout.channel.settimeout(1.0)
-        return _read_until_exit(stdout.channel, command, command_timeout)
-    except socket.timeout as exc:
-        return "", f"SSH command timed out after {command_timeout} seconds: {command}. {exc}", 124
-    finally:
+        ssh.get_transport().set_keepalive(30)
+    except BaseException:
         _close_ssh(ssh)
+        raise
+    _CONNECTION["ssh"], _CONNECTION["key"] = ssh, key
+    return ssh
+
+
+def _ssh_once(cluster: dict, command: str, timeout: int | None) -> tuple[str, str, int]:
+    default_timeout = int(cluster.get("paramiko_timeout_seconds") or DEFAULT_TIMEOUT_SECONDS)
+    command_timeout = int(timeout or cluster.get("command_timeout_seconds") or default_timeout)
+    connect_timeout = int(cluster.get("connect_timeout_seconds") or timeout or default_timeout)
+    with _LOCK:
+        try:
+            ssh = _connection(cluster, connect_timeout)
+            _, stdout, _ = ssh.exec_command(command, timeout=command_timeout)
+            stdout.channel.settimeout(1.0)
+            result = _read_until_exit(stdout.channel, command, command_timeout)
+        except socket.timeout as exc:
+            _drop_connection()
+            return "", f"SSH command timed out after {command_timeout} seconds: {command}. {exc}", 124
+        except CONNECTION_ERRORS:
+            _drop_connection()
+            raise
+        if result[2] == 124:  # a command that hung: the connection may be dead without saying so
+            _drop_connection()
+        return result
+
+
+def bounded(command: str, seconds: int | None) -> str:
+    """The read-only command with a time limit on the cluster itself (GNU timeout, exit code 124 when it hits it). Without it a command whose answer the
+    app stopped waiting for keeps running on the login node, next to its shell start-up, and slow answers pile up there."""
+    return command if seconds is None else f"timeout {int(seconds)} {command}"
+
+
+def login_node_busy(out: str, err: str, code: int) -> bool:
+    """Whether a failed command failed because the login node cannot start processes (its per-user process limit is used up)."""
+    return code != 0 and any(marker in out + err for marker in BUSY_MARKERS)
 
 
 def run_remote(cluster: dict, command: str, timeout: int | None = None) -> tuple[str, str, int]:
-    """Run one shell command on the cluster: (stdout, stderr, exit code). Only connection errors are retried
-    (cluster.paramiko_attempts attempts, growing pauses); the last one propagates."""
+    """Run one shell command on the cluster: (stdout, stderr, exit code). Connection errors are retried (cluster.paramiko_attempts attempts, growing
+    pauses; the last one propagates). A command that fails because the login node is out of processes is retried after 30, 60, 90 ... seconds
+    (at most 120 s each) until cluster.busy_wait_seconds (900) have been waited; the last answer is then returned for the caller to report."""
     attempts = int(cluster.get("paramiko_attempts") or DEFAULT_ATTEMPTS)
-    for attempt in range(1, attempts + 1):
+    if attempts < 1:
+        raise RuntimeError(f"Cluster command was not run: cluster.paramiko_attempts is {attempts}, it must be at least 1.")
+    busy_budget = int(cluster.get("busy_wait_seconds", DEFAULT_BUSY_WAIT_SECONDS))
+    attempt = busy_rounds = waited = 0
+    while True:
         try:
-            return _ssh_once(cluster, command, timeout)
+            result = _ssh_once(cluster, command, timeout)
         except CONNECTION_ERRORS as exc:
-            if attempt == attempts:
+            attempt += 1
+            if attempt >= attempts:
                 raise
             delay = min(30, 2 * attempt)
             print(f"Cluster command attempt {attempt}/{attempts} failed: {type(exc).__name__}: {exc}. Retrying in {delay}s.", file=sys.stderr, flush=True)
             time.sleep(delay)
-    raise RuntimeError(f"Cluster command was not run: cluster.paramiko_attempts is {attempts}, it must be at least 1.")
+            continue
+        busy_rounds += 1
+        delay = min(120, 30 * busy_rounds)
+        if login_node_busy(*result) and waited + delay <= busy_budget:
+            waited += delay
+            print(f"The cluster login node cannot start processes (fork: retry). Waiting {delay}s before the command is tried again ({waited}s of {busy_budget}s).", file=sys.stderr, flush=True)
+            time.sleep(delay)
+            continue
+        return result
 
 
 def submit_job(cluster: dict, script, args, chdir, log, dependency: str | None = None, kill_on_invalid_dep: bool = False,
@@ -165,7 +229,7 @@ def submit_job(cluster: dict, script, args, chdir, log, dependency: str | None =
     if error_log is not None:
         parts.append(f"--error={to_cluster_path(error_log, cluster)}")
     parts += [to_cluster_path(script, cluster)] + [to_cluster_path(arg, cluster) for arg in args]
-    stdout, stderr, code = run_remote(cluster, shlex.join(parts))
+    stdout, stderr, code = run_remote(cluster, shlex.join(parts), int(cluster.get("submit_timeout_seconds") or DEFAULT_SUBMIT_TIMEOUT_SECONDS))
     if code != 0:
         raise RuntimeError(f"Failed to submit {Path(str(script)).name} (sbatch exit {code}): {(stderr or stdout).strip()}")
     job_id = next((token for token in stdout.replace(".", " ").split() if token.isdigit()), None)
@@ -179,17 +243,46 @@ def job_state(cluster: dict, job_id: str, timeout: int | None = None) -> tuple[l
     failed. No states and an empty note: Slurm does not know the job."""
     squeue = str(cluster.get("squeue_command") or DEFAULT_SQUEUE)
     sacct = str(cluster.get("sacct_command") or DEFAULT_SACCT)
-    sq_out, _, sq_code = run_remote(cluster, f"{squeue} -h -j {job_id} -o '%T'", timeout)
+    sq_out, _, sq_code = run_remote(cluster, bounded(f"{squeue} -h -j {job_id} -o '%T'", timeout), timeout)
     if sq_code == 0 and sq_out.strip():
         return [line.strip() for line in sq_out.splitlines() if line.strip()], ""
-    acct_out, acct_err, acct_code = run_remote(cluster, f"{sacct} -n -j {job_id} --format=State,ExitCode -P", timeout)
+    acct_out, acct_err, acct_code = run_remote(cluster, bounded(f"{sacct} -n -j {job_id} --format=State,ExitCode -P", timeout), timeout)
     if acct_code != 0:
         return [], (acct_err or acct_out).strip()
     return [line.split("|", 1)[0].strip() for line in acct_out.splitlines() if line.strip()], ""
 
 
+def job_states(cluster: dict, job_ids: list[str], timeout: int | None = None) -> tuple[dict[str, list[str]], str]:
+    """The Slurm states of many jobs with ONE squeue and, for the jobs squeue no longer lists, ONE sacct, whatever the number of jobs:
+    ({job id: states (the job and its steps; [] when Slurm does not know it)}, the sacct error when it failed)."""
+    ids = list(dict.fromkeys(str(job_id) for job_id in job_ids))
+    states: dict[str, list[str]] = {job_id: [] for job_id in ids}
+    if not ids:
+        return states, ""
+    squeue = str(cluster.get("squeue_command") or DEFAULT_SQUEUE)
+    sacct = str(cluster.get("sacct_command") or DEFAULT_SACCT)
+    out, _, code = run_remote(cluster, bounded(f"{squeue} -h -j {','.join(ids)} -o '%i|%T'", timeout), timeout)
+    if code == 0:
+        for line in out.splitlines():
+            job_id, _, state = line.partition("|")
+            if job_id.strip() in states and state.strip():
+                states[job_id.strip()].append(state.strip())
+    missing = [job_id for job_id in ids if not states[job_id]]
+    if not missing:
+        return states, ""
+    out, err, code = run_remote(cluster, bounded(f"{sacct} -n -j {','.join(missing)} --format=JobID,State,ExitCode -P", timeout), timeout)
+    if code != 0:
+        return states, (err or out).strip()
+    for line in out.splitlines():
+        job_id, _, rest = line.partition("|")
+        job_id = job_id.strip().split(".")[0].split("_")[0]
+        if job_id in states and rest.strip():
+            states[job_id].append(rest.split("|", 1)[0].strip())
+    return states, ""
+
+
 def tail_remote_file(cluster: dict, remote_path: str, lines: int = 4000, timeout: int | None = None) -> str:
     """The last lines of a file on the cluster; the error text when tail failed."""
     posix_path = remote_path.replace("\\", "/")
-    out, err, code = run_remote(cluster, f"tail -n {int(lines)} {shlex.quote(posix_path)}", timeout)
+    out, err, code = run_remote(cluster, bounded(f"tail -n {int(lines)} {shlex.quote(posix_path)}", timeout), timeout)
     return out if code == 0 else (err or out)

@@ -59,8 +59,8 @@ def _local_log_status(path: Path) -> tuple[str | None, int | None, str]:
     return "running", None, "running from local Slurm log"
 
 
-def _slurm_status(settings: Settings, job_id: str) -> tuple[str | None, int | None, str]:
-    states, error = client.job_state(settings.cluster, job_id, _monitor_timeout(settings))
+def _classify_states(states: list[str], error: str) -> tuple[str | None, int | None, str]:
+    """(status, exit code, note) of one job from its Slurm states: failed, completed, running or queued; None when Slurm does not know it."""
     if not states:
         return None, None, error
     normalized = [state.split()[0].split("+")[0].strip().upper() for state in states if state.strip()]
@@ -74,6 +74,17 @@ def _slurm_status(settings: Settings, job_id: str) -> tuple[str | None, int | No
     if any(state in QUEUED_STATES for state in normalized):
         return "queued", None, note
     return None, None, note
+
+
+def _slurm_status(settings: Settings, job_id: str) -> tuple[str | None, int | None, str]:
+    states, error = client.job_state(settings.cluster, job_id, _monitor_timeout(settings))
+    return _classify_states(states, error)
+
+
+def _slurm_statuses(settings: Settings, job_ids: list[str]) -> dict[str, tuple[str | None, int | None, str]]:
+    """The status of many jobs with one squeue (and one sacct) call, whatever their number: {job id: (status, exit code, note)}."""
+    states, error = client.job_states(settings.cluster, job_ids, _monitor_timeout(settings))
+    return {job_id: _classify_states(job_states, error) for job_id, job_states in states.items()}
 
 
 def _cluster_log_failure(output_dir: str | None, stderr_path: str | None = None) -> tuple[str | None, int | None, str]:
@@ -139,17 +150,23 @@ def _copy_remote_log(settings: Settings, remote_log_path: str, local_path: Path)
 def poll_slurm_once(settings: Settings) -> int:
     runs = run_repository.active_cluster_runs(settings, f"{g.STA_STEP_PREFIX}%")  # the runs of every hypothesis step
     changed = 0
+    known = {}  # run id -> (job id, status, exit code, note) of the runs whose local log already says how they ended
     for run in runs:
         job_id = _job_id(run.get("output_dir"))
-        if not job_id:
+        if job_id:
+            known[run["id"]] = (job_id, *_cluster_log_failure(run.get("output_dir"), run.get("stderr_path")))
+    undecided = [job_id for job_id, status, *_ in known.values() if not status]
+    try:
+        asked = _slurm_statuses(settings, undecided) if undecided else {}  # one call for every run, not one per run
+    except CLUSTER_ERRORS as exc:
+        print(f"[slurm monitor warning] status lookup of {len(undecided)} job(s) failed: {type(exc).__name__}: {exc}")
+        asked = {}
+    for run in runs:
+        if run["id"] not in known:
             continue
-        status, exit_code, note_text = _cluster_log_failure(run.get("output_dir"), run.get("stderr_path"))
+        job_id, status, exit_code, note_text = known[run["id"]]
         if not status:
-            try:
-                status, exit_code, note_text = _slurm_status(settings, job_id)
-            except CLUSTER_ERRORS as exc:
-                print(f"[slurm monitor warning] run {run['id']} status lookup failed: {type(exc).__name__}: {exc}")
-                continue
+            status, exit_code, note_text = asked.get(job_id, (None, None, ""))
         if status in {"queued", "running"}:
             if status != run["status"]:
                 run_repository.set_run_status(settings, run["id"], status)
