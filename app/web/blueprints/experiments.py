@@ -9,6 +9,7 @@ from app.db import experiment_repository as repo
 from app.db.run_repository import latest_run, latest_step_statuses
 from app.services import caches
 from app.services.behavior_view import behavior_payload
+from app.services.border_view import border_snippets
 from app.services.experiments import (
     ANALYSIS_STEPS,
     add_experiment,
@@ -19,6 +20,7 @@ from app.services.experiments import (
     start_analysis,
     validate_experiment,
 )
+from app.services.global_trends import global_trends
 from app.services.hypothesis_summary import anatomy_cluster_summary, chosen_step
 from app.services.run_views import STEP_LABELS
 from app.services.runs import pipeline_status
@@ -113,6 +115,28 @@ def experiment_anatomy_clusters(experiment_id):
         return jsonify({"available": False, "message": str(exc)}), 404
     except (ValueError, OSError, KeyError) as exc:
         return jsonify({"available": False, "message": str(exc)}), 400
+
+
+@bp.get("/experiments/<int:experiment_id>/border-snippets.json")
+def experiment_border_snippets(experiment_id):
+    settings = get_settings()
+    try:
+        return jsonify(border_snippets(settings, experiment_id))
+    except FileNotFoundError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except (ValueError, OSError) as exc:
+        return jsonify({"message": str(exc)}), 400
+
+
+@bp.get("/experiments/<int:experiment_id>/global-trends.json")
+def experiment_global_trends(experiment_id):
+    settings = get_settings()
+    try:
+        return jsonify(global_trends(settings, experiment_id, chosen_step(request.args.get("h"))))
+    except FileNotFoundError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except (ValueError, OSError, KeyError) as exc:
+        return jsonify({"message": str(exc)}), 400
 
 
 @bp.post("/experiments/<int:experiment_id>/notes")

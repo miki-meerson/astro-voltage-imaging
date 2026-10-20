@@ -88,9 +88,30 @@
   <div id="ac-test" style="margin-top:12px"></div>
   <div id="ac-tip"></div>
 </section>
+
+<section class="panel" id="global-trends-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Global trends</h2>
+      <p id="gt-summary" class="muted">Loading...</p>
+    </div>
+    <div class="toolbar">
+      <label class="field">Map of
+        <select id="gt-series"></select>
+      </label>
+    </div>
+  </div>
+  <p class="muted small">Slow signals that the whole field shares, taken from the movie of this hypothesis's run (they do not depend on any spike): the field-mean intensity and the image shifts. The map shows, for every pixel, how strongly the chosen signal drives it: <span style="color:#d0443c"><b>red</b></span> = strong, <span style="color:#4a7bd0"><b>blue</b></span> = weak. The dashed frame marks the inner edge of the border that the STA test leaves out (the border the image shifts of this recording expose); dotted lines in the traces are splices where bad segments were removed.</p>
+  <div class="gt-grid">
+    <div><canvas id="gt-traces"></canvas></div>
+    <div><canvas id="gt-map"></canvas><div id="gt-readout" class="muted small">&nbsp;</div></div>
+  </div>
+</section>
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/form_rules.js') }}"></script>
 <script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
+<script src="{{ url_for('static', filename='js/time_axis.js') }}"></script>
 <script src="{{ url_for('static', filename='js/anatomy_clusters.js') }}"></script>
+<script src="{{ url_for('static', filename='js/global_trends.js') }}"></script>
 {% endblock %}

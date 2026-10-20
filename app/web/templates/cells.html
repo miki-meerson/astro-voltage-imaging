@@ -86,7 +86,7 @@
         <canvas class="result-plot" data-card="{{ loop.index0 }}"></canvas>
         <div class="cluster-list">
           {% for cluster in card.clusters %}
-          <div class="cluster-row"><span class="sign {{ 'dep' if cluster.polarity == 'depolarizing' else 'hyper' }}">{{ cluster.polarity }}</span> frames {{ cluster.first_rel }} &hellip; {{ cluster.last_rel }} &middot; p {{ "%.3f"|format(cluster.p) }} &middot; {{ cluster.n_px }} px</div>
+          <div class="cluster-row"><span class="sign {{ 'dep' if cluster.polarity == 'depolarizing' else 'hyper' }}">{{ cluster.polarity }}</span> {{ "%+.2f"|format(cluster.first_rel / card.fps) }} &hellip; {{ "%+.2f"|format(cluster.last_rel / card.fps) }} s &middot; p {{ "%.3f"|format(cluster.p) }} &middot; {{ cluster.n_px }} px</div>
           {% else %}
           <div class="cluster-row">{{ card.n_peaks }} spikes &middot; no significant cluster</div>
           {% endfor %}
@@ -130,7 +130,7 @@
     </section>
 
     <h3 style="margin-top:24px">Motion test</h3>
-    <p class="muted small">Are the spikes of this cell time-locked to image motion? Each plot is the average of one motion series around the spikes (the line) against what random frames give (grey band, &plusmn;2 sd). A line outside the band, in red, means the spikes line up with that motion, so the clusters of this cell may be motion artifacts.</p>
+    <p class="muted small">Are the spikes of this cell time-locked to image motion? Each plot is the average of one motion series around the spikes (the line) against what random frames give (grey band, &plusmn;2 sd). A red line (shown only when the cell is flagged) means that motion lines up with the spikes. The cell is flagged by one p-value, corrected for looking at 5 measures at once, from 2000 random-frame copies; when flagged, its clusters may be motion artifacts.</p>
     {% if motion %}
     <script type="application/json" id="motion-data">{{ motion|tojson }}</script>
     <div class="callout {{ 'warn' if motion.verdict == 'flag' else 'info' }}">{{ motion.text }} <span class="muted small">({{ motion.n_peaks }} spikes used)</span></div>
@@ -140,7 +140,7 @@
         <div class="card-head">
           <b>{{ series.label }}</b>
           {% if series.p is none %}<span class="chip off">no data</span>
-          {% else %}<span class="chip {{ 'warn' if series.p <= motion.alpha else 'off' }}">p {{ "%.3f"|format(series.p) }} &middot; z {{ "%.1f"|format(series.z) }}</span>{% endif %}
+          {% else %}<span class="chip {{ 'warn' if motion.verdict == 'flag' and series.p <= motion.alpha else 'off' }}" title="p of this measure alone, not corrected for the 5 measures">p {{ "%.3f"|format(series.p) }} &middot; z {{ "%.1f"|format(series.z) }}</span>{% endif %}
         </div>
         <canvas class="result-plot motion-plot" data-motion="{{ loop.index0 }}"></canvas>
       </div>
@@ -163,6 +163,7 @@
 {% if selected and not message %}
 <script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
 <script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
+<script src="{{ url_for('static', filename='js/time_axis.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cell_results.js') }}"></script>
 <script src="{{ url_for('static', filename='js/sta_movie.js') }}"></script>
 <script src="{{ url_for('static', filename='js/spike_preview.js') }}"></script>

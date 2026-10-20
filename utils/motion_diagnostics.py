@@ -78,7 +78,9 @@ def motion_sta_stats(
 
     peaks are frame indices of valid spikes; surrogate_centers (n_surrogates, len(peaks)) are the frames of the chance copies, the same
     ones the maps use (random valid spike frames, splice-free when the maps exclude spikes near splices).
-    Returns arrays over the analysis window, baseline-subtracted like the STA effect.
+    Returns arrays over the analysis window, baseline-subtracted like the STA effect. Per series: stat = max |effect| over the window, p = rank
+    among the copies and z. The cell gets ONE p, `p_family`, corrected for having several series: each copy (and the real spikes) is
+    scored by its largest z over the series, and p_family is the rank of the real score among the copies. `flag` = p_family <= flag_alpha.
     """
     names = [n for n in SERIES_NAMES if n in series]
     rels = np.arange(-pre, post + 1)
@@ -93,6 +95,7 @@ def motion_sta_stats(
     stat = np.full(len(names), np.nan, dtype=np.float32)
     p = np.full(len(names), np.nan, dtype=np.float32)
     z = np.full(len(names), np.nan, dtype=np.float32)
+    z_copies = np.full((len(names), len(centers)), np.nan, dtype=np.float32)  # z of the real spikes (column 0) and of every copy, per series
     if peaks.size:
         for i, name in enumerate(names):
             x = np.asarray(series[name], dtype=np.float32)
@@ -104,8 +107,12 @@ def motion_sta_stats(
             null_sd[i] = effect[1:].std(axis=0)
             stat[i] = s[0]
             p[i] = (1 + np.sum(s[1:] >= s[0])) / len(s)
-            z[i] = (s[0] - s[1:].mean()) / (s[1:].std() + 1e-12)
-    min_p = float(np.nanmin(p)) if np.isfinite(p).any() else float("nan")
+            z_copies[i] = (s - s[1:].mean()) / (s[1:].std() + 1e-12)
+            z[i] = z_copies[i, 0]
+    p_family = float("nan")
+    if np.isfinite(z_copies).any():
+        strongest = np.nanmax(z_copies, axis=0)
+        p_family = float((1 + np.sum(strongest[1:] >= strongest[0])) / len(strongest))
     return {
         "series_names": np.asarray(names),
         "rels_analysis": rels[ana],
@@ -115,8 +122,8 @@ def motion_sta_stats(
         "stat": stat,
         "p": p,
         "z": z,
-        "min_p": np.float32(min_p),
-        "flag": np.bool_(np.isfinite(min_p) and min_p <= flag_alpha),
+        "p_family": np.float32(p_family),
+        "flag": np.bool_(np.isfinite(p_family) and p_family <= flag_alpha),
         "flag_alpha": np.float32(flag_alpha),
         # smallest p the permutation count can resolve; if p_floor > flag_alpha the flag can never trigger
         "p_floor": np.float32(1.0 / len(centers)),
@@ -124,20 +131,27 @@ def motion_sta_stats(
     }
 
 
-def align_shifts_to_analysed_frames(shifts: np.ndarray, n_frames: int, trimmed: int = 0) -> np.ndarray | None:
+def align_shifts_to_analysed_frames(shifts: np.ndarray, n_frames: int, trimmed: int = 0, bad_segments=()) -> np.ndarray | None:
     """Rows of `shifts` that belong to the analysed (photobleaching-corrected) movie.
 
-    Bad segments are removed outside the app before motion correction, so the shift rows already match the cleaned movie. The only
-    difference left is the first `trimmed` frames the photobleaching step dropped (qc/photobleaching_qc_astro.json).
-    Returns shifts when the lengths match, shifts[trimmed:] when that makes them match, else None.
+    The shifts file either already matches the cleaned movie (the bad segments were removed before motion correction) or has one row per
+    frame of the uncleaned movie, in which case the rows inside `bad_segments` ([start, end) ranges, qc/bad_segments.json) are dropped. In
+    both cases the first `trimmed` frames the photobleaching step dropped (qc/photobleaching_qc_astro.json) are dropped last.
+    Returns the matching rows (`shifts` itself when it matches already), or None when no reading of the file gives `n_frames` rows.
     """
     shifts = np.asarray(shifts)
-    n = int(n_frames)
-    if len(shifts) == n:
-        return shifts
-    t = max(int(trimmed), 0)
-    if t and len(shifts) == n + t:
-        return shifts[t:]
+    n, t = int(n_frames), max(int(trimmed), 0)
+    candidates = [shifts]
+    if len(bad_segments):
+        keep = np.ones(len(shifts), dtype=bool)
+        for start, end in bad_segments:
+            keep[int(start):int(end)] = False
+        candidates.append(shifts[keep])
+    for rows in candidates:
+        if len(rows) == n:
+            return rows
+        if t and len(rows) == n + t:
+            return rows[t:]
     return None
 
 

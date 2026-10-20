@@ -47,6 +47,7 @@ class LRUCache:
             return len(self._data)
 
 
+GLOBAL_TRENDS = LRUCache(8, "global_trends")             # key: (npz path, mtime_ns) -> the traces and amplitude maps of a run, ready for the page (small)
 STA_CELL_TABLE = LRUCache(8, "sta_cell_table")          # key: (run_id, csv mtime_ns, csv size) -> the per-cell flags of an STA run
 BEHAVIOR_PAYLOAD = LRUCache(8, "behavior_payload")      # key: (run_id, npz mtime_ns)
 MOVIE_INFO = LRUCache(16, "movie_info")                 # key: (movie file, mtime, flipped) -> size, frame count and contrast of a corrected movie (small)

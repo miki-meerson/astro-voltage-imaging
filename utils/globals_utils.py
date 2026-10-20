@@ -113,6 +113,7 @@ BEHAVIORAL_BINNED_FRAMES_TEMPLATE = "astro_photobleaching_corrected_gevi_flipped
 STA_USED_PARAMETERS_JSON = "sta_maps_used_parameters.json"  # STA analysis folder: the parameters the job really used
 STA_USED_PARAMETERS_NPZ = "sta_maps_used_parameters.npz"
 MOTION_SERIES_FILE = "motion_series.npz"  # STA analysis folder
+GLOBAL_TRENDS_FILE = "global_trends.npz"  # STA analysis folder: the traces and amplitude maps of the signals the whole field shares (utils/global_trends.py)
 MEAN_ASTRO_BINNED_FILE = "mean_astro_binned.npy"  # STA analysis folder of an Anatomy Crop run
 BASELINE_AVERAGE_MOVIE_FILE = "baseline_average_movie.npy"  # the STA job's moving mean of the movie over the baseline frames; in a temporary folder, deleted at the end of the run
 STA_SKIPPED_BEHAVIORAL_GROUPS = "sta_maps_skipped_behavioral_groups.json"

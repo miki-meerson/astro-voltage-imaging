@@ -85,6 +85,7 @@ class PathKind(Enum):
     STA_USED_PARAMETERS_JSON = auto()  # anchor: STA analysis folder
     STA_USED_PARAMETERS_NPZ = auto()  # anchor: STA analysis folder
     MOTION_SERIES = auto()  # anchor: STA analysis folder
+    GLOBAL_TRENDS = auto()  # anchor: STA analysis folder
     MEAN_ASTRO_BINNED = auto()  # anchor: STA analysis folder
     BASELINE_AVERAGE_MOVIE = auto()  # anchor: a temporary folder of the STA job
     STA_SKIPPED_BEHAVIORAL_GROUPS = auto()  # anchor: STA analysis folder
@@ -187,6 +188,7 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.STA_USED_PARAMETERS_JSON: _Spec(_A, (g.STA_USED_PARAMETERS_JSON,)),
     PathKind.STA_USED_PARAMETERS_NPZ: _Spec(_A, (g.STA_USED_PARAMETERS_NPZ,)),
     PathKind.MOTION_SERIES: _Spec(_A, (g.MOTION_SERIES_FILE,)),
+    PathKind.GLOBAL_TRENDS: _Spec(_A, (g.GLOBAL_TRENDS_FILE,)),
     PathKind.MEAN_ASTRO_BINNED: _Spec(_A, (g.MEAN_ASTRO_BINNED_FILE,)),
     PathKind.BASELINE_AVERAGE_MOVIE: _Spec(_A, (g.BASELINE_AVERAGE_MOVIE_FILE,)),
     PathKind.STA_SKIPPED_BEHAVIORAL_GROUPS: _Spec(_A, (g.STA_SKIPPED_BEHAVIORAL_GROUPS,)),

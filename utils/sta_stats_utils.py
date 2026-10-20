@@ -19,16 +19,19 @@ def smooth_spatial(maps: np.ndarray, sigma_px: float) -> np.ndarray:
     return gaussian_filter(np.asarray(maps, dtype=np.float32), sigma=sigma, mode="nearest")
 
 
-def null_sd_map(perm_effects: np.ndarray, floor_quantile: float = 0.05) -> np.ndarray:
+def null_sd_map(perm_effects: np.ndarray, floor_quantile: float = 0.05, valid: np.ndarray | None = None) -> np.ndarray:
     """Per-pixel null standard deviation from permutation effects (P, T, H, W) -> (H, W).
+
+    `valid` ((H, W) boolean): the analysed pixels. The floor is taken from them only, and the masked pixels get sd 1 (their effect is 0 anyway).
 
     Variance over permutations is averaged over time, then square-rooted. The result is floored at the
     `floor_quantile` of the map (and a tiny constant) so near-zero-variance pixels cannot blow up z-scores.
     """
     var = np.var(np.asarray(perm_effects, dtype=np.float32), axis=0)
     sd = np.sqrt(var.mean(axis=0))
-    floor = max(float(np.quantile(sd, floor_quantile)), 1e-12)
-    return np.maximum(sd, floor).astype(np.float32)
+    floor = max(float(np.quantile(sd if valid is None else sd[valid], floor_quantile)), 1e-12)
+    sd = np.maximum(sd, floor)
+    return (sd if valid is None else np.where(valid, sd, 1.0)).astype(np.float32)
 
 
 def standardize(maps: np.ndarray, sd: np.ndarray) -> np.ndarray:

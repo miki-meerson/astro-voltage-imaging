@@ -34,6 +34,23 @@
   {% include "_experiment_notes.html" %}
 </div>
 
+<section class="panel" id="border-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Border masking</h2>
+      <p id="bm-summary" class="muted">Loading...</p>
+    </div>
+    <div class="toolbar"><button id="bm-play" class="secondary small" type="button">Pause</button></div>
+  </div>
+  <p class="muted small">The registration shifts every frame, and what slides into view is filled with reflected content, so the border of the corrected movie follows the shift, not the tissue. The STA test leaves that border out. Same field and same frames: on the left the movie as the motion correction leaves it, on the right what the test analyses (the dashed line is the inner edge of the masked border). The frames shown surround the largest image shift of this recording.</p>
+  <input id="bm-scrub" type="range" min="0" max="0" value="0" style="width:100%">
+  <div id="bm-readout" class="muted small">&nbsp;</div>
+  <div class="bm-grid">
+    <figure><canvas id="bm-raw"></canvas><figcaption>Without masking</figcaption></figure>
+    <figure><canvas id="bm-masked"></canvas><figcaption>With masking: the border is left out</figcaption></figure>
+  </div>
+</section>
+
 <section class="panel" id="behavior-results">
   <div class="panel-head">
     <div>
@@ -81,5 +98,6 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
 <script src="{{ url_for('static', filename='js/experiment_behavior.js') }}"></script>
+<script src="{{ url_for('static', filename='js/border_snippets.js') }}"></script>
 <script src="{{ url_for('static', filename='js/form_rules.js') }}"></script>
 {% endblock %}
