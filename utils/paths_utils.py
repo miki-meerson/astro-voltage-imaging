@@ -25,6 +25,7 @@ class Anchor(Enum):
     OUTPUT_ROOT = "outputs root (runtime/outputs or the test outputs folder)"
     SUITE2P_PLANE0 = "Suite2p plane0 folder"
     MOTION_CORRECTED = "motion_corrected folder"
+    DATA_ROOT = "data root (the folder the experiments are in)"
 
 
 class PathKind(Enum):
@@ -79,6 +80,8 @@ class PathKind(Enum):
     MC_ASTRO_MEAN_IMAGE = auto()  # anchor: motion_corrected folder
     MC_NEURON_MEAN_IMAGE = auto()  # anchor: motion_corrected folder
     MC_SHIFTS = auto()  # anchor: experiment
+    ROI_CLASSES = auto()  # anchor: experiment
+    ROI_LABEL_DATASET = auto()  # anchor: data root
     BINNED_ASTRO_MOVIE = auto()  # anchor: experiment; fields: bin
     RUN_BEHAVIORAL_BINNED_MOVIE = auto()  # anchor: run; fields: group, bin
     RUN_BEHAVIORAL_BINNED_FRAMES = auto()  # anchor: run; fields: group, bin
@@ -182,6 +185,8 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.MC_ASTRO_MEAN_IMAGE: _Spec(_MC, (g.ASTRO_MEAN_IMAGE_FILE,)),
     PathKind.MC_NEURON_MEAN_IMAGE: _Spec(_MC, (g.NEURON_MEAN_IMAGE_FILE,)),
     PathKind.MC_SHIFTS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.MOTION_CORRECTED_DIR, g.MOTION_SHIFTS_DIR, g.MOTION_SHIFTS_FILE)),
+    PathKind.ROI_LABEL_DATASET: _Spec(Anchor.DATA_ROOT, (g.ROI_LABEL_DATASET_FILE,)),
+    PathKind.ROI_CLASSES: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.ROI_CLASS_DIR, g.ROI_CLASSES_FILE)),
     PathKind.BINNED_ASTRO_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.PB_CORRECTED_DIR, g.BINNED_ASTRO_MOVIE_TEMPLATE)),
     PathKind.RUN_BEHAVIORAL_BINNED_MOVIE: _Spec(_R, (g.STA_ANALYSIS_DIR, g.BEHAVIORAL_BINNED_MOVIE_TEMPLATE)),
     PathKind.RUN_BEHAVIORAL_BINNED_FRAMES: _Spec(_R, (g.STA_ANALYSIS_DIR, g.BEHAVIORAL_BINNED_FRAMES_TEMPLATE)),

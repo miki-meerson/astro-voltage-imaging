@@ -12,10 +12,17 @@ def read_suite2p_traces(suite2p_path, cell_mask):
     return F_cells, F_norm
 
 
-def load_cell_selection(suite2p_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    """(cell_mask, stat_cells): the accepted cells of a Suite2p plane0 folder and their ROI stats. The only place iscell.npy and stat.npy are read."""
+def load_all_rois(suite2p_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """(cell_mask, stat): iscell (as a boolean per ROI) and the stats of EVERY ROI of a Suite2p plane0 folder, by original ROI index. The only place iscell.npy and stat.npy
+    are read."""
     cell_mask = np.load(path_for(PathKind.SUITE2P_ISCELL, suite2p_path), allow_pickle=True)[:, 0].astype(bool)
-    return cell_mask, np.load(path_for(PathKind.SUITE2P_STAT, suite2p_path), allow_pickle=True)[cell_mask]
+    return cell_mask, np.load(path_for(PathKind.SUITE2P_STAT, suite2p_path), allow_pickle=True)
+
+
+def load_cell_selection(suite2p_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """(cell_mask, stat_cells): the accepted cells of a Suite2p plane0 folder and their ROI stats."""
+    cell_mask, stat = load_all_rois(suite2p_path)
+    return cell_mask, stat[cell_mask]
 
 
 def load_suite2p_context(suite2p_path: str | Path, cell_selection: tuple[np.ndarray, np.ndarray] | None = None) -> dict:

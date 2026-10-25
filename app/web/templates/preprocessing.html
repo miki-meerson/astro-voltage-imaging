@@ -2,6 +2,12 @@
 {% block tab %}
 <script type="application/json" id="page-data">{{ {"expId": exp.id}|tojson }}</script>
 
+<nav class="tabs" aria-label="Preprocessing views">
+  <button type="button" class="tab active" data-pre-tab="main">Preprocessing</button>
+  <button type="button" class="tab" data-pre-tab="roi">ROI types (soma / dendrite)</button>
+</nav>
+<div id="pre-tab-main">
+
 <div class="grid-3">
   <section class="panel">
     <h3>1 Preprocessing</h3>
@@ -161,7 +167,32 @@
   </div>
 </section>
 {% endif %}
+</div>
+
+<div id="pre-tab-roi" hidden>
+<section class="panel" id="roi-panel">
+  <div class="panel-head">
+    <div>
+      <h2>ROI types</h2>
+      <p id="roi-summary" class="muted">Open this tab to load the ROIs.</p>
+    </div>
+    <div class="toolbar"><button type="button" class="secondary" id="roi-export" title="Add the labels you set by hand in this experiment to the lab's labelled dataset (a single file in the data folder), to train a classifier later. Nothing is removed from the dataset.">Export labels to dataset</button><button type="button" class="secondary" id="roi-run" title="Classify every accepted ROI from its shape and save the result. It replaces everything saved, the labels you set by hand too.">Run automatic classification</button></div>
+  </div>
+  <p class="muted small">Only the accepted Suite2p ROIs (iscell = 1) are drawn. A ROI's type is an extra label saved by its original Suite2p index: <code>iscell.npy</code>, <code>stat.npy</code> and the cell numbers of the spikes and analyses are not changed.
+    Suite2p has no soma / dendrite classifier, so the automatic rule uses the shape of each ROI (elongation and solidity, measured on a cleaned copy of it). It is untested on your data: ROIs it cannot tell apart are <b>uncertain</b>, not forced into a class. Click a ROI to set its type yourself. Everything is saved in one file; running the automatic classification again replaces all of it, your own labels too.</p>
+  <p id="roi-export-status" class="muted small"></p>
+  <div class="roi-grid">
+    <div>
+      <div class="zv" data-cap="0.9"><div class="smv-stage" id="roi-stage"><canvas id="roi-base"></canvas><canvas id="roi-ovl"></canvas></div></div>
+      <div class="roi-legend" id="roi-legend"></div>
+    </div>
+    <div id="roi-detail"></div>
+  </div>
+</section>
+</div>
 {% endblock %}
 {% block scripts %}
 {% if pb_available %}<script src="{{ url_for('static', filename='js/preprocessing_pb.js') }}"></script>{% endif %}
+<script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
+<script src="{{ url_for('static', filename='js/roi_classes.js') }}"></script>
 {% endblock %}

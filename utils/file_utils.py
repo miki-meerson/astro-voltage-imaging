@@ -32,8 +32,12 @@ def read_json(path: str | Path, what: str, default=REQUIRED, missing: str | None
 
 
 def write_json(path: str | Path, data) -> None:
-    """Save `data` as an indented utf-8 json file."""
-    Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    """Save `data` as an indented utf-8 json file, creating its folder. It is written to a temporary file next to it and moved into place, so a reader never sees half a file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def make_shared_dir(path: str | Path) -> Path:

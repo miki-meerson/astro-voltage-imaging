@@ -11,7 +11,7 @@ import numpy as np
 
 from app.services import caches
 from utils.paths_utils import PathKind, path_for
-from utils.suite2p_utils import load_cell_selection, load_suite2p_context
+from utils.suite2p_utils import load_all_rois, load_cell_selection, load_suite2p_context
 
 
 def _cell_selection(source_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
@@ -21,6 +21,19 @@ def _cell_selection(source_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
         selection = load_cell_selection(path_for(PathKind.SUITE2P_PLANE0, source_path))
         caches.SUITE2P_STAT.put(key, selection)
     return selection
+
+
+def experiment_rois(source_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """(cell_mask, stat) of EVERY ROI of the experiment, by original Suite2p ROI index (the ROI classification works on all of them). Shared between requests: never modify it."""
+    key = str(source_path)
+    rois = caches.SUITE2P_ROIS.get(key)
+    if rois is None:
+        try:
+            rois = load_all_rois(path_for(PathKind.SUITE2P_PLANE0, source_path))
+        except FileNotFoundError as exc:
+            raise FileNotFoundError("The Suite2p results (iscell.npy and stat.npy) are not in this experiment's folder yet: run Suite2p first.") from exc
+        caches.SUITE2P_ROIS.put(key, rois)
+    return rois
 
 
 def experiment_stat_cells(source_path: str | Path) -> np.ndarray:
@@ -41,4 +54,5 @@ def experiment_suite2p_context(source_path: str | Path) -> dict:
 def forget_suite2p(source_path: str | Path) -> None:
     """Drop what is kept of this experiment so the next use rereads the Suite2p files."""
     caches.SUITE2P_STAT.discard(str(source_path))
+    caches.SUITE2P_ROIS.discard(str(source_path))
     caches.SUITE2P_CONTEXT.discard(str(source_path))

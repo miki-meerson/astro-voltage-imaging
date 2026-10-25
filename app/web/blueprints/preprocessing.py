@@ -1,6 +1,8 @@
 """Preprocessing page and its actions, data and movie endpoints."""
 from __future__ import annotations
 
+from io import BytesIO
+
 from flask import jsonify, redirect, render_template, request, send_file, url_for
 
 from app.db import preprocessing_repository as repo
@@ -12,6 +14,7 @@ from app.services.movies import (
     pb_movie_path,
 )
 from app.services.preprocessing import PREPROCESSING_STEPS, latest_preprocessing_params, rerun_preprocessing_step
+from app.services.roi_classes import export_manual_labels, roi_class_payload, roi_fov_png, run_auto_classification, set_manual_class
 from app.services.run_views import run_view
 from app.services.workspace import page_data
 from app.web.common import FlatBlueprint, get_settings
@@ -124,3 +127,28 @@ def preprocessing_photobleaching_qc_plot(experiment_id, kind):
     if not target.exists() or not target.is_file():
         return render_template("error.html", title="Missing QC Plot", message=str(target)), 404
     return send_file(target, mimetype="image/png", max_age=30)
+
+
+ROI_CLASS_ACTIONS = {"data": roi_class_payload, "auto": run_auto_classification, "export": export_manual_labels}  # the requests with nothing but the experiment
+
+
+@bp.get("/experiments/<int:experiment_id>/preprocessing/roi-classes.json", defaults={"action": "data", "roi": None})
+@bp.get("/experiments/<int:experiment_id>/preprocessing/roi-fov.png", defaults={"action": "fov", "roi": None})
+@bp.post("/experiments/<int:experiment_id>/preprocessing/roi-classes/<any(auto, export):action>", defaults={"roi": None})
+@bp.post("/experiments/<int:experiment_id>/preprocessing/roi-classes/<int:roi>", defaults={"action": "set"})
+def roi_classes_request(experiment_id, action, roi):
+    """The ROI types tab's requests: json of what the action returns (the field of view as a PNG), or {"message"} with the status of what went wrong."""
+    settings = get_settings()
+    exp = repo.experiment_row(settings, experiment_id)
+    if exp is None:
+        return jsonify({"message": "Experiment not found."}), 404
+    try:
+        if action == "fov":
+            return send_file(BytesIO(roi_fov_png(settings, exp)), mimetype="image/png", max_age=300)
+        if action == "set":
+            return jsonify(set_manual_class(settings, exp, roi, (request.get_json(silent=True) or {}).get("label")))
+        return jsonify(ROI_CLASS_ACTIONS[action](settings, exp))
+    except FileNotFoundError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except (ValueError, OSError) as exc:
+        return jsonify({"message": str(exc)}), 400
