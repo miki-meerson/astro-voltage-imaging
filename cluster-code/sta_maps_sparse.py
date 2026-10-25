@@ -4,6 +4,7 @@ import argparse
 import csv
 import gc
 import multiprocessing as mp
+import os
 import tempfile
 import time
 from contextlib import contextmanager
@@ -287,7 +288,10 @@ def ensure_binned_movie(paths, spatial_bin: int | None = None) -> np.memmap:
         print(f"Using full-resolution astro movie without writing a bin1 cache: {paths.astro_movie_path}")
         return read_astro_movie(str(paths.astro_movie_path), as_memmap=True)
     cache_path = binned_movie_path(paths, bin_factor)
-    if cache_path.exists():
+    stale = cache_path.exists() and cache_path.stat().st_mtime < Path(paths.astro_movie_path).stat().st_mtime
+    if stale:
+        print(f"Rebuilding the binned astro movie cache: it is older than the movie it was made from ({cache_path.name}); the movie was processed again.")
+    if cache_path.exists() and not stale:
         movie = np.load(cache_path, mmap_mode="r")
         frame_means = np.asarray(movie.mean(axis=(1, 2)), dtype=np.float32)
         zero_frames = int(np.sum(frame_means == 0))
@@ -301,7 +305,7 @@ def ensure_binned_movie(paths, spatial_bin: int | None = None) -> np.memmap:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     astro = read_astro_movie(str(paths.astro_movie_path), as_memmap=True)
     sample = spatial_bin_movie(np.asarray(astro[:1], dtype=np.float32), bin_factor)
-    tmp_path = cache_path.with_suffix(".tmp.npy")
+    tmp_path = cache_path.with_suffix(f".{os.getpid()}.tmp.npy")
     out = np.lib.format.open_memmap(tmp_path, mode="w+", dtype=np.float32, shape=(astro.shape[0], *sample.shape[1:]))
     for start in range(0, astro.shape[0], 512):
         stop = min(start + 512, astro.shape[0])
@@ -350,7 +354,7 @@ def ensure_behavioral_binned_movie(paths, group: str, source_frames: np.ndarray,
 
     full_movie = ensure_binned_movie(paths, bin_factor)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = cache_path.with_suffix(".tmp.npy")
+    tmp_path = cache_path.with_suffix(f".{os.getpid()}.tmp.npy")
     out = np.lib.format.open_memmap(
         tmp_path,
         mode="w+",
@@ -537,7 +541,10 @@ def list_cells() -> list[int]:
 
 def load_kept_peaks(cell_id: int) -> np.ndarray:
     """The kept spikes of a cell, in the numbering of the analysed movie: every spike of its label file except the ones the user labelled
-    "exclude". Excluded spikes must never enter any STA (all / anatomy / behavioral)."""
+    "exclude". Excluded spikes must never enter any STA (all / anatomy / behavioral). For g.POOLED_CELL_ID: the kept spikes of all the cells of the run
+    together (a frame with spikes of several cells is one event)."""
+    if cell_id == g.POOLED_CELL_ID:
+        return np.unique(np.concatenate([load_kept_peaks(cell) for cell in list_cells()]))
     with np.load(path_for(PathKind.SPIKE_CELL_DIR, spike_analysis_dir(), cell=cell_id) / g.SPIKE_LABELS, allow_pickle=True) as d:
         peaks = np.asarray(d["peaks_all"], dtype=np.int32)
         labels = np.char.lower(np.asarray(d["labels"]).astype("U8"))
@@ -1219,7 +1226,7 @@ def surrogate_positions(cell_id: int, n_spikes: int, pool: np.ndarray, n_copies:
     (rng_seed, cell, number of spikes), so the null of a cell does not change between runs."""
     if n_spikes > pool.size:
         raise ValueError(f"Cell {cell_id} has {n_spikes} spikes but only {pool.size} valid spike frames exist: no random surrogate can be drawn.")
-    rng = np.random.default_rng([RNG_SEED, int(cell_id), int(n_spikes)])
+    rng = np.random.default_rng([RNG_SEED, int(cell_id) if cell_id != g.POOLED_CELL_ID else 10 ** 6, int(n_spikes)])  # a seed is not negative
     draws = np.stack([rng.choice(int(pool.size), size=int(n_spikes), replace=False) for _ in range(N_PERMUTATIONS if n_copies is None else n_copies)])
     return np.asarray(pool)[draws].astype(np.int32)
 
@@ -1313,7 +1320,7 @@ def run_border_margins(paths) -> tuple[int, int, int, int] | None:
         return None
     try:
         n_frames = int(read_astro_movie(str(paths.astro_movie_path), as_memmap=True).shape[0])
-        margins = border_margins_px(analysed_shifts(Path(paths.mc_dir).parents[1], n_frames), BORDER_EXTRA_PX)
+        margins = border_margins_px(analysed_shifts(Path(paths.mc_dir).parents[1], n_frames, with_patches=True), BORDER_EXTRA_PX)
     except (OSError, ValueError) as exc:
         raise ValueError(f"The border mask needs the applied shifts of the analysed frames: {exc} Fix that, or set mask_border: false to run without the mask.") from exc
     print(f"Border left out of the test (top, bottom, left, right): {margins} px", flush=True)
@@ -1459,9 +1466,14 @@ def write_summary(rows: list[dict], out_path: Path) -> None:
 
 
 def main() -> None:
-    global RUN_CONFIG
+    global RUN_CONFIG, RESULT_TYPES
     RUN_CONFIG = load_config(parse_args().config)
     apply_config(RUN_CONFIG)
+    pooled = bool(HYPOTHESIS["pool_cells"])
+    if pooled:  # one result for the whole experiment: its movie is the whole field, there is no cell to crop around
+        if g.ALL_GROUP not in RESULT_TYPES:
+            raise ValueError(f"The pooled hypothesis {HYPOTHESIS['hypothesis']} makes only the '{g.ALL_GROUP}' result type: mark it for the run.")
+        RESULT_TYPES = (g.ALL_GROUP,)
     resolved_home = home_dir()
     resolved_source_home = source_home_dir()
     paths = resolve_sta_paths(resolved_source_home, resolved_home)
@@ -1477,8 +1489,11 @@ def main() -> None:
     cells = list_cells()
     if not cells:
         raise RuntimeError(f"No automated spike labels found in {spike_analysis_dir()}")
+    if pooled:
+        print(f"Pooled hypothesis: the spikes of {len(cells)} cells are tested together as one list of events")
+        cells = [g.POOLED_CELL_ID]
 
-    print(f"Running sparse STA maps for {len(cells)} cells with {N_WORKERS} workers")
+    print(f"Running sparse STA maps for {len(cells)} {'pooled result' if pooled else 'cells'} with {N_WORKERS} workers")
     print(f"Home dir: {resolved_home}")
     print(f"Result types: {', '.join(RESULT_TYPES)}")
     print(f"STA spatial bin: {SPATIAL_BIN}")

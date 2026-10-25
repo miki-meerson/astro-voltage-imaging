@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import json
 import re
 import shutil
 
@@ -18,6 +19,8 @@ from utils.paths_utils import PathKind, path_for
 from utils import globals_utils as g
 
 ANALYSIS_STEPS = tuple(step for step in STEPS if step != g.PREPROCESSING_STEP)  # the steps that need the confirmed Suite2p cells
+STARTED_STATUSES = ("pending", "queued", "running")  # the statuses of a run that has a job or is about to start one
+PAST_PREPROCESSING = (repo.STAGE_PREPROCESSING_REVIEW, repo.STAGE_AWAITING_SUITE2P, repo.STAGE_ANALYSIS_READY)  # the stages of an experiment whose preprocessing results exist
 FEEDING_STEP_ORDER = (g.SPIKE_STEP, g.BEHAVIOR_STEP, g.ANATOMY_STEP)  # the steps start_analysis may create, in the order they are created
 EXPECTED_ERRORS = (ValueError, OSError)  # a bad experiment folder: wrong name, missing or unreadable file
 
@@ -44,6 +47,18 @@ def parse_experiment_path(path: str | Path) -> ParsedExperiment:
     date, behavior, z, zoom = dm.group("date"), dm.group("behavior"), zm.group("z"), zm.group("zoom")
     canonical = f"{cage}__{mouse}__{date}_{behavior}__{fov}__z{z}__x{zoom}"
     return ParsedExperiment(cage, mouse, date, behavior, fov, z, zoom, canonical)
+
+
+def behavior_ready(report: dict) -> bool:
+    """Whether the experiment has behavior data (one imaging csv or a TS h5 file), from its validation report."""
+    checks = report.get("checks", {})
+    return bool(checks.get("behavior_ts", {}).get("count")) or checks.get("behavior_csv", {}).get("count") == 1
+
+
+def experiment_steps(report: dict) -> tuple[str, ...]:
+    """The steps an experiment must complete to count as COMPLETED: every step of the pipeline, except the behavior split of an experiment that has no behavior data (it
+    could never complete)."""
+    return tuple(step for step in STEPS if step != g.BEHAVIOR_STEP or behavior_ready(report))
 
 
 def validate_experiment(path: str | Path):
@@ -87,15 +102,15 @@ def validate_experiment(path: str | Path):
         missing.append("exactly_one_ts_h5")
     if missing:
         raise ValueError("Missing or invalid required inputs: " + ", ".join(missing))
-    behavior_ready = bool(ts_h5) or len(behavior) == 1
-    analysis_ready = behavior_ready and all(checks[key]["exists"] for key in analysis_required)
-    if not behavior_ready:
+    analysis_ready = all(checks[key]["exists"] for key in analysis_required)  # behavior data is not needed: only the behavioral result type reads it
+    state = "valid" if analysis_ready else "needs_preprocessing"
+    report = {"state": state, "checks": checks, "analysis_ready": analysis_ready}
+    if not behavior_ready(report):
         checks["behavior_source"] = {
             "exists": False,
-            "reason": "No imaging CSV or TS H5 behavior data was found. TS settings XML alone is enough for upload/preprocessing, but not for behavior analysis.",
+            "reason": "No imaging CSV or TS H5 behavior data was found. TS settings XML alone is enough for upload/preprocessing, but not for behavior analysis (the behavioral result type).",
         }
-    state = "valid" if analysis_ready else "needs_preprocessing"
-    return parsed, {"state": state, "checks": checks, "analysis_ready": analysis_ready}
+    return parsed, report
 
 
 def discover_neurons(path: str | Path) -> list[dict]:
@@ -155,12 +170,15 @@ def scan_parent(parent: str | Path, settings: Settings) -> dict:
     return summary
 
 
-def launch_default_steps(settings: Settings, experiment_id: int) -> None:
-    """Start what a newly registered experiment needs: cluster preprocessing for a raw one. A processed one starts nothing: every analysis
-    after preprocessing starts when the user asks for it (start_analysis)."""
-    if repo.workflow_stage_of(settings, experiment_id) == repo.STAGE_PREPROCESSING_PENDING:
-        params = settings.defaults.get(g.PREPROCESSING_STEP, {})
-        launch_run(settings, create_run(settings, experiment_id, g.PREPROCESSING_STEP, params, backend="cluster"))
+def launch_default_steps(settings: Settings, experiment_id: int, params: dict | None = None) -> None:
+    """Start what a newly registered experiment needs: cluster preprocessing for a raw one (with the preprocessing defaults, changed by `params`); the behavior split for
+    a processed one that has behavior data (as when Suite2p is confirmed: an experiment that arrives with Suite2p already confirmed never goes through that step). Every
+    other analysis starts when the user asks for it (start_analysis)."""
+    stage = repo.workflow_stage_of(settings, experiment_id)
+    if stage == repo.STAGE_PREPROCESSING_PENDING:
+        start_preprocessing(settings, experiment_id, params or {})
+    elif stage == repo.STAGE_ANALYSIS_READY and behavior_ready(json.loads(repo.experiment_row(settings, experiment_id)["validation_report"] or "{}")):
+        start_behavior_split(settings, experiment_id)
 
 
 def start_analysis(settings: Settings, experiment_id: int, result_types, sta_options: dict | None = None, hypotheses=None) -> list[int]:
@@ -207,6 +225,16 @@ def start_spike_detection(settings: Settings, experiment_id: int) -> int:
     return run_id
 
 
+def start_behavior_split(settings: Settings, experiment_id: int) -> int | None:
+    """Start the behavior split of an experiment that has behavior data, unless one already completed or is in progress (its result does not depend on the cells, so a
+    new Suite2p confirmation does not need a new one); returns the run id, or None when nothing was started."""
+    if run_repository.steps_with_status(settings, experiment_id, ("completed", *ACTIVE_STATUSES)) & {g.BEHAVIOR_STEP}:
+        return None
+    run_id = create_run(settings, experiment_id, g.BEHAVIOR_STEP, settings.defaults.get(g.BEHAVIOR_STEP, {}), backend="local")
+    launch_run(settings, run_id)
+    return run_id
+
+
 def confirm_preprocessing(settings: Settings, experiment_id: int) -> None:
     repo.confirm_preprocessing(settings, experiment_id)
 
@@ -222,6 +250,8 @@ def confirm_suite2p(settings: Settings, experiment_id: int) -> int:
     neurons = discover_neurons(exp["source_path"])
     repo.confirm_suite2p(settings, experiment_id, neurons, report, ANALYSIS_STEPS)
     start_spike_detection(settings, experiment_id)  # the cells are new (the old analysis runs were cancelled above): detect their spikes now; editing them is manual, afterwards
+    if behavior_ready(report):
+        start_behavior_split(settings, experiment_id)  # the behavior does not depend on the cells: split the movie by it once
     return len(neurons)
 
 
@@ -268,6 +298,27 @@ def remove_experiment_from_registry(experiment_id: int, settings: Settings) -> d
     exp, run_rows = repo.remove_experiment(settings, experiment_id, "Removed from GUI experiment list.")
     cleaned = _remove_run_outputs(run_rows, exp["canonical_id"], settings)
     return {"canonical_id": exp["canonical_id"], "source_path": exp["source_path"], "cleaned": cleaned}
+
+
+def start_preprocessing(settings: Settings, experiment_id: int, params: dict) -> int:
+    """Start a preprocessing run of an experiment (the preprocessing defaults changed by `params`) on the cluster; returns its id.
+
+    For an experiment that is already past preprocessing (finished, or processed before: its results are in its folder) the new results replace the old ones, so everything
+    that was made from them goes first: its runs, cells, confirmations and spike edits are deleted and it is put back to the start of preprocessing; Suite2p has to be
+    run again by hand on the new movies. Raises ValueError while a preprocessing run is in progress (two runs write the same files and corrupt each other's results) and,
+    for such an experiment, while any other run has started."""
+    if g.PREPROCESSING_STEP in run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES):
+        raise ValueError("Preprocessing is already running for this experiment: wait for it to finish (a second run would write the same files).")
+    if repo.workflow_stage_of(settings, experiment_id) in PAST_PREPROCESSING:
+        if run_repository.steps_with_status(settings, experiment_id, STARTED_STATUSES):  # a waiting run has no job yet: it is discarded with the rest of the app data
+            raise ValueError("A run of this experiment is still in progress: wait for it, or cancel it, before processing the experiment again.")
+        exp = repo.experiment_row(settings, experiment_id)
+        report = {**validate_experiment(exp["source_path"])[1], "state": "needs_preprocessing", "analysis_ready": False}  # the folder as it is, not ready until processed again
+        _, run_rows = repo.reset_experiment(settings, experiment_id, report, repo.STAGE_PREPROCESSING_PENDING, repo.REVIEW_UNREVIEWED)
+        _remove_run_outputs(run_rows, exp["canonical_id"], settings)
+    run_id = create_run(settings, experiment_id, g.PREPROCESSING_STEP, {**settings.defaults.get(g.PREPROCESSING_STEP, {}), **params}, backend="cluster")
+    launch_run(settings, run_id)
+    return run_id
 
 
 def reset_experiment_app_data(experiment_id: int, settings: Settings) -> dict:

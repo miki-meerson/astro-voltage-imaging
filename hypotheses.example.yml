@@ -12,6 +12,8 @@
 #   time_bin_seconds             the tested window is averaged in bins of this length before testing (0 = every frame is tested). Slow
 #                                hypotheses need it: a 10 s window of single frames would store thousands of maps per chance copy.
 #   statistic                    baseline_subtracted (the effect is the average minus the baseline)
+#   pool_cells                   false: every cell is tested on its own spikes. true: the spikes of all cells are pooled into one list of events and tested once
+#                                for the whole experiment (the silence rule then applies between pooled spikes; only the 'all' result type is made)
 hypotheses:
   - name: fast
     description: Fast, voltage-like changes within about +-0.35 s of the spike (the method used so far)
@@ -23,6 +25,7 @@ hypotheses:
     silence_after_seconds: 0.35
     time_bin_seconds: 0
     statistic: baseline_subtracted
+    pool_cells: false
 
   - name: post_spike
     description: Depolarization that starts at the spike peak, the change in the first 3 seconds after it (both directions are tested)
@@ -34,6 +37,7 @@ hypotheses:
     silence_after_seconds: 3.0
     time_bin_seconds: 0
     statistic: baseline_subtracted
+    pool_cells: false
 
   - name: slow_ramp
     description: A slow build-up around the spike, from 7 s before to 3 s after it, in 0.5 s steps, against a baseline 12 to 9.5 s before it (both directions are tested)
@@ -45,3 +49,16 @@ hypotheses:
     silence_after_seconds: 0
     time_bin_seconds: 0.5
     statistic: baseline_subtracted
+    pool_cells: false
+
+  - name: population_events
+    description: "Fast changes within about +-0.35 s of a spike of ANY cell: all cells' spikes pooled into one list of events and tested once (a field-wide response to neural activity)"
+    pre_seconds: 2.0
+    post_seconds: 3.0
+    baseline_window_seconds: [-2.0, -0.38]
+    tested_window_seconds: [-0.35, 0.35]
+    silence_before_seconds: 0
+    silence_after_seconds: 0
+    time_bin_seconds: 0
+    statistic: baseline_subtracted
+    pool_cells: true

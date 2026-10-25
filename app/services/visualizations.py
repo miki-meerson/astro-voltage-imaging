@@ -113,25 +113,6 @@ def _display_cluster_mask(
     return None
 
 
-def _mean_binned_image(paths, spatial_bin: int, behavioral_group: str | None = None) -> np.ndarray | None:
-    """The mean of the binned movie (of a behavioral group when given), or None when that movie is not saved. Kept in memory per file (small)."""
-    path = (
-        path_for(PathKind.RUN_BEHAVIORAL_BINNED_MOVIE, paths.home_dir, group=behavioral_group, bin=int(spatial_bin))
-        if behavioral_group
-        else path_for(PathKind.BINNED_ASTRO_MOVIE, paths.home_dir, bin=int(spatial_bin))
-    )
-    if not path.exists():
-        return None
-    key = ("binned", str(path), int(path.stat().st_mtime_ns))
-    image = caches.MEAN_IMAGE.get(key)
-    if image is None:
-        movie = np.load(path, mmap_mode="r")
-        step = max(1, int(np.ceil(movie.shape[0] / 1000)))
-        image = np.asarray(movie[::step], dtype=np.float32).mean(axis=0)
-        caches.MEAN_IMAGE.put(key, image)
-    return image
-
-
 def _astro_mean_image(paths, spatial_bin: int) -> np.ndarray | None:
     key = ("astro_mean", str(paths.mc_dir), int(spatial_bin))
     image = caches.MEAN_IMAGE.get(key)
@@ -201,16 +182,12 @@ def cell_result_cards(settings: Settings, neuron_row, step: str) -> list[dict]:
 def _map_image(paths, stat_cells, cell_id: int, result) -> Image.Image | None:
     """The mean image of a result (cropped for the anatomy result) with its significant clusters (sign colours) and the cell outline drawn on it."""
     effect, _, clusters, meta = result
-    spatial_bin, behavioral_group = int(meta["spatial_bin"]), meta["behavioral_group"]
-    mean_img = _mean_binned_image(paths, spatial_bin, behavioral_group)
-    if mean_img is None and behavioral_group is not None:
-        mean_img = _mean_binned_image(paths, spatial_bin)
-    if mean_img is None and behavioral_group is None:
-        mean_img = _astro_mean_image(paths, spatial_bin)
+    spatial_bin = int(meta["spatial_bin"])
+    mean_img = _astro_mean_image(paths, spatial_bin)  # the saved mean image: a page never reads a movie to build a view
     if mean_img is None:
         return None
     crop = meta["anatomy_crop_bounds"] if meta["anatomy_crop_bounds"] is not None and effect.shape[1:] != mean_img.shape else None
-    neuron = suite2p_roi_mask(cell_id, stat_cells, mean_img.shape, spatial_bin)
+    neuron = suite2p_roi_mask(cell_id, stat_cells, mean_img.shape, spatial_bin) if cell_id >= 0 else np.zeros(mean_img.shape, dtype=bool)  # a pooled result has no cell
     shown_img, shown_neuron = mean_img, neuron
     if crop is not None:
         y0, y1, x0, x1 = crop

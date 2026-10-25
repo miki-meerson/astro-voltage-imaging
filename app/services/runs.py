@@ -75,16 +75,18 @@ def hypothesis_for(step: str) -> Hypothesis:
     raise ValueError(f"Step {step} is not in the hypothesis catalogue ({catalogue_file(PROJECT_ROOT).name}).")
 
 
+BEHAVIORAL_RESULT = "behavioral"  # the result type that needs the behavior split
 STA_RESULT_TYPES = [  # the result types a run can be asked for (name, label on the page), in the order they are run
     (g.ALL_GROUP, "All"),
     (g.ANATOMY_GROUP, "Anatomy"),
-    ("behavioral", "Behavioral"),
+    (BEHAVIORAL_RESULT, "Behavioral"),
 ]
 
 
 def feeding_steps(result_types) -> set[str]:
-    """The steps whose outputs an STA run of these result types reads: spike, behavior, and anatomy when that result type is marked."""
-    return {g.SPIKE_STEP, g.BEHAVIOR_STEP} | ({g.ANATOMY_STEP} if g.ANATOMY_GROUP in result_types else set())
+    """The steps whose outputs an STA run of these result types reads: spike always, behavior only when the behavioral result type is marked (without it the
+    run just reads the behavior run if one exists), and anatomy when that result type is marked."""
+    return {g.SPIKE_STEP} | ({g.BEHAVIOR_STEP} if BEHAVIORAL_RESULT in result_types else set()) | ({g.ANATOMY_STEP} if g.ANATOMY_GROUP in result_types else set())
 
 
 def pipeline_status(latest: dict[str, str], steps: tuple[str, ...] | None = None) -> dict:

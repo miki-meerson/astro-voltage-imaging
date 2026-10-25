@@ -1,13 +1,27 @@
 """Behaviour (speed / velocity) payload of the experiment page."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
 
+from app.db import experiment_repository, run_repository
 from app.services import caches
-from app.services.runs import run_dir
+from app.services.experiments import behavior_ready
+from app.services.runs import ACTIVE_STATUSES, run_dir
+from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
+
+
+def behavior_unavailable_message(settings, experiment_id: int) -> str:
+    """Why an experiment has no behavior result: it has no behavior data, the split is running, or it has not run yet."""
+    exp = experiment_repository.experiment_row(settings, experiment_id)
+    if exp is None or not behavior_ready(json.loads(exp["validation_report"])):
+        return "This experiment has no behavior data: its folder holds no imaging_*.csv and no TS h5 file."
+    if g.BEHAVIOR_STEP in run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES):
+        return "The behavior split is running."
+    return "The behavior split has not run yet."
 
 
 def behavior_payload(settings, run_row) -> dict:

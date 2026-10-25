@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.ndimage import generate_binary_structure, label
+from scipy.ndimage import find_objects, generate_binary_structure, label
 from utils.sta_stats_utils import passes_extent, per_sign_p_values
 
 
@@ -144,19 +144,23 @@ def cluster_list_from_effect(
         ("negative", effect_movie <= -neg_thr),
     ):
         labels, n_labels = label(mask, structure=structure)
+        sizes = np.bincount(labels.ravel(), minlength=n_labels + 1)
+        boxes = find_objects(labels)  # each candidate is looked at inside its own bounding box: a noisy movie has hundreds of them, and a test of the whole movie for each is slow
         for label_id in range(1, n_labels + 1):
-            cluster_mask = labels == label_id
-            cluster_size = int(cluster_mask.sum())
+            cluster_size = int(sizes[label_id])
             if cluster_size < int(min_cluster_size):
                 continue
-            if (min_footprint_px or min_frames) and not passes_extent(cluster_mask, min_footprint_px, min_frames):
+            inside = labels[boxes[label_id - 1]] == label_id
+            if (min_footprint_px or min_frames) and not passes_extent(inside, min_footprint_px, min_frames):
                 continue
-            cluster_values = effect_movie[cluster_mask]
+            cluster_values = effect_movie[boxes[label_id - 1]][inside]
             cluster_mass = float(np.abs(cluster_values).sum())
             if cluster_mass < float(min_cluster_mass):
                 continue
             peak_index = np.argmax(np.abs(cluster_values))
             peak_value = float(cluster_values[peak_index])
+            cluster_mask = np.zeros(labels.shape, dtype=bool)
+            cluster_mask[boxes[label_id - 1]] = inside
             cluster_records.append(
                 {
                     "sign": sign_name,

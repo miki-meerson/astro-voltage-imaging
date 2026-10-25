@@ -20,3 +20,6 @@ tests/
 
 # IDE project files
 .idea/
+
+# the offline neuron-movie control (a temporary analysis, not part of the app)
+neuron_control/
