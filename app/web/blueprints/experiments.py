@@ -23,12 +23,13 @@ from app.services.experiments import (
     start_analysis,
     validate_experiment,
 )
+from app.services.cluster_map import cluster_map, cluster_offsets
 from app.services.global_trends import global_trends
-from app.services.hypothesis_summary import anatomy_cluster_summary, chosen_step
+from app.services.hypothesis_summary import chosen_step
 from app.services.run_views import STEP_LABELS
 from app.services.runs import pipeline_status
 from app.services.visualizations import render_result_map
-from app.web.common import FlatBlueprint, get_settings, movie_chunk_response, movie_meta_response
+from app.web.common import FlatBlueprint, get_settings, json_payload, movie_chunk_response, movie_meta_response
 from app.web.security import safe_next
 from utils import globals_utils as g
 
@@ -110,15 +111,9 @@ def experiment(experiment_id):
     return redirect(url_for("experiment_overview", experiment_id=experiment_id, **request.args))
 
 
-@bp.get("/experiments/<int:experiment_id>/anatomy-clusters.json")
-def experiment_anatomy_clusters(experiment_id):
-    settings = get_settings()
-    try:
-        return jsonify(anatomy_cluster_summary(settings, experiment_id, chosen_step(request.args.get("h"))))
-    except FileNotFoundError as exc:
-        return jsonify({"available": False, "message": str(exc)}), 404
-    except (ValueError, OSError, KeyError) as exc:
-        return jsonify({"available": False, "message": str(exc)}), 400
+@bp.get("/experiments/<int:experiment_id>/cluster-offsets.json")
+def experiment_cluster_offsets(experiment_id):
+    return json_payload(lambda: cluster_offsets(get_settings(), experiment_id, chosen_step(request.args.get("h"))))
 
 
 @bp.get("/experiments/<int:experiment_id>/pooled-sta-map.png")
@@ -132,24 +127,17 @@ def experiment_pooled_sta_map(experiment_id):
 
 @bp.get("/experiments/<int:experiment_id>/border-snippets.json")
 def experiment_border_snippets(experiment_id):
-    settings = get_settings()
-    try:
-        return jsonify(border_snippets(settings, experiment_id))
-    except FileNotFoundError as exc:
-        return jsonify({"message": str(exc)}), 404
-    except (ValueError, OSError) as exc:
-        return jsonify({"message": str(exc)}), 400
+    return json_payload(lambda: border_snippets(get_settings(), experiment_id))
 
 
 @bp.get("/experiments/<int:experiment_id>/global-trends.json")
 def experiment_global_trends(experiment_id):
-    settings = get_settings()
-    try:
-        return jsonify(global_trends(settings, experiment_id, chosen_step(request.args.get("h"))))
-    except FileNotFoundError as exc:
-        return jsonify({"message": str(exc)}), 404
-    except (ValueError, OSError, KeyError) as exc:
-        return jsonify({"message": str(exc)}), 400
+    return json_payload(lambda: global_trends(get_settings(), experiment_id, chosen_step(request.args.get("h"))))
+
+
+@bp.get("/experiments/<int:experiment_id>/cluster-map.json")
+def experiment_cluster_map(experiment_id):
+    return json_payload(lambda: cluster_map(get_settings(), experiment_id, chosen_step(request.args.get("h"))))
 
 
 @bp.post("/experiments/<int:experiment_id>/notes")

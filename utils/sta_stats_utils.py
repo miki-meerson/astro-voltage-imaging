@@ -6,6 +6,7 @@ Maps are (..., H, W) arrays; time-resolved maps are (T, H, W) and permutation st
 from __future__ import annotations
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from scipy.ndimage import gaussian_filter
 
 NULL_STANDARDIZATION_MODES = ("none", "per_pixel_z")
@@ -115,6 +116,20 @@ def cluster_trace_wide(
     mask2d = np.asarray(mask2d, dtype=bool)
     trace = (np.asarray(sta_movie[sel], dtype=np.float32)[:, mask2d] - baseline_map[mask2d]).mean(axis=1)
     return rels[sel], trace.astype(np.float32)
+
+
+def filter_valid_peaks(peaks: np.ndarray, n_frames: int, pre_frames: int, post_frames: int) -> np.ndarray:
+    """The spikes whose window [spike - pre, spike + post] lies inside a recording of `n_frames` frames (the rule of the STA job's valid centres)."""
+    peaks = np.asarray(peaks, dtype=int)
+    return peaks[(peaks > pre_frames) & (peaks < (n_frames - post_frames))]
+
+
+def f0_for_valid_centers(movie: np.ndarray, centers: np.ndarray, baseline_window: tuple[int, int]) -> np.ndarray:
+    """F0 of each spike: the median over its baseline window (frames relative to the spike, ends included) of the frame-mean intensity of `movie`."""
+    intensity = np.asarray(movie.mean(axis=(1, 2)), dtype=np.float32)
+    windows = sliding_window_view(intensity, int(baseline_window[1]) - int(baseline_window[0]) + 1)
+    f0 = np.median(windows[centers + int(baseline_window[0])], axis=1).astype(np.float32)
+    return np.maximum(np.abs(f0), np.float32(1e-12))
 
 
 def _spikes_in_window(kept: np.ndarray, frames: np.ndarray, before: int, after: int) -> np.ndarray:

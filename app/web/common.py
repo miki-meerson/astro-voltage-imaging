@@ -36,6 +36,17 @@ class FlatBlueprint(Blueprint):
         return _FlatSetupState(self, app, options, first_registration)
 
 
+def json_payload(action):
+    """The json answer of a request that returns data: what `action()` returns, or {"message"} with the status of what went wrong (404: a file that a step has not made yet;
+    400: anything else the user can act on)."""
+    try:
+        return jsonify(action())
+    except FileNotFoundError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except (ValueError, OSError, KeyError) as exc:
+        return jsonify({"message": str(exc)}), 400
+
+
 def get_settings():
     """The Settings object of the running app (set once in create_app)."""
     return current_app.config["SETTINGS"]

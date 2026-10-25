@@ -14,6 +14,7 @@ from app.db.run_repository import latest_run
 from app.services.cell_views import pooled_row
 from app.services.experiments import start_spike_detection
 from app.services.hypothesis_summary import cell_table, chosen_step, hypothesis_status, hypothesis_summaries, waiting_for
+from app.services.roi_class_stats import roi_class_statistics
 from app.services.run_views import build_validation_rows, run_view, validation_all_ok
 from app.services.runs import STA_RESULT_TYPES, hypothesis_for, sta_steps
 from app.services.spikes import current_suite2p_neurons, experiment_spike_review, spikes_edited_after_sta
@@ -82,12 +83,16 @@ def experiment_hypotheses(experiment_id):
     if data is None:
         return _missing()
     try:
-        selected = hypothesis_name(chosen_step(request.args.get("h")))
+        step = chosen_step(request.args.get("h"))
     except ValueError as exc:
         return render_template("error.html", title="Unknown Hypothesis", message=str(exc)), 400
+    try:
+        class_stats = roi_class_statistics(settings, data["exp"], step)
+    except FileNotFoundError as exc:  # the hypothesis has no completed run, or Suite2p results are missing
+        class_stats = {"available": False, "message": str(exc)}
     summaries = hypothesis_summaries(settings, experiment_id)
     n_tests = sum(len(summary["results"]["result_types"]) for summary in summaries if summary["results"])  # hypothesis x result type: each is one test per cell
-    return render_template("hypotheses.html", **data, summaries=summaries, selected=selected, n_tests=n_tests, result_types=STA_RESULT_TYPES,
+    return render_template("hypotheses.html", **data, summaries=summaries, selected=hypothesis_name(step), class_stats=class_stats, n_tests=n_tests, result_types=STA_RESULT_TYPES,
                            sta_defaults=dict(settings.defaults.get("sta", {})), analysis_ready=data["exp"]["workflow_stage"] == repo.STAGE_ANALYSIS_READY)
 
 

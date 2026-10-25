@@ -67,7 +67,7 @@
 <section class="panel" id="anatomy-clusters-panel">
   <div class="panel-head">
     <div>
-      <h2>Anatomy clusters</h2>
+      <h2>Cluster traces and positions</h2>
       <p id="ac-summary" class="muted">Loading...</p>
     </div>
     <form method="get" class="toolbar">
@@ -78,8 +78,9 @@
       </label>
     </form>
   </div>
-  <p class="muted small">Cells with at least one significant cluster in the <b>anatomy</b> result type and no motion suspicion. Every significant anatomy cluster of those cells is included. Click a point to open the cell.</p>
+  <p class="muted small">Cells with at least one significant cluster in the chosen result type (<b>anatomy</b>, <b>all</b>, or both) and no motion suspicion. Every significant cluster of those cells in the chosen result types is included; in the position plot a circle is an anatomy cluster and a square an <b>all</b> cluster. Click a point to open the cell.</p>
   <div class="ac-controls">
+    <label class="check">result type <select id="ac-type" style="width:auto"></select></label>
     <label class="check"><input type="checkbox" id="ac-individual" checked> individual cluster traces</label>
     <label class="check"><input type="checkbox" id="ac-sem" checked> &plusmn; SEM</label>
     <label class="check">y range
@@ -92,6 +93,60 @@
   </div>
   <div id="ac-test" style="margin-top:12px"></div>
   <div id="ac-tip"></div>
+</section>
+
+<section class="panel" id="roi-class-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Soma vs dendrite</h2>
+      <p class="muted">Hypothesis <b>{{ selected }}</b>: how often the accepted ROIs of each class have a significant cluster (change the hypothesis in the selector of the anatomy clusters above).</p>
+    </div>
+  </div>
+  {% if not class_stats.available %}
+  <p class="muted">{{ class_stats.message }}</p>
+  {% else %}
+  <p class="muted small">Counts are not compared as they are: a class with more cells has more chances for a significant cell. Each class shows the <b>fraction</b> of its tested cells that are significant, with a 95% interval, and a test against the false-positive rate alone ({{ "%g"|format(class_stats.alpha) }} of cells expected). The two classes are compared by Fisher's exact test (it allows for different group sizes) and by a permutation test that keeps the group sizes and shuffles the class only among cells with a similar number of spikes (cells with more spikes are more likely to be significant, and the classes may differ in that). Uncertain and unclassified cells are shown and not compared.</p>
+  {% for rt in class_stats.result_types %}
+  <h3>Result type: {{ rt.name }}</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Class</th><th class="num">Cells tested</th><th class="num">Significant</th><th class="num">Fraction</th><th class="num">95% interval</th><th class="num">p vs chance</th><th class="num">Spikes (median)</th></tr></thead>
+      <tbody>
+        {% for c in rt.classes %}
+        <tr>
+          <td>{{ c.label }}</td><td class="num">{{ c.tested }}</td><td class="num">{{ c.significant }}</td>
+          <td class="num">{{ "%.0f%%"|format(c.fraction * 100) if c.fraction is not none else "&ndash;"|safe }}</td>
+          <td class="num">{% if c.ci %}{{ "%.0f"|format(c.ci[0] * 100) }}&ndash;{{ "%.0f"|format(c.ci[1] * 100) }}%{% else %}&ndash;{% endif %}</td>
+          <td class="num">{{ "%.3f"|format(c.p_vs_chance) if c.p_vs_chance is not none else "&ndash;"|safe }}</td>
+          <td class="num">{{ "%g"|format(c.spikes_median) if c.spikes_median is not none else "&ndash;"|safe }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if rt.comparison %}
+  <p>Soma &minus; dendrite: <b>{{ "%+.0f"|format(rt.comparison.difference * 100) }} percentage points</b> in the fraction of significant cells. Fisher's exact p = <b>{{ "%.3f"|format(rt.comparison.fisher_p) }}</b>; matched for spike count ({{ rt.comparison.strata }} group{{ "s" if rt.comparison.strata != 1 }} of spike counts) permutation p = <b>{{ "%.3f"|format(rt.comparison.matched_p) }}</b>.</p>
+  {% else %}
+  <p class="muted">{{ rt.comparison_message }}</p>
+  {% endif %}
+  {% endfor %}
+  {% if n_tests > 1 %}<div class="callout warn">These p values are for one hypothesis and result type each; with {{ n_tests }} tests on this experiment, a p near 0.05 in one of them is weak evidence.</div>{% endif %}
+  {% endif %}
+</section>
+
+<section class="panel" id="cluster-map-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Cells with significant clusters</h2>
+      <p id="cm-summary" class="muted">Loading...</p>
+    </div>
+  </div>
+  <p class="muted small">One card per cell, three cells per row. Top: the mean astro field of view with the cell's ROI (<span style="color:#f7d154"><b>yellow</b></span>) and its significant clusters (<span style="color:#ff5d6c"><b>red</b></span> = depolarizing, <span style="color:#4fa3ff"><b>blue</b></span> = hyperpolarizing; solid = <b>all</b> result type, dashed = <b>anatomy</b>; a ring marks each cluster, they are small). Below it: the mean astro trace of each cluster (left axis, shaded where the cluster is) and the cell's own spike-triggered neuron dF/F (yellow, right axis). Click the cell number to open the cell. Every plot zooms with the mouse wheel (Shift: time only, Alt: height only), pans by dragging and goes back with a double click. Open <b>individual spikes</b> under a card to see the moments the mean is made of: the mean of the cluster's pixels around every spike of the cell (thin) with their mean (bold), next to the same for the pixels right around the cluster (as many as the cluster has), on the same scale; under them the mean intensity of the same two groups of pixels over the whole recording, with the spikes of the cell as dashed vertical lines (the two plots zoom and pan together in time).</p>
+  <div class="ac-controls">
+    <span id="cm-types"></span>
+    <label class="check"><input type="checkbox" id="cm-motion" checked> cells flagged for motion</label>
+  </div>
+  <div id="cm-grid" class="cm-grid"></div>
 </section>
 
 <section class="panel" id="global-trends-panel">
@@ -117,6 +172,10 @@
 <script src="{{ url_for('static', filename='js/form_rules.js') }}"></script>
 <script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
 <script src="{{ url_for('static', filename='js/time_axis.js') }}"></script>
+<script src="{{ url_for('static', filename='js/plot_canvas.js') }}"></script>
 <script src="{{ url_for('static', filename='js/anatomy_clusters.js') }}"></script>
+<script src="{{ url_for('static', filename='js/fov_outline.js') }}"></script>
+<script src="{{ url_for('static', filename='js/plot_view.js') }}"></script>
+<script src="{{ url_for('static', filename='js/cluster_map.js') }}"></script>
 <script src="{{ url_for('static', filename='js/global_trends.js') }}"></script>
 {% endblock %}

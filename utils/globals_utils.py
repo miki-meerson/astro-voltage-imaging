@@ -46,7 +46,7 @@ STA_MOVIE_TIF_TEMPLATE = "sta_{group}_bin{bin}.tif"
 
 # files of the STA analysis folder
 STA_SUMMARY_CSV = "sta_maps_batch_summary.csv"
-ANATOMY_SUMMARY = "anatomy_summary.json"
+CLUSTER_MAP_SUMMARY = "cluster_map_summary.json"  # <STA analysis folder>/: every significant cluster of every result type, with its place in the field of view and its trace
 GROUP_TEST = "anatomy_group_test.json"
 GROUP_TEST_RECORDS = "anatomy_group_records.json.gz"
 ANATOMY_CROP_PARAMS = "anatomy_crop_params.npz"  # written by the Anatomy Crop step into <anatomy run>/sta-analysis/

@@ -59,12 +59,14 @@ MEAN_IMAGE = LRUCache(16, "mean_image")                 # key: (motion_corrected
 CLUSTER_RESULT = LRUCache(240, "cluster_result")        # key: (npz path, mtime_ns) -> parsed cluster result
 SUITE2P_STAT = LRUCache(16, "suite2p_stat")             # key: experiment folder -> ROI stats of the accepted cells (small); see suite2p_data.py
 SUITE2P_ROIS = LRUCache(16, "suite2p_rois")             # key: experiment folder -> iscell and the stats of every ROI (small); see suite2p_data.py
-ROI_FOV_PNG = LRUCache(8, "roi_fov_png")                # key: (neuron mean image file, mtime_ns) -> the field of view of the ROI classification page, PNG bytes
+ROI_FOV_PNG = LRUCache(8, "roi_fov_png")                # key: (mean image file, mtime_ns) -> the field of view the ROI and cluster pages draw on, PNG bytes
+CLUSTER_MAP = LRUCache(8, "cluster_map")                # key: (cluster map summary file, mtime_ns) -> the saved summary, ready for the page (small)
 SUITE2P_CONTEXT = LRUCache(3, "suite2p_context")        # key: experiment folder -> stats + fluorescence matrices (tens of MB): only the last 3 experiments
 
 
 def clear_experiment_result_caches() -> None:
     """Drop the summaries derived from the STA / spike / behavior results of an experiment."""
     STA_CELL_TABLE.clear()
+    CLUSTER_MAP.clear()
     BEHAVIOR_PAYLOAD.clear()
     CELL_REVIEW.clear()

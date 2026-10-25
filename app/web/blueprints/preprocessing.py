@@ -144,7 +144,7 @@ def roi_classes_request(experiment_id, action, roi):
         return jsonify({"message": "Experiment not found."}), 404
     try:
         if action == "fov":
-            return send_file(BytesIO(roi_fov_png(settings, exp)), mimetype="image/png", max_age=300)
+            return send_file(BytesIO(roi_fov_png(settings, exp, request.args.get("channel", "neuron"))), mimetype="image/png", max_age=300)
         if action == "set":
             return jsonify(set_manual_class(settings, exp, roi, (request.get_json(silent=True) or {}).get("label")))
         return jsonify(ROI_CLASS_ACTIONS[action](settings, exp))

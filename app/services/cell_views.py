@@ -19,7 +19,7 @@ from app.services.runs import hypothesis_for, run_dir
 from app.services.suite2p_data import experiment_stat_cells, experiment_suite2p_context
 from utils import globals_utils as g
 from utils.cluster_context import significant_clusters
-from utils.cluster_result import cluster_basic_fields, cluster_pixels_fullres
+from utils.cluster_result import cluster_basic_fields, cluster_pixels_fullres, read_result_header
 from utils.hypotheses import hypothesis_name
 from utils.movie_utils import read_frame_rate
 from utils.output_errors import missing_output_message
@@ -114,21 +114,17 @@ def _check_saved_files(movie_tif: Path, anatomy_npz: Path, cell: int) -> None:
 
 def _read_anatomy_header(anatomy_npz: Path) -> dict:
     """The small keys of the anatomy result that describe its movie (never the permutations)."""
-    with np.load(anatomy_npz, allow_pickle=True) as d:
-        spatial_bin = int(np.asarray(d["spatial_bin"]).item())
-        if spatial_bin != 1:
-            raise ValueError(f"The cropped STA movie is shown for anatomy results at spatial bin 1 (this one is bin {spatial_bin}).")
-        y0, y1, x0, x1 = (int(v) for v in np.asarray(d["anatomy_crop_bounds"]).ravel())
-        return {
-            "pre_frames": int(np.asarray(d["pre_frames"]).item()),
-            "post_frames": int(np.asarray(d["post_frames"]).item()),
-            "peaks": np.asarray(d["peaks"], dtype=np.int32),
-            "baseline_window": [int(v) for v in np.asarray(d["baseline_window"]).ravel()],
-            "crop": {"y0": y0, "y1": y1, "x0": x0, "x1": x1, "width": x1 - x0, "height": y1 - y0},
-        }
+    head = read_result_header(anatomy_npz)
+    if head["spatial_bin"] != 1:
+        raise ValueError(f"The cropped STA movie is shown for anatomy results at spatial bin 1 (this one is bin {head['spatial_bin']}).")
+    y0, y1, x0, x1 = head["crop"]
+    return {
+        "pre_frames": head["pre_frames"], "post_frames": head["post_frames"], "peaks": head["peaks"], "baseline_window": head["baseline_window"],
+        "crop": {"y0": y0, "y1": y1, "x0": x0, "x1": x1, "width": x1 - x0, "height": y1 - y0},
+    }
 
 
-def _neuron_trace(source_path, pipeline_neuron_id, peaks: np.ndarray, pre: int, post: int, rel: np.ndarray) -> dict:
+def _neuron_trace(source_path, pipeline_neuron_id, peaks: np.ndarray, rel: np.ndarray) -> dict:
     """The neuron's own dF/F (neuron movie, Suite2p) averaged around the same spikes as the astro movie (an optional marker)."""
     neuron = {"trace": [], "trace_label": "", "trace_peak": None}
     try:
@@ -136,9 +132,8 @@ def _neuron_trace(source_path, pipeline_neuron_id, peaks: np.ndarray, pre: int, 
         dff = np.asarray(suite2p_trace_dff(int(pipeline_neuron_id), suite2p_ctx=ctx), dtype=float)
     except (OSError, IndexError, KeyError, ValueError):
         return neuron
-    ok = peaks[(peaks >= pre) & (peaks + post < len(dff))]
-    if ok.size:
-        sta_trace = event_triggered_mean(dff, ok, rel)
+    sta_trace = event_triggered_mean(dff, peaks, rel)
+    if sta_trace is not None:
         neuron["trace"] = sta_trace.round(6).tolist()
         neuron["trace_label"] = "Neuron dF/F (neuron movie), spike-triggered average"
         neuron["trace_peak"] = float(sta_trace[rel == 0][0]) if (rel == 0).any() else None
@@ -167,14 +162,13 @@ def sta_all_stack_payload(all_npz: Path, source_path: str | Path, pipeline_neuro
     if hit is not None:
         return hit
     fps = read_frame_rate(source_path)
+    head = read_result_header(all_npz)
+    pre, post, peaks, spatial_bin, baseline = head["pre_frames"], head["post_frames"], head["peaks"], head["spatial_bin"], head["baseline_window"]
+    window_start, time_bin = head["analysis_window"][0], head["time_bin"]
     with np.load(all_npz, allow_pickle=True) as d:
         if "observed_sta_movie" not in d:
             raise ValueError("This result has no STA movie: it is not a spike-triggered result.")
         movie = np.asarray(d["observed_sta_movie"], dtype=np.float32)  # relative change, already in the biological sign (brighter = depolarised)
-        pre, post, peaks = int(np.asarray(d["pre_frames"]).item()), int(np.asarray(d["post_frames"]).item()), np.asarray(d["peaks"], dtype=np.int32)
-        spatial_bin, baseline = int(np.asarray(d["spatial_bin"]).item()), [int(v) for v in np.asarray(d["baseline_window"]).ravel()]
-        window_start = int(np.asarray(d["analysis_window"], dtype=int)[0])
-        time_bin = int(np.asarray(d["time_bin_frames"]).item()) if "time_bin_frames" in d else 1
         clusters = []
         for c in significant_clusters(d, limit=None):
             pixels = np.argwhere(np.asarray(c["mask3d"], dtype=bool).any(axis=0))
@@ -189,7 +183,7 @@ def sta_all_stack_payload(all_npz: Path, source_path: str | Path, pipeline_neuro
         roi = []
     payload = _pack_stack(movie, {
         "relative_frames": rel.tolist(), "fps": fps, "baseline_window": baseline, "n_peaks": int(peaks.size), "result_type": g.ALL_GROUP, "spatial_bin": spatial_bin,
-        "neuron": {"pixels": roi, **_neuron_trace(source_path, int(pipeline_neuron_id), peaks, pre, post, rel)}, "anatomy_clusters": clusters,
+        "neuron": {"pixels": roi, **_neuron_trace(source_path, int(pipeline_neuron_id), peaks, rel)}, "anatomy_clusters": clusters,
     })
     caches.STA_STACK.put(key, payload)
     return payload
@@ -218,7 +212,7 @@ def sta_crop_stack_payload(movie_tif: Path, anatomy_npz: Path, source_path: str 
     except (OSError, IndexError, KeyError):
         roi_pixels = []
     neuron = {"pixels": roi_pixels,
-              **_neuron_trace(source_path, int(pipeline_neuron_id), head["peaks"], pre, post, rel)}
+              **_neuron_trace(source_path, int(pipeline_neuron_id), head["peaks"], rel)}
     payload = _pack_stack(movie, {
         "relative_frames": rel.tolist(), "fps": fps, "baseline_window": head["baseline_window"], "n_peaks": int(head["peaks"].size), "crop": crop, "neuron": neuron,
         "result_type": g.ANATOMY_GROUP, "anatomy_clusters": anatomy_clusters_in_crop(anatomy_npz, crop),

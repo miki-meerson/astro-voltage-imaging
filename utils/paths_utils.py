@@ -56,7 +56,7 @@ class PathKind(Enum):
     STA_ANALYSIS = auto()
     # anchored on the STA analysis folder
     STA_SUMMARY_CSV = auto()
-    ANATOMY_SUMMARY = auto()
+    CLUSTER_MAP_SUMMARY = auto()  # anchor: STA analysis folder
     GROUP_TEST = auto()
     GROUP_TEST_RECORDS = auto()
     CELL_DIR = auto()  # fields: cell
@@ -163,7 +163,7 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.STA_ALGORITHM_HOME: _Spec(_S, (g.STA_ALGORITHM_HOME_DIR,)),
     PathKind.STA_ANALYSIS: _Spec(_S, (g.STA_ALGORITHM_HOME_DIR, g.STA_ANALYSIS_DIR)),
     PathKind.STA_SUMMARY_CSV: _Spec(_A, (g.STA_SUMMARY_CSV,)),
-    PathKind.ANATOMY_SUMMARY: _Spec(_A, (g.ANATOMY_SUMMARY,)),
+    PathKind.CLUSTER_MAP_SUMMARY: _Spec(_A, (g.CLUSTER_MAP_SUMMARY,)),
     PathKind.GROUP_TEST: _Spec(_A, (g.GROUP_TEST,)),
     PathKind.GROUP_TEST_RECORDS: _Spec(_A, (g.GROUP_TEST_RECORDS,)),
     PathKind.CELL_DIR: _Spec(_A, (_CELL,)),

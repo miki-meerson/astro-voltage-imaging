@@ -11,12 +11,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
 from scipy.ndimage import find_objects, generate_binary_structure, label
 from scipy.sparse import csr_matrix, vstack
 
 from utils import globals_utils as g
-from utils.anatomy_summary import save_anatomy_summary
+from utils.cluster_map_summary import save_cluster_map_summary
 from utils.clusters_utils import _merge_similar_clusters
 from utils.motion_diagnostics import (
     build_motion_series,
@@ -30,6 +29,8 @@ from utils.hypotheses import frame_windows, run_settings, seconds_to_frames, tim
 from utils.movie_utils import read_astro_movie, read_frame_rate, spatial_bin_movie
 from utils.sta_stats_utils import (
     NULL_STANDARDIZATION_MODES,
+    f0_for_valid_centers,
+    filter_valid_peaks,
     isolated_spikes,
     max_mass_by_sign,
     min_footprint_in_analysis_px,
@@ -377,11 +378,6 @@ def relative_indices(window: tuple[int, int], pre: int, post: int) -> np.ndarray
     return np.flatnonzero((rel >= window[0]) & (rel <= window[1]))
 
 
-def filter_valid_peaks(peaks: np.ndarray, n_frames: int, pre_frames: int, post_frames: int) -> np.ndarray:
-    peaks = np.asarray(peaks, dtype=int)
-    return peaks[(peaks > pre_frames) & (peaks < (n_frames - post_frames))]
-
-
 def compute_effect_movie(
     sta_movie: np.ndarray,
     pre_frames: int,
@@ -484,14 +480,6 @@ def run_cut_frames(paths, n_frames: int) -> list[int]:
         raise RuntimeError(f"exclude_spikes_near_cuts is on but the cut positions could not be read: {exc}") from exc
     print(f"Bad-segment splices at analysed frames {cuts or 'none'}: spikes whose window [-pre, +post] contains one are excluded")
     return cuts
-
-
-def f0_for_valid_centers(movie: np.ndarray, centers: np.ndarray, baseline_window: tuple[int, int]) -> np.ndarray:
-    """F0 of each spike: the median over its baseline window (frames relative to the spike, ends included) of the frame-mean intensity of `movie`."""
-    intensity = np.asarray(movie.mean(axis=(1, 2)), dtype=np.float32)
-    windows = sliding_window_view(intensity, int(baseline_window[1]) - int(baseline_window[0]) + 1)
-    f0 = np.median(windows[centers + int(baseline_window[0])], axis=1).astype(np.float32)
-    return np.maximum(np.abs(f0), np.float32(1e-12))
 
 
 def crop_f0_for_valid_centers(crop: tuple[int, int, int, int], centers: np.ndarray, baseline_window: tuple[int, int]) -> np.ndarray:
@@ -1641,13 +1629,12 @@ def main() -> None:
     write_summary(rows, summary_path)
     print(f"Done. Summary saved to {summary_path}")
 
-    if g.ANATOMY_GROUP in RESULT_TYPES:  # the experiment page's "Anatomy Clusters" card reads this file
-        print("Saving the anatomy clusters summary for the experiment page ...", flush=True)
+    if not HYPOTHESIS["pool_cells"]:  # the cluster map and the cluster traces panels read this file (a pooled hypothesis has one result for the whole experiment, no map of cells)
+        print("Saving the cluster map summary for the experiment page ...", flush=True)
         try:
-            out = save_anatomy_summary(paths.sta_dir, resolved_source_home, summary_csv=summary_path, log=lambda m: print(m, flush=True))
-            print(f"Anatomy clusters summary saved to {out}")
+            print(f"Cluster map summary saved to {save_cluster_map_summary(paths.sta_dir, resolved_source_home, summary_csv=summary_path, log=lambda m: print(m, flush=True))}")
         except (OSError, ValueError, KeyError) as exc:  # all STA results are already saved: a problem here must not fail the run
-            print(f"WARNING: the anatomy clusters summary was not written ({exc}). The experiment page needs it: rerun STA Maps.", flush=True)
+            print(f"WARNING: the cluster map summary was not written ({exc}). The cluster map and cluster traces panels need it: rerun STA Maps.", flush=True)
 
 
 if __name__ == "__main__":

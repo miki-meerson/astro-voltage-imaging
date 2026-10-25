@@ -17,6 +17,7 @@ import numpy as np
 
 from utils.cluster_result import cluster_offset_from_roi
 from utils.clusters_utils import cluster_mask2d_from_cluster, extract_clusters, mask_mean_trace, saved_cluster_args
+from utils.sta_trace_utils import lag_corr_matrix
 
 MAX_SHIFT = 3
 STATS = ("cells_with_cluster", "one_sidedness", "similarity_same_time", "similarity_shift3", "distance_px")
@@ -65,15 +66,6 @@ def cell_records(npz_path, roi_center) -> dict:
     return {"real": real, "fake": fake}
 
 
-def _lag_corr_matrix(M: np.ndarray, lag: int) -> np.ndarray:
-    a, b = (M[:, lag:], M[:, : M.shape[1] - lag]) if lag >= 0 else (M[:, :lag], M[:, -lag:])
-    a = a - a.mean(1, keepdims=True)
-    b = b - b.mean(1, keepdims=True)
-    num = a @ b.T
-    den = np.sqrt((a ** 2).sum(1))[:, None] * np.sqrt((b ** 2).sum(1))[None, :]
-    return num / np.maximum(den, 1e-12)
-
-
 def group_stats(rows: list[dict]) -> dict:
     """The five numbers for one group of clusters. rows carry 'cell' too. NaN when too few clusters to compare."""
     out = {k: float("nan") for k in STATS}
@@ -88,8 +80,8 @@ def group_stats(rows: list[dict]) -> dict:
         M = np.array([r["trace"] for r in rows], dtype=float)
         pair = (cell_of[:, None] != cell_of[None, :]) & np.triu(np.ones((len(rows), len(rows)), bool), 1)
         if pair.any():
-            c0 = _lag_corr_matrix(M, 0)
-            best = np.max([_lag_corr_matrix(M, L) for L in range(-MAX_SHIFT, MAX_SHIFT + 1)], axis=0)
+            c0 = lag_corr_matrix(M, 0)
+            best = np.max([lag_corr_matrix(M, L) for L in range(-MAX_SHIFT, MAX_SHIFT + 1)], axis=0)
             # for a pair (i, j) the matrix at lag L correlates i shifted one way with j; the lag set is symmetric, so this is the best shift either way
             out["similarity_same_time"] = float(c0[pair].mean())
             out["similarity_shift3"] = float(best[pair].mean())

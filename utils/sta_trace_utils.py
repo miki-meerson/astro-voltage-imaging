@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
+from utils.sta_stats_utils import filter_valid_peaks
+
 
 def pixels_in_crop(ys: np.ndarray, xs: np.ndarray, crop: dict) -> list:
     """The pixels (ys, xs) that fall inside a crop box {y0, x0, height, width}, as [[y, x], ...] in the crop's own coordinates."""
@@ -23,9 +25,22 @@ def crop_bounds(center_yx: tuple[int, int], radius: int, image_shape: tuple[int,
     )
 
 
-def event_triggered_mean(x: np.ndarray, centers: np.ndarray, rels: np.ndarray) -> np.ndarray:
-    """x: (T,), centers: (K,) frame indices, rels: relative frames -> mean over the centers of x[center + rel]."""
-    return x[centers[:, None] + rels[None, :]].mean(axis=0)
+def event_triggered_mean(x: np.ndarray, centers: np.ndarray, rels: np.ndarray) -> np.ndarray | None:
+    """x: (T,), centers: (K,) frame indices, rels: relative frames -> mean over the centers of x[center + rel], over the centers whose whole window lies inside x (the STA job's
+    rule, filter_valid_peaks); None when no center does."""
+    rels = np.asarray(rels, dtype=int)
+    inside = filter_valid_peaks(centers, len(x), -int(rels.min()), int(rels.max()))
+    return x[inside[:, None] + rels[None, :]].mean(axis=0) if inside.size else None
+
+
+def lag_corr_matrix(traces: np.ndarray, lag: int) -> np.ndarray:
+    """Correlation of every trace (a row) with every other, the second one shifted by `lag` frames (only the frames both have are compared); 0 for a flat trace."""
+    a, b = (traces[:, lag:], traces[:, : traces.shape[1] - lag]) if lag >= 0 else (traces[:, :lag], traces[:, -lag:])
+    a = a - a.mean(1, keepdims=True)
+    b = b - b.mean(1, keepdims=True)
+    num = a @ b.T
+    den = np.sqrt((a ** 2).sum(1))[:, None] * np.sqrt((b ** 2).sum(1))[None, :]
+    return num / np.maximum(den, 1e-12)
 
 
 def spike_triggered_dff_trace(trace: np.ndarray, peaks: np.ndarray, pre: int, post: int, baseline_frames: int | None = None) -> np.ndarray:
@@ -67,6 +82,8 @@ def cluster_raw_trace_from_movie(
     frame_chunk: int = 512,
     frame_indices: np.ndarray | None = None,
 ) -> np.ndarray:
+    """The mean of the pixels of `mask_full` (full-resolution boolean image) in every frame of `movie` (or only the frames `frame_indices`), as the movie is given: for the astro
+    movie read with read_astro_movie that is the raw intensity in the app's polarity (depolarization up). NaN for an empty mask."""
     yy, xx = np.where(np.asarray(mask_full, dtype=bool))
     if yy.size == 0:
         n = int(movie.shape[0]) if frame_indices is None else np.asarray(frame_indices).size
@@ -89,10 +106,10 @@ def cluster_raw_trace_from_movie(
         if regular_step is not None:
             first = int(frame_indices[start])
             last = int(frame_indices[stop - 1]) + 1
-            chunk = -np.asarray(movie[first:last:regular_step, y0:y1, x0:x1], dtype=np.float32)
+            chunk = np.asarray(movie[first:last:regular_step, y0:y1, x0:x1], dtype=np.float32)
         else:
             idx = frame_indices[start:stop]
-            chunk = -np.asarray(movie[idx, y0:y1, x0:x1], dtype=np.float32)
+            chunk = np.asarray(movie[idx, y0:y1, x0:x1], dtype=np.float32)
         out[start:stop] = chunk[:, local_mask].mean(axis=1)
     return out
 

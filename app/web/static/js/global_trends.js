@@ -10,17 +10,11 @@
   const RAMP = [[44, 90, 168], [244, 241, 232], [196, 38, 44]];  // weak = blue, strong = red
   let D = null, layout = null;
 
-  function setup(canvas) {
-    const ratio = window.devicePixelRatio || 1, box = canvas.getBoundingClientRect();
-    canvas.width = Math.round(box.width * ratio); canvas.height = Math.round(box.height * ratio);
-    const ctx = canvas.getContext("2d"); ctx.setTransform(ratio, 0, 0, ratio, 0, 0); ctx.clearRect(0, 0, box.width, box.height);
-    return [ctx, box.width, box.height];
-  }
+  const {setup, format: fmt} = PlotCanvas;
   const rampColor = t => {
     const x = Math.max(0, Math.min(1, t)) * (RAMP.length - 1), i = Math.min(RAMP.length - 2, Math.floor(x)), f = x - i;
     return RAMP[i].map((c, k) => Math.round(c + (RAMP[i + 1][k] - c) * f));
   };
-  const fmt = v => Math.abs(v) >= 100 || Number.isInteger(v) ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2);
   const chosen = () => $("gt-series").value;
 
   function drawTraces() {

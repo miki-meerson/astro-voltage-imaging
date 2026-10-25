@@ -14,17 +14,9 @@
   const classOf = name => D.classes.find(c => c.name === name) || UNCLASSIFIED;
   const colorOf = entry => classOf(entry.label).color;
 
-  function outline(ctx, entry, width) {  // the sides of the ROI's pixels that touch a pixel outside the ROI
-    const inside = new Set(entry.ypix.map((y, i) => y * W + entry.xpix[i]));
-    ctx.lineWidth = width; ctx.beginPath();
-    entry.ypix.forEach((y, i) => {
-      const x = entry.xpix[i];
-      if (!inside.has((y - 1) * W + x)) { ctx.moveTo(x * S, y * S); ctx.lineTo((x + 1) * S, y * S); }
-      if (!inside.has((y + 1) * W + x)) { ctx.moveTo(x * S, (y + 1) * S); ctx.lineTo((x + 1) * S, (y + 1) * S); }
-      if (!inside.has(y * W + x - 1)) { ctx.moveTo(x * S, y * S); ctx.lineTo(x * S, (y + 1) * S); }
-      if (!inside.has(y * W + x + 1)) { ctx.moveTo((x + 1) * S, y * S); ctx.lineTo((x + 1) * S, (y + 1) * S); }
-    });
-    ctx.stroke();
+  function outline(ctx, entry, width) {
+    ctx.lineWidth = width;
+    FovOutline.draw(ctx, entry.ypix, entry.xpix, W, S);
   }
 
   function drawOverlay() {

@@ -13,8 +13,7 @@ from app.services.runs import run_dir
 from app.services.suite2p_data import experiment_stat_cells
 from app.settings import Settings
 from utils import globals_utils as g
-from utils.cluster_result import cluster_basic_fields, load_cluster_result
-from utils.clusters_utils import mask_mean_trace
+from utils.cluster_result import cluster_records, load_cluster_result
 from utils.db_utils import collect_cluster_result_metadata
 from utils.hypotheses import hypothesis_name
 from utils.movie_utils import get_mean_images, read_frame_rate
@@ -163,14 +162,11 @@ def cell_result_cards(settings: Settings, neuron_row, step: str) -> list[dict]:
     for row in rows.itertuples():
         effect, t_rel, clusters, meta = _load_result(row.path)
         found = []
-        for cluster, mask in clusters:
-            if np.asarray(mask).shape != effect.shape[1:]:
-                continue
-            wide = cluster.get("wide_trace")  # displayed over a wider window than the tested one
-            t_plot, trace = wide if wide is not None else (t_rel, mask_mean_trace(meta["trace_effect"], mask))
+        for record in cluster_records(effect, t_rel, clusters, meta):
+            mask = record.pop("mask")
             found.append({
-                **cluster_basic_fields(cluster, meta["tested_window"][0], meta["time_bin"]), "polarity": polarity.polarity_from_sign(str(cluster.get("sign", ""))),
-                "n_px": int(np.asarray(mask).sum()), "t": [round(float(v), 2) for v in t_plot], "trace": [round(float(v), 5) for v in np.asarray(trace).ravel()],
+                **record, "polarity": polarity.polarity_from_sign(record["sign"]), "n_px": int(mask.sum()),
+                "t": [round(float(v), 2) for v in record["t"]], "trace": [round(float(v), 5) for v in record["trace"]],
             })
         cards.append({
             "result_type": str(row.result_type), "title": str(row.result_type).replace("_", " ").title(), "n_peaks": int(row.n_peaks),

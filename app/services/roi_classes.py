@@ -18,10 +18,10 @@ from app.services.suite2p_data import experiment_rois
 from utils import globals_utils as g
 from utils import roi_classification as rc
 from utils.file_utils import write_json
-from utils.movie_utils import get_mean_images
 from utils.paths_utils import PathKind, path_for
 
 FOV_PERCENTILES = (0.5, 99.5)  # the contrast of the field of view
+FOV_IMAGES = {"neuron": PathKind.MC_NEURON_MEAN_IMAGE, "astro": PathKind.MC_ASTRO_MEAN_IMAGE}  # channel -> the saved mean image
 
 
 def _entry(roi: int, cell: int, stat, row: dict | None) -> dict:
@@ -118,17 +118,19 @@ def export_manual_labels(settings, exp: dict) -> dict:
     return {"exported": len(new), "records": len(merged), "experiments": len({record["experiment"] for record in merged}), "path": str(path)}
 
 
-def roi_fov_png(settings, exp: dict) -> bytes:
-    """The field of view of the ROI types tab: the saved mean image of the neuron channel, in the pixels of the Suite2p ROIs (full resolution), as a PNG."""
-    mc_dir = path_for(PathKind.MOTION_CORRECTED_DIR, exp["source_path"])
-    image_path = path_for(PathKind.MC_NEURON_MEAN_IMAGE, mc_dir)
+def roi_fov_png(settings, exp: dict, channel: str) -> bytes:
+    """The field of view as a PNG, for the pages that draw ROIs and clusters on it: the saved mean image of the `channel` ("neuron" or "astro") movie, in the pixels of the
+    Suite2p ROIs (full resolution). Raises ValueError for another channel and FileNotFoundError when the image is not saved."""
+    if channel not in FOV_IMAGES:
+        raise ValueError(f"Unknown channel {channel!r}: the field of view is the mean image of {' or '.join(FOV_IMAGES)}.")
+    image_path = path_for(FOV_IMAGES[channel], path_for(PathKind.MOTION_CORRECTED_DIR, exp["source_path"]))
     try:
         key = (str(image_path), int(image_path.stat().st_mtime_ns))
     except FileNotFoundError as exc:
-        raise FileNotFoundError("The mean image of the neuron channel is not saved yet (the motion correction step writes it): rerun motion correction.") from exc
+        raise FileNotFoundError(f"The mean image of the {channel} channel is not saved yet (the motion correction step writes it): rerun motion correction.") from exc
     png = caches.ROI_FOV_PNG.get(key)
     if png is None:
-        mean = np.asarray(get_mean_images(mc_dir, spatial_bin=1)[1], dtype=np.float32)
+        mean = np.asarray(np.load(image_path), dtype=np.float32)
         low, high = np.percentile(mean, FOV_PERCENTILES)
         buffer = io.BytesIO()
         Image.fromarray((np.clip((mean - low) / max(float(high - low), 1e-9), 0, 1) * 255).astype(np.uint8)).save(buffer, format="PNG")

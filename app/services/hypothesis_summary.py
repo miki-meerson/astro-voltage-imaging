@@ -8,14 +8,12 @@ import json
 import pandas as pd
 from scipy.stats import binomtest
 
-from app.db import experiment_repository, run_repository
-from app.services import caches, polarity
+from app.db import run_repository
+from app.services import caches
 from app.services.runs import default_sta_step, feeding_steps, hypothesis_for, run_dir, sta_steps
 from utils import globals_utils as g
-from utils.anatomy_summary import load_anatomy_summary
 from utils.file_utils import read_json
 from utils.hypotheses import hypothesis_name, sta_step
-from utils.movie_utils import read_frame_rate
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 
@@ -28,13 +26,18 @@ def completed_sta_run(settings, experiment_id: int, step: str) -> tuple[dict, st
     return run, sta_dir_of_run(run_dir(settings, int(run["id"]), bool(run["is_test"])))
 
 
+def tested_cells(rows: pd.DataFrame, used: dict) -> pd.DataFrame:
+    """The rows of the cells that were tested: not skipped, with at least the minimum number of spikes."""
+    return rows[(rows["n_peaks"] >= int(used["min_spikes_for_cluster"])) & (rows["status"].astype(str) != "skipped")]
+
+
 def _result_type_summary(rows: pd.DataFrame, used: dict) -> dict:
     """The numbers of one result type: `rows` = the summary csv rows of that spike group (one per cell), `used` = the parameters the job used."""
     min_spikes = int(used["min_spikes_for_cluster"])
     alpha = float(used["cluster_alpha"])
     skipped = rows["status"].astype(str) == "skipped"
     enough = rows["n_peaks"] >= min_spikes
-    tested = rows[enough & ~skipped]
+    tested = tested_cells(rows, used)
     n_sig = int((tested["n_significant_clusters"].fillna(0) > 0).sum())
     result = {
         "cells_in_run": int(len(rows)), "cells_tested": int(len(tested)), "cells_few_spikes": int((~enough).sum()), "cells_skipped": int(skipped.sum()),
@@ -134,27 +137,3 @@ def cell_table(settings, experiment_id: int, step: str) -> dict:
     result = {"run_id": int(run["id"]), "cells": cells}
     caches.STA_CELL_TABLE.put(key, result)
     return result
-
-
-def anatomy_cluster_summary(settings, experiment_id: int, step: str | None = None) -> dict:
-    """The saved summary of the latest completed run of an STA step (default: the default hypothesis), with polarity labels, neuron ids and the
-    real-vs-fake group test when a cluster job has made it."""
-    step = step or default_sta_step()
-    if hypothesis_for(step).pool_cells:
-        return {"available": False, "message": "The anatomy clusters view lists the clusters of single cells: a pooled hypothesis has one result for the whole experiment."}
-    run, sta_dir = completed_sta_run(settings, experiment_id, step)
-    saved = load_anatomy_summary(sta_dir, run_label=int(run["id"]))
-    if saved["warning"]:
-        return {"available": False, "message": saved["warning"]}
-    db_ids = experiment_repository.neuron_ids_by_cell(settings, int(experiment_id))
-    clusters = [dict(c, sign=polarity.polarity_from_sign(str(c.get("sign", ""))), neuron_id=db_ids.get(int(c["cell"]))) for c in saved["clusters"]]
-    payload = {
-        "available": True, "run_id": int(run["id"]), "cells": saved["cells"], "clusters": clusters,
-        "fps": read_frame_rate(experiment_repository.experiment_source_path(settings, int(experiment_id))),  # the times of the clusters are frames
-        "tested_window": read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA run parameters")["analysis_window"],
-        "counts": saved["counts"], "excluded": saved["excluded"],
-    }
-    group_test = read_json(path_for(PathKind.GROUP_TEST, sta_dir), "The real-vs-fake group test", default=None)  # a separate cluster job: shown when it has run
-    if group_test is not None:
-        payload["group_test"] = group_test
-    return payload
