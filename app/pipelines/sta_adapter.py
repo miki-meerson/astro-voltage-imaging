@@ -124,8 +124,8 @@ def _submit_group_test(out: Path, source_home: Path, params: dict, sta_job_id: s
     only prints a warning: the STA job is already submitted and does not depend on it. Returns the job id, or None."""
     if not params.get("run_group_test_after_sta", True):
         return None
-    if g.ANATOMY_GROUP not in _result_types(params):
-        print("Group test not submitted: this run has no 'anatomy' result type.")
+    if params.get("pool_cells") or g.ANATOMY_GROUP not in _result_types(params):
+        print("Group test not submitted: this run has no 'anatomy' result type" + (" (a pooled hypothesis makes only the 'all' one)." if params.get("pool_cells") else "."))
         return None
     script = path_for(PathKind.GROUP_TEST_JOB_SCRIPT, PROJECT_ROOT)
     if not script.exists():

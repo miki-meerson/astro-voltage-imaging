@@ -6,7 +6,7 @@ from io import BytesIO
 from flask import jsonify, render_template, request, send_file
 
 from app.db import neuron_repository
-from app.services.cell_views import cell_movie_files, sta_crop_stack_payload
+from app.services.cell_views import cell_movie_files, sta_all_stack_payload, sta_crop_stack_payload
 from app.services.hypothesis_summary import chosen_step
 from app.services.runs import run_dir
 from app.services.spikes import (
@@ -42,7 +42,10 @@ def neuron_anatomy_crop_stack(neuron_id):
     settings = get_settings()
     try:
         files = cell_movie_files(settings, neuron_id, _step())
-        payload = sta_crop_stack_payload(files.movie_tif, files.anatomy_npz, files.source_path, files.pipeline_neuron_id)
+        if request.args.get("type", g.ANATOMY_GROUP) == g.ALL_GROUP:  # ?type=all: the whole-field STA movie of the 'all' result; the default is the anatomy crop
+            payload = sta_all_stack_payload(files.all_npz, files.source_path, files.pipeline_neuron_id)
+        else:
+            payload = sta_crop_stack_payload(files.movie_tif, files.anatomy_npz, files.source_path, files.pipeline_neuron_id)
         return send_file(BytesIO(payload), mimetype="application/octet-stream", max_age=300)
     except FileNotFoundError as exc:  # a saved file is missing: the text says which step writes it
         return jsonify({"error": str(exc)}), 404

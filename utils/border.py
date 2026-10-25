@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from utils.file_utils import read_json
-from utils.motion_diagnostics import align_shifts_to_analysed_frames, load_shifts
+from utils.motion_diagnostics import align_shifts_to_analysed_frames, load_patch_extent, load_shifts
 from utils.paths_utils import PathKind, path_for
 from utils.qc_utils import read_trimmed_frames
 
@@ -25,9 +25,11 @@ def read_bad_segments(experiment_dir: str | Path) -> list:
     return read_json(path_for(PathKind.BAD_SEGMENTS, experiment_dir), "The bad-segments file", default=[])
 
 
-def analysed_shifts(experiment_dir: str | Path, n_frames: int) -> np.ndarray:
+def analysed_shifts(experiment_dir: str | Path, n_frames: int, with_patches: bool = False) -> np.ndarray:
     """The applied registration shifts (dy, dx) of the analysed frames, shape (n_frames, 2).
 
+    with_patches: for the border. After a non-rigid motion correction every patch moved by its own shift, so the rows are instead the extremes over the patches,
+    (dy max, dx max) of every frame followed by (dy min, dx min) of every frame, shape (2 * n_frames, 2); a rigid correction gives its shifts as above.
     Raises FileNotFoundError when the experiment has no shifts file and ValueError when no reading of it (see align_shifts_to_analysed_frames)
     gives `n_frames` rows."""
     path = path_for(PathKind.MC_SHIFTS, experiment_dir)
@@ -38,7 +40,11 @@ def analysed_shifts(experiment_dir: str | Path, n_frames: int) -> np.ndarray:
     aligned = align_shifts_to_analysed_frames(shifts, int(n_frames), trimmed, bad)
     if aligned is None:
         raise ValueError(f"The shifts file has {len(shifts)} rows but {n_frames} frames are analysed (photobleaching trimmed {trimmed}, bad segments {bad}): the shifts cannot be matched to the frames.")
-    return aligned
+    extent = load_patch_extent(path) if with_patches else None
+    if extent is None:
+        return aligned
+    extent = align_shifts_to_analysed_frames(extent, int(n_frames), trimmed, bad)
+    return np.concatenate([extent[:, [0, 2]], extent[:, [1, 3]]])
 
 
 def border_margins_px(shifts: np.ndarray, extra_px: int = INTERPOLATION_PX) -> tuple[int, int, int, int]:

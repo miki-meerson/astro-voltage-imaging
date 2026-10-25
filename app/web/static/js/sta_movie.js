@@ -155,7 +155,7 @@
     groupsCv.width = Math.round(w * dpr); groupsCv.height = Math.round(h * dpr);
     const ctx = groupsCv.getContext("2d"); ctx.scale(dpr, dpr);
     const note = $("smv-groups-note");
-    if (!G.groups.length) { ctx.fillStyle = "#9aa8b7"; ctx.font = "12px sans-serif"; ctx.fillText("No significant anatomy cluster for this cell, so there is nothing to compare.", 10, h / 2); note.textContent = ""; return; }
+    if (!G.groups.length) { ctx.fillStyle = "#9aa8b7"; ctx.font = "12px sans-serif"; ctx.fillText(`No significant ${M.result_type} cluster for this cell, so there is nothing to compare.`, 10, h / 2); note.textContent = ""; return; }
     const T = M.frames, L = 40, X = f => L + (f / Math.max(1, T - 1)) * (w - L - 8);
     const all = []; G.groups.forEach(g => { all.push(...g.s.trace); if (g.band) all.push(...g.band.lo, ...g.band.hi); }); if (G.other) all.push(...G.other.trace);
     let lo = Math.min(...all, 0), hi = Math.max(...all, 0); const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
@@ -196,7 +196,7 @@
     info.style.color = tags.length ? COL.neuron : "";
     info.style.fontWeight = tags.length ? "700" : "";
     readout.textContent = `frame ${frame + 1}/${M.frames} | ${fmtSec(rel(frame))} s (${fmtRel(rel(frame))} frames)` +
-      (M.anatomy_clusters.length ? ` | ${M.anatomy_clusters.length} anatomy cluster${M.anatomy_clusters.length > 1 ? "s" : ""}` : " | no significant anatomy cluster");
+      (M.anatomy_clusters.length ? ` | ${M.anatomy_clusters.length} ${M.result_type} cluster${M.anatomy_clusters.length > 1 ? "s" : ""}` : ` | no significant ${M.result_type} cluster`);
   }
   function stop() { clearInterval(timer); timer = null; play.textContent = "Play"; }
   play.addEventListener("click", () => {
@@ -219,7 +219,11 @@
   trace.addEventListener("pointerup", () => { scrubbing = false; });
   window.addEventListener("resize", () => { if (M) { drawTrace(); drawGroups(); } });
 
-  fetch(`/neurons/${NEURON_ID}/anatomy-crop/stack?h=${encodeURIComponent(HYPOTHESIS)}`)
+  const typeSelect = $("smv-type");
+  function load(type) {  // the movie of one result type: anatomy (the crop around the cell) or all (the whole field)
+    stop();
+    info.textContent = "Loading...";
+    fetch(`/neurons/${NEURON_ID}/anatomy-crop/stack?h=${encodeURIComponent(HYPOTHESIS)}&type=${encodeURIComponent(type)}`)
     .then(async res => {
       if (!res.ok) { let m = `Movie unavailable (${res.status})`; try { m = (await res.json()).error || m; } catch (_) {} throw new Error(m); }
       return res.arrayBuffer();
@@ -242,4 +246,6 @@
       setTimeout(() => { if (G) { G.groups.forEach(g => { g.band = randomBand(g); }); drawGroups(); } }, 30);  // reference band after first paint
     })
     .catch(err => { info.textContent = err.message || "Movie unavailable"; });
+  }
+  if (typeSelect) { typeSelect.addEventListener("change", () => load(typeSelect.value)); load(typeSelect.value); } else load("anatomy");
 })();

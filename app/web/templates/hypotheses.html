@@ -37,7 +37,12 @@
             {% if analysis_ready and s.status not in ("running", "pending", "waiting", "queued") %}<div><button class="secondary small" type="submit" form="run-analysis-form" name="hypothesis" value="{{ s.name }}">{{ "Rerun" if s.status != "not_run" else "Run" }}</button></div>{% endif %}
           </td>
           {% endif %}
-          {% if r %}
+          {% if r and r.pooled %}
+          <td>{{ name }}</td>
+          <td colspan="3" class="muted">one test for the whole experiment: {{ r.spikes }} spikes of all cells pooled{% if r.motion == "motion_suspected" %} <span title="the pooled spikes line up with image motion">(motion?)</span>{% endif %}</td>
+          <td class="num">{{ r.significant_clusters }} of {{ r.clusters }} clusters</td>
+          <td class="num">&ndash;</td><td class="num">&ndash;</td>
+          {% elif r %}
           <td>{{ name }}</td>
           <td class="num">{{ r.cells_tested }}</td>
           <td class="num">{{ r.cells_few_spikes }}</td>

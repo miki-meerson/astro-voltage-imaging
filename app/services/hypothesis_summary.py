@@ -48,12 +48,23 @@ def _result_type_summary(rows: pd.DataFrame, used: dict) -> dict:
     return result
 
 
+def _pooled_summary(rows: pd.DataFrame) -> dict:
+    """The one test of a pooled hypothesis (all cells' spikes as one list of events): {pooled, spikes, clusters, significant_clusters, motion, motion_p}."""
+    row = rows.iloc[0]
+    return {
+        "pooled": True, "spikes": int(row["n_peaks"]), "clusters": int(row["n_clusters"]), "significant_clusters": int(row["n_significant_clusters"]),
+        "motion": str(row[g.MOTION_STATUS_COLUMN]) if g.MOTION_STATUS_COLUMN in rows else g.MOTION_NOT_TESTED,
+        "motion_p": float(row["motion_p"]) if "motion_p" in rows and pd.notna(row["motion_p"]) else None,
+    }
+
+
 def hypothesis_results(settings, experiment_id: int, step: str) -> dict:
     """The numbers of the newest completed run of one hypothesis: {run_id, result_types: {name: numbers}, group_test (when the group test job has run)}."""
     run, sta_dir = completed_sta_run(settings, experiment_id, step)
     table = pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta_dir))
     used = read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA used-parameters file", missing=missing_output_message("The used-parameters file", run["id"]))  # what the job really used
-    results = {str(name): _result_type_summary(rows, used) for name, rows in table.groupby(table["spike_group"].astype(str))}
+    pooled = hypothesis_for(step).pool_cells
+    results = {str(name): _pooled_summary(rows) if pooled else _result_type_summary(rows, used) for name, rows in table.groupby(table["spike_group"].astype(str))}
     group_test = read_json(path_for(PathKind.GROUP_TEST, sta_dir), "The real-vs-fake group test", default=None)
     return {"run_id": int(run["id"]), "result_types": results, "group_test": group_test}
 
@@ -70,7 +81,7 @@ def hypothesis_status(settings, experiment_id: int, step: str) -> dict:
     hypothesis = hypothesis_for(step)
     newest = run_repository.latest_run(settings, int(experiment_id), step, status=None)
     waits_for = waiting_for(settings, experiment_id, newest) if newest and newest["status"] == "waiting" else []
-    return {"name": hypothesis.name, "step": step, "description": hypothesis.description, "settings": hypothesis.settings(),
+    return {"name": hypothesis.name, "step": step, "description": hypothesis.description, "settings": hypothesis.settings(), "pool_cells": hypothesis.pool_cells,
             "status": newest["status"] if newest else "not_run", "run_id": int(newest["id"]) if newest else None, "waiting_for": waits_for}
 
 
@@ -128,7 +139,10 @@ def cell_table(settings, experiment_id: int, step: str) -> dict:
 def anatomy_cluster_summary(settings, experiment_id: int, step: str | None = None) -> dict:
     """The saved summary of the latest completed run of an STA step (default: the default hypothesis), with polarity labels, neuron ids and the
     real-vs-fake group test when a cluster job has made it."""
-    run, sta_dir = completed_sta_run(settings, experiment_id, step or default_sta_step())
+    step = step or default_sta_step()
+    if hypothesis_for(step).pool_cells:
+        return {"available": False, "message": "The anatomy clusters view lists the clusters of single cells: a pooled hypothesis has one result for the whole experiment."}
+    run, sta_dir = completed_sta_run(settings, experiment_id, step)
     saved = load_anatomy_summary(sta_dir, run_label=int(run["id"]))
     if saved["warning"]:
         return {"available": False, "message": saved["warning"]}

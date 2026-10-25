@@ -23,6 +23,7 @@ import cv2
 
 from utils import globals_utils as g
 from utils.file_utils import make_shared_dir
+from utils.motion_diagnostics import patch_shift_summary
 from utils.movie_utils import cast_movie_for_tiff_save, get_signed_movie_dtype, read_frame_rate
 from utils.paths_utils import PathKind, channel_file_name, path_for
 
@@ -44,6 +45,7 @@ FRAME_RATE = "frame_rate"
 MEAN_XY_SHIFT = "mean_xy_shift"
 MAX_SHIFT = "max_shift"
 STD_SHIFT = "std_shift"
+PATCH_SPREAD = "max_patch_spread"  # non-rigid runs only
 CAIMAN_WORKSPACE_DIR = "_caiman_workspace"  # scratch folder inside motion_corrected/, removed after each run
 
 ##### GUI params extraction functions #####
@@ -123,7 +125,10 @@ def prepare_unique_motion_input(video_path, workspace_dir):
     return unique_input_path
 
 
-def run_motion_correction(video_path, mc_params, workspace_root):
+def run_motion_correction(video_path, mc_params, workspace_root, apply_to_path=None):
+    """Motion-correct the movie at `video_path`; returns (movie, shifts (frames, 2) = (dy, dx), patch extent (frames, 4) or None, mean image, the movie at `apply_to_path`
+    corrected the same way or None). A rigid correction has one shift per frame, and the caller applies it to the other channel. A non-rigid one (pw_rigid) moves every patch by
+    its own shift: `shifts` is their average per frame, the extent their extremes, and the other channel is corrected here with CaImAn from the same patch shifts."""
     def set_mc_parameters(video_path, mc_dict):
         opts_dict = mc_dict
         opts_dict["fnames"] = video_path
@@ -172,7 +177,13 @@ def run_motion_correction(video_path, mc_params, workspace_root):
             del movie_mmap
 
             mean_img = mean_image(mmap_path, window=1000, dview=dview)
-            return movie, mc.shifts_rig, mean_img
+            if not mc_params[PW_RIGID]:
+                return movie, mc.shifts_rig, None, mean_img, None
+            shifts, extent = patch_shift_summary(mc.x_shifts_els, mc.y_shifts_els)
+            other = None
+            if apply_to_path is not None:
+                other = np.asarray(mc.apply_shifts_movie(prepare_unique_motion_input(apply_to_path, workspace_dir), rigid_shifts=False), dtype=np.float32)
+            return movie, shifts, extent, mean_img, other
         finally:
             try:
                 cm.stop_server(dview=dview)
@@ -230,13 +241,16 @@ def save_corrected_movie(movie, home_dir, mean_image, target_dtype, channel_name
     np.save(_mc_file(home_dir, channel_name, g.MEAN_IMAGE_FILE), np.array(mean_image.tolist()))
     # TODO free memory (memmap)
 
-def save_mc_shifts(home_dir, shifts_mat):
+def save_mc_shifts(home_dir, shifts_mat, patch_extent=None):
     shifts_path = path_for(PathKind.MC_SHIFTS, home_dir)
     make_shared_dir(shifts_path.parent)
-    savemat(str(shifts_path), {g.MOTION_SHIFTS_MAT_KEY: shifts_mat})
+    saved = {g.MOTION_SHIFTS_MAT_KEY: shifts_mat}
+    if patch_extent is not None:
+        saved[g.MOTION_PATCH_EXTENT_MAT_KEY] = patch_extent
+    savemat(str(shifts_path), saved)
 
 
-def save_motion_qc_metrics(home_dir, shifts_mat):
+def save_motion_qc_metrics(home_dir, shifts_mat, patch_extent=None):
     make_shared_dir(path_for(PathKind.QC_DIR, home_dir))
 
     shifts_arr = np.asarray(shifts_mat, dtype=np.float32)
@@ -246,6 +260,8 @@ def save_motion_qc_metrics(home_dir, shifts_mat):
         MAX_SHIFT: float(np.max(shift_mag)),
         STD_SHIFT: float(np.std(shift_mag))
     }
+    if patch_extent is not None:  # non-rigid: how far the patches of a frame move apart, the largest difference between two patches of one frame
+        qc_metrics[PATCH_SPREAD] = float(max((patch_extent[:, 0] - patch_extent[:, 1]).max(), (patch_extent[:, 2] - patch_extent[:, 3]).max()))
 
     qc_path = path_for(PathKind.QC_FILE, home_dir, name=g.MC_QC_FILE)
     with open(qc_path, "w") as fp:
@@ -265,20 +281,28 @@ def main(args):
     split_astro_path = path_for(PathKind.SPLIT_ASTRO_MOVIE, home_dir)
     split_neuron_path = path_for(PathKind.SPLIT_NEURON_MOVIE, home_dir)
 
-    mc_neuron, shifts_neuron, mean_image_neuron = run_motion_correction(
+    non_rigid = bool(mc_params[PW_RIGID])
+    print("Non-rigid (piecewise rigid) motion correction" if non_rigid else "Rigid motion correction")
+    mc_neuron, shifts_neuron, patch_extent, mean_image_neuron, mc_astro = run_motion_correction(
         split_neuron_path,
         mc_params,
         mc_workspace_root,
+        apply_to_path=split_astro_path if non_rigid else None,
     )
     print("Motion correction applied to neuron movie")
     save_corrected_movie(mc_neuron, home_dir, mean_image_neuron, target_dtype, channel_name="neuron")
     del mc_neuron, mean_image_neuron
     gc.collect()
 
-    apply_reg_shifts_and_save_movie(split_astro_path, shifts_neuron, home_dir, target_dtype, channel_name="astro")
+    if non_rigid:
+        save_corrected_movie(mc_astro, home_dir, mc_astro.mean(axis=0), target_dtype, channel_name="astro")
+        del mc_astro
+        gc.collect()
+    else:
+        apply_reg_shifts_and_save_movie(split_astro_path, shifts_neuron, home_dir, target_dtype, channel_name="astro")
     print("Motion correction applied to astrocyte movie")
-    save_mc_shifts(home_dir, shifts_neuron)
-    save_motion_qc_metrics(home_dir, shifts_neuron)
+    save_mc_shifts(home_dir, shifts_neuron, patch_extent)
+    save_motion_qc_metrics(home_dir, shifts_neuron, patch_extent)
 
     print(g.STEP_COMPLETED_MESSAGE)
 

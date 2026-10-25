@@ -8,9 +8,13 @@
     <p class="muted small">Runs on the cluster step by step: split channels, motion correction, photobleaching correction.</p>
     <p><span class="chip {{ exp.preprocessing_review_state }}">{{ exp.preprocessing_review_state }}</span></p>
     <div class="toolbar">
-      {% if exp.workflow_stage in ["preprocessing_pending", "preprocessing_running"] %}
-      <form method="post" action="/experiments/{{ exp.id }}/preprocessing/run"><button>Run preprocessing</button></form>
-      {% endif %}
+      <form method="post" action="/experiments/{{ exp.id }}/preprocessing/run" class="toolbar"{% if past_preprocessing %} onsubmit="return confirm('Process this experiment again? Its app data is deleted (runs, cells, spike edits and reviews), the motion-corrected and photobleaching-corrected movies in the experiment folder are replaced, and Suite2p has to be run again by hand on the new movies.');"{% endif %}>
+        <select name="pw_rigid" aria-label="Motion correction mode" title="Rigid: one shift per frame. Non-rigid: the field is cut into patches that each move by their own shift, for tissue that deforms. The astro movie follows the same patch shifts.">
+          <option value="0"{% if not default_pw_rigid %} selected{% endif %}>Rigid motion correction</option>
+          <option value="1"{% if default_pw_rigid %} selected{% endif %}>Non-rigid (patches) motion correction</option>
+        </select>
+        <button{% if past_preprocessing %} class="danger"{% endif %}>{% if past_preprocessing %}Process again{% else %}Run preprocessing{% endif %}</button>
+      </form>
       {% if exp.workflow_stage == "preprocessing_review" %}
       <form method="post" action="/experiments/{{ exp.id }}/preprocessing/confirm"><button>Confirm preprocessing</button></form>
       {% endif %}
@@ -59,6 +63,12 @@
           <td>
             {% if step.step_name in known_steps and step.status in ["completed", "failed", "cancelled", "blocked"] and not active %}
             <form method="post" action="/experiments/{{ exp.id }}/preprocessing/steps/{{ step.step_name }}/rerun" class="toolbar">
+              {% if step.step_name == "motion_correction" %}
+              <select name="pw_rigid" aria-label="Motion correction mode" title="Rigid: one shift per frame. Non-rigid: the field is cut into patches (strides and overlaps in the preprocessing settings) that each move by their own shift, for tissue that deforms. The astro movie follows the same patch shifts.">
+                <option value="0"{% if not preprocessing_params.get('pw_rigid') %} selected{% endif %}>Rigid</option>
+                <option value="1"{% if preprocessing_params.get('pw_rigid') %} selected{% endif %}>Non-rigid (patches)</option>
+              </select>
+              {% endif %}
               {% if step.step_name == "photobleaching_correction" %}
               <input type="number" name="trimmed" min="0" step="1" value="{{ preprocessing_params.get('trimmed', 0) }}" style="max-width:110px" aria-label="Trimmed frames">
               {% endif %}

@@ -5,7 +5,7 @@ from flask import jsonify, redirect, render_template, request, send_file, url_fo
 
 from app.db import preprocessing_repository as repo
 from app.services import caches
-from app.services.experiments import confirm_preprocessing, confirm_suite2p
+from app.services.experiments import PAST_PREPROCESSING, confirm_preprocessing, confirm_suite2p, start_preprocessing
 from app.services.movies import (
     mean_intensity_payload,
     PB_KINDS,
@@ -13,7 +13,6 @@ from app.services.movies import (
 )
 from app.services.preprocessing import PREPROCESSING_STEPS, latest_preprocessing_params, rerun_preprocessing_step
 from app.services.run_views import run_view
-from app.services.runs import create_run, launch_run
 from app.services.workspace import page_data
 from app.web.common import FlatBlueprint, get_settings
 from utils import globals_utils as g
@@ -44,6 +43,8 @@ def experiment_preprocessing(experiment_id):
         pb_review_available=pb_available or any(plot["available"] for plot in pb_qc_plots),
         pb_qc_plots=pb_qc_plots,
         preprocessing_params=latest_preprocessing_params(settings, experiment_id),
+        past_preprocessing=data["exp"]["workflow_stage"] in PAST_PREPROCESSING,
+        default_pw_rigid=bool(settings.defaults.get(g.PREPROCESSING_STEP, {}).get("pw_rigid", False)),
         known_steps=PREPROCESSING_STEPS,
         notice=request.args.get("notice"),
     )
@@ -53,8 +54,10 @@ def experiment_preprocessing(experiment_id):
 def run_preprocessing(experiment_id):
     settings = get_settings()
     try:
-        rid = create_run(settings, experiment_id, g.PREPROCESSING_STEP, settings.defaults.get(g.PREPROCESSING_STEP, {}), backend="cluster")
-        launch_run(settings, rid)
+        params = {"pw_rigid": request.form["pw_rigid"] == "1"} if request.form.get("pw_rigid") in {"0", "1"} else {}
+        rid = start_preprocessing(settings, experiment_id, params)
+        caches.clear_experiment_result_caches()  # the movies and the results made from them are about to change
+        caches.MEAN_INTENSITY.clear()
         return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, new_run=rid))
     except Exception as exc:
         return render_template("error.html", title="Preprocessing Failed", message=str(exc)), 400
@@ -67,6 +70,8 @@ def rerun_preprocessing_step_route(experiment_id, step_name):
         extra_params = {}
         if step_name == "photobleaching_correction" and request.form.get("trimmed") not in {None, ""}:
             extra_params["trimmed"] = int(request.form["trimmed"])
+        if step_name == "motion_correction" and request.form.get("pw_rigid") in {"0", "1"}:
+            extra_params["pw_rigid"] = request.form["pw_rigid"] == "1"
         rerun_preprocessing_step(settings, experiment_id, step_name, extra_params=extra_params)
         return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, notice=f"rerun_{step_name}"))
     except Exception as exc:

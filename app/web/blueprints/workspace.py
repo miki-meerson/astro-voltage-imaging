@@ -11,10 +11,11 @@ from flask import redirect, render_template, request, url_for
 from app.db import experiment_repository as repo
 from app.db import neuron_repository
 from app.db.run_repository import latest_run
+from app.services.cell_views import pooled_row
 from app.services.experiments import start_spike_detection
 from app.services.hypothesis_summary import cell_table, chosen_step, hypothesis_status, hypothesis_summaries, waiting_for
 from app.services.run_views import build_validation_rows, run_view, validation_all_ok
-from app.services.runs import STA_RESULT_TYPES, sta_steps
+from app.services.runs import STA_RESULT_TYPES, hypothesis_for, sta_steps
 from app.services.spikes import current_suite2p_neurons, experiment_spike_review, spikes_edited_after_sta
 from app.services.visualizations import cell_motion, cell_result_cards
 from app.services.workspace import page_data
@@ -118,23 +119,28 @@ def experiment_cells(experiment_id):
     except ValueError as exc:
         return render_template("error.html", title="Unknown Hypothesis", message=str(exc)), 400
     cells, table, message = _cell_list(settings, experiment_id, step, request.args)
-    wanted = request.args.get("cell", type=int)
+    pooled = hypothesis_for(step).pool_cells  # one result for the whole experiment: the only "cell" of the list is the pooled one
+    wanted = g.POOLED_CELL_ID if pooled else request.args.get("cell", type=int)
+    if pooled and table is not None:
+        cells = [{"id": None, "cell": g.POOLED_CELL_ID, **table["cells"].get(g.POOLED_CELL_ID, {})}]
     selected = next((cell for cell in cells if cell["cell"] == wanted), None) if table is not None else None
     sta_run, stale, cards, motion, motion_message = latest_run(settings, experiment_id, step), None, [], None, ""
     spike_run = latest_run(settings, experiment_id, g.SPIKE_STEP)
     if selected is not None:
-        edited = spikes_edited_after_sta(settings, spike_run, sta_run, selected["cell"])
+        edited = None if pooled else spikes_edited_after_sta(settings, spike_run, sta_run, selected["cell"])
         stale = f"The spikes of this cell were edited on {edited:%Y-%m-%d %H:%M}, after this run started: the results used the old spikes. Rerun this hypothesis." if edited else None
+        row = pooled_row(settings, experiment_id) if pooled else neuron_repository.neuron_row(settings, selected["id"])
         try:
-            cards = cell_result_cards(settings, neuron_repository.neuron_row(settings, selected["id"]), step)
+            cards = cell_result_cards(settings, row, step)
         except FileNotFoundError as exc:
             message = str(exc)
         try:
-            motion = cell_motion(settings, neuron_repository.neuron_row(settings, selected["id"]), step)
+            motion = cell_motion(settings, row, step)
         except FileNotFoundError as exc:  # the cards can exist without the motion test (an older run): say so next to the test
             motion_message = str(exc)
+    map_base = f"/experiments/{experiment_id}/pooled-sta-map.png?h={hypothesis_name(step)}&type=" if pooled else (f"/neurons/{selected['id']}/sta-map.png?h={hypothesis_name(step)}&type=" if selected else "")
     return render_template("cells.html", **data, hypotheses=[hypothesis_name(s) for s in sta_steps()], selected_hypothesis=hypothesis_name(step), cells=cells, message=message,
-                           selected=selected, sta_run=sta_run, stale=stale, cards=cards, motion=motion, motion_message=motion_message, only_significant=request.args.get("significant") == "1", only_anatomy=request.args.get("anatomy") == "1")
+                           selected=selected, pooled=pooled, map_base=map_base, sta_run=sta_run, stale=stale, cards=cards, motion=motion, motion_message=motion_message, only_significant=request.args.get("significant") == "1", only_anatomy=request.args.get("anatomy") == "1")
 
 
 @bp.get("/experiments/<int:experiment_id>/runs")

@@ -22,7 +22,7 @@ STATISTICS = ("baseline_subtracted",)  # the statistics the STA job can compute 
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,31}$")  # safe in file names, step names and urls
 WINDOW_SETTINGS = ("baseline_window_seconds", "tested_window_seconds")
 NUMBER_SETTINGS = ("pre_seconds", "post_seconds", "silence_before_seconds", "silence_after_seconds", "time_bin_seconds")
-SETTINGS = ("name", "description", *NUMBER_SETTINGS, *WINDOW_SETTINGS, "statistic")
+SETTINGS = ("name", "description", *NUMBER_SETTINGS, *WINDOW_SETTINGS, "statistic", "pool_cells")
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,7 @@ class Hypothesis:
     silence_after_seconds: float  # ... and none this close after it (0 = no condition); the random frames follow the same rule
     time_bin_seconds: float  # the tested window is averaged in bins of this length (0 = every frame is tested)
     statistic: str
+    pool_cells: bool  # true: the spikes of all cells are pooled into one list of events and tested once for the whole experiment, not once per cell
 
     def settings(self) -> dict:
         """The settings as stored with a run (plain numbers and lists)."""
@@ -66,10 +67,11 @@ class Hypothesis:
             "silence_after_seconds": self.silence_after_seconds,
             "time_bin_seconds": self.time_bin_seconds,
             "statistic": self.statistic,
+            "pool_cells": self.pool_cells,
         }
 
 
-RUN_SETTINGS = ("hypothesis", *NUMBER_SETTINGS, *WINDOW_SETTINGS, "statistic")  # the keys of Hypothesis.settings(), as stored in a run's parameters
+RUN_SETTINGS = ("hypothesis", *NUMBER_SETTINGS, *WINDOW_SETTINGS, "statistic", "pool_cells")  # the keys of Hypothesis.settings(), as stored in a run's parameters
 
 
 def run_settings(params: dict) -> dict:
@@ -157,10 +159,11 @@ def _hypothesis(entry: object, index: int, source: Path) -> Hypothesis:
         (isinstance(name, str) and bool(NAME_PATTERN.match(name)),
          f"the name {name!r} must be lower case letters, digits and underscores, starting with a letter (at most 32 characters)"),
         (entry["statistic"] in STATISTICS, f"unknown statistic {entry['statistic']!r}. Available: {', '.join(STATISTICS)}"),
+        (isinstance(entry["pool_cells"], bool), f"pool_cells must be true or false, got {entry['pool_cells']!r}"),
     ])
     where = f"{source.name}, hypothesis {entry['name']}"
     hypothesis = Hypothesis(
-        name=entry["name"], description=str(entry["description"]).strip(), statistic=entry["statistic"],
+        name=entry["name"], description=str(entry["description"]).strip(), statistic=entry["statistic"], pool_cells=entry["pool_cells"],
         **{key: _number(entry, key, where) for key in NUMBER_SETTINGS}, **{key: _window(entry, key, where) for key in WINDOW_SETTINGS},
     )
     saved = Window(-hypothesis.pre_seconds, hypothesis.post_seconds)

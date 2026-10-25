@@ -23,6 +23,7 @@ HYPOTHESIS_DIR_TEMPLATE = "{hypothesis}"
 STA_ALGORITHM_HOME_DIR = "sta_algorithm_home"
 STA_ANALYSIS_DIR = "sta-analysis"
 CELL_DIR_TEMPLATE = "cell_{cell}"
+POOLED_CELL_ID = -1  # the cell id of the one result of a pooled hypothesis (the spikes of all cells as one list of events): its folder is cell_-1
 CELL_DIR_GLOB = "cell_*"
 CELL_DIR_PREFIX = "cell_"
 
@@ -107,6 +108,7 @@ NEURON_MEAN_IMAGE_FILE = "neuron_mean_image.npy"
 MOTION_SHIFTS_DIR = "shifts"  # <experiment>/pipeline_results/motion_corrected/shifts/
 MOTION_SHIFTS_FILE = "motion_corrected_shifts.mat"
 MOTION_SHIFTS_MAT_KEY = "motion_corrected_shifts"  # the variable inside that .mat file
+MOTION_PATCH_EXTENT_MAT_KEY = "motion_corrected_patch_extent"  # a non-rigid run only: per frame (dy max, dy min, dx max, dx min) over the patches, in the same file
 BINNED_ASTRO_MOVIE_TEMPLATE = "astro_photobleaching_corrected_gevi_flipped_bin{bin}.npy"  # <experiment>/pipeline_results/pb_corrected/ (cache of the STA job)
 BEHAVIORAL_BINNED_MOVIE_TEMPLATE = "astro_photobleaching_corrected_gevi_flipped_behavioral_{group}_bin{bin}.npy"  # <run>/sta-analysis/
 BEHAVIORAL_BINNED_FRAMES_TEMPLATE = "astro_photobleaching_corrected_gevi_flipped_behavioral_{group}_bin{bin}.frames.npy"

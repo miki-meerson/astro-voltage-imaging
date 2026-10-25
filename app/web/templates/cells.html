@@ -16,7 +16,7 @@
         <tbody>
           {% for cell in cells %}
           <tr{% if selected and selected.cell == cell.cell %} class="selected"{% endif %}>
-            <td><a href="{{ url_for('experiment_cells', experiment_id=exp.id, cell=cell.cell, **keep) }}">Cell {{ cell.cell }}</a></td>
+            <td><a href="{{ url_for('experiment_cells', experiment_id=exp.id, cell=cell.cell, **keep) }}">{% if pooled %}All cells pooled{% else %}Cell {{ cell.cell }}{% endif %}</a></td>
             <td class="num">{{ cell.spikes if cell.spikes is defined else "" }}</td>
             <td>
               {% if cell.significant %}<span class="chip completed" title="a significant cluster in some result type">sig</span>{% endif %}
@@ -35,7 +35,7 @@
   <section class="panel" style="margin:0">
     <div class="panel-head">
       <div>
-        <h2>{% if selected %}Cell {{ selected.cell }}{% else %}Cell{% endif %}</h2>
+        <h2>{% if pooled %}All cells pooled{% elif selected %}Cell {{ selected.cell }}{% else %}Cell{% endif %}</h2>
         {% if sta_run %}<p class="muted small">Hypothesis <b>{{ selected_hypothesis }}</b>, run {{ sta_run.id }}</p>{% endif %}
       </div>
       <form method="get" class="toolbar">
@@ -47,7 +47,7 @@
             {% for name in hypotheses %}<option value="{{ name }}"{% if name == selected_hypothesis %} selected{% endif %}>{{ name }}</option>{% endfor %}
           </select>
         </label>
-        {% if selected %}<a class="button secondary" href="{{ url_for('experiment_spikes', experiment_id=exp.id, cell=selected.cell) }}">Edit spikes</a>{% endif %}
+        {% if selected and not pooled %}<a class="button secondary" href="{{ url_for('experiment_spikes', experiment_id=exp.id, cell=selected.cell) }}">Edit spikes</a>{% endif %}
       </form>
     </div>
 
@@ -82,7 +82,7 @@
           <b>{{ card.title }}</b>
           <span class="chip {{ 'completed' if card.n_significant else 'off' }}">{% if card.n_significant %}{{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% else %}no significant cluster{% endif %}</span>
         </div>
-        <img class="map" src="/neurons/{{ selected.id }}/sta-map.png?h={{ selected_hypothesis }}&type={{ card.result_type }}&run={{ sta_run.id }}" alt="Mean image of cell {{ selected.cell }} with the clusters of {{ card.title }}">
+        <img class="map" src="{{ map_base }}{{ card.result_type }}&run={{ sta_run.id }}" alt="Mean image of cell {{ selected.cell }} with the clusters of {{ card.title }}">
         <canvas class="result-plot" data-card="{{ loop.index0 }}"></canvas>
         <div class="cluster-list">
           {% for cluster in card.clusters %}
@@ -95,9 +95,21 @@
       {% endfor %}
     </div>
 
-    <h3 style="margin-top:24px">Cropped STA movie</h3>
+    {% if pooled %}
+    <p class="muted small">A pooled hypothesis tests the spikes of all cells together as one list of events: one result for the whole experiment, so there is no cell outline, no cropped movie and no single spike trace.</p>
+    {% else %}
+    <h3 style="margin-top:24px">STA movie</h3>
+    {% set movie_cards = cards | selectattr("result_type", "in", ["anatomy", "all"]) | list %}
+    {% set movie_default = (movie_cards | selectattr("n_significant") | sort(attribute="result_type", reverse=true) | first).result_type if (movie_cards | selectattr("n_significant") | list) else "anatomy" %}
     <section id="smv">
-      <p class="muted small">Anatomy result. Sign-corrected: brighter / red = <span class="sign dep">depolarization</span>, darker / blue = <span class="sign hyper">hyperpolarization</span> (the raw GEVI fluorescence goes the other way). <span id="smv-info"></span></p>
+      <div class="toolbar">
+        <label class="field">Result
+          <select id="smv-type" title="The movie of the result type: the crop around the cell (anatomy) or the whole field (all)">
+            {% for card in movie_cards | sort(attribute="result_type") %}<option value="{{ card.result_type }}"{% if card.result_type == movie_default %} selected{% endif %}>{% if card.result_type == "anatomy" %}Anatomy (crop around the cell){% else %}All (whole field){% endif %}{% if card.n_significant %}, {{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% endif %}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+      <p class="muted small">Sign-corrected: brighter / red = <span class="sign dep">depolarization</span>, darker / blue = <span class="sign hyper">hyperpolarization</span> (the raw GEVI fluorescence goes the other way). <span id="smv-info"></span></p>
       <div class="movie-layout">
         <div class="stack">
           <div class="zv" data-cap="0.75" style="--h:420px"><div class="smv-stage" id="smv-stage"><canvas id="smv-base"></canvas><canvas id="smv-ovl"></canvas></div></div>
@@ -122,15 +134,16 @@
             <canvas id="smv-trace" class="plot"></canvas>
           </div>
           <div>
-            <p class="muted small">Change from baseline: the pixels of the significant anatomy clusters (red = depolarizing, blue = hyperpolarizing) against all other pixels of the crop (grey); shaded: the 5th to 95th percentile of random patches of other pixels. <span id="smv-groups-note"></span></p>
+            <p class="muted small">Change from baseline: the pixels of the significant clusters (red = depolarizing, blue = hyperpolarizing) against all other pixels of the movie (grey); shaded: the 5th to 95th percentile of random patches of other pixels. <span id="smv-groups-note"></span></p>
             <canvas id="smv-groups" class="plot"></canvas>
           </div>
         </div>
       </div>
     </section>
+    {% endif %}
 
     <h3 style="margin-top:24px">Motion test</h3>
-    <p class="muted small">Are the spikes of this cell time-locked to image motion? Each plot is the average of one motion series around the spikes (the line) against what random frames give (grey band, &plusmn;2 sd). A red line (shown only when the cell is flagged) means that motion lines up with the spikes. The cell is flagged by one p-value, corrected for looking at 5 measures at once, from 2000 random-frame copies; when flagged, its clusters may be motion artifacts.</p>
+    <p class="muted small">Are {% if pooled %}the pooled spikes{% else %}the spikes of this cell{% endif %} time-locked to image motion? Each plot is the average of one motion series around the spikes (the line) against what random frames give (grey band, &plusmn;2 sd). A red line (shown only when the cell is flagged) means that motion lines up with the spikes. The cell is flagged by one p-value, corrected for looking at 5 measures at once, from 2000 random-frame copies; when flagged, its clusters may be motion artifacts.</p>
     {% if motion %}
     <script type="application/json" id="motion-data">{{ motion|tojson }}</script>
     <div class="callout {{ 'warn' if motion.verdict == 'flag' else 'info' }}">{{ motion.text }} <span class="muted small">({{ motion.n_peaks }} spikes used)</span></div>
@@ -150,11 +163,13 @@
     <div class="empty">{{ motion_message }}</div>
     {% endif %}
 
+    {% if not pooled %}
     <h3 style="margin-top:24px">Spikes of this cell</h3>
     <div class="spk-wrap">
       <button type="button" class="secondary spk-full" title="Full screen" onclick="var w=this.parentNode; document.fullscreenElement===w ? document.exitFullscreen() : w.requestFullscreen()">&#x26F6; Full screen</button>
       <canvas id="spike-preview-{{ selected.id }}" class="plot" data-neuron-id="{{ selected.id }}" style="height:240px"></canvas>
     </div>
+    {% endif %}
     {% endif %}
   </section>
 </div>
@@ -165,7 +180,9 @@
 <script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
 <script src="{{ url_for('static', filename='js/time_axis.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cell_results.js') }}"></script>
+{% if not pooled %}
 <script src="{{ url_for('static', filename='js/sta_movie.js') }}"></script>
 <script src="{{ url_for('static', filename='js/spike_preview.js') }}"></script>
+{% endif %}
 {% endif %}
 {% endblock %}

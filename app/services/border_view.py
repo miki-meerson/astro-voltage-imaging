@@ -26,7 +26,7 @@ def border_snippets(settings, experiment_id: int) -> dict:
     info = movie_info(path, fps, polarity.flip_for_kind("astro"))
     shifts = analysed_shifts(source, info["frames"])
     extra = int(settings.raw.get("defaults", {}).get("sta", {}).get("border_extra_px", INTERPOLATION_PX))
-    margins = dict(zip(("top", "bottom", "left", "right"), border_margins_px(shifts, extra)))
+    margins = dict(zip(("top", "bottom", "left", "right"), border_margins_px(analysed_shifts(source, info["frames"], with_patches=True), extra)))
     peak = int(np.argmax(np.hypot(shifts[:, 0], shifts[:, 1])))
     n_chunks = int(np.ceil(info["frames"] / CHUNK_FRAMES))
     first = int(np.clip((peak - CHUNK_FRAMES) // CHUNK_FRAMES, 0, max(0, n_chunks - SNIPPET_CHUNKS)))

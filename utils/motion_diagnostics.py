@@ -40,6 +40,24 @@ def load_shifts(shifts_path: str | Path) -> np.ndarray | None:
     return np.asarray(loadmat(path)[g.MOTION_SHIFTS_MAT_KEY], dtype=np.float32)
 
 
+def load_patch_extent(shifts_path: str | Path) -> np.ndarray | None:
+    """The per-frame extremes of the patch shifts (frames, 4) = (dy max, dy min, dx max, dx min) that a non-rigid motion correction saved next to the shifts;
+    None when the file is absent or the correction was rigid."""
+    path = Path(shifts_path)
+    if not path.exists():
+        return None
+    saved = loadmat(path)
+    return np.asarray(saved[g.MOTION_PATCH_EXTENT_MAT_KEY], dtype=np.float32) if g.MOTION_PATCH_EXTENT_MAT_KEY in saved else None
+
+
+def patch_shift_summary(x_shifts: list, y_shifts: list) -> tuple[np.ndarray, np.ndarray]:
+    """(shifts (frames, 2) = (dy, dx) averaged over the patches, extent (frames, 4) = (dy max, dy min, dx max, dx min) over the patches) of the per-frame patch
+    shifts of a non-rigid motion correction (one array of patch shifts per frame, as CaImAn keeps them)."""
+    dy, dx = np.asarray(y_shifts, dtype=np.float64).reshape(len(y_shifts), -1), np.asarray(x_shifts, dtype=np.float64).reshape(len(x_shifts), -1)
+    return (np.stack([dy.mean(axis=1), dx.mean(axis=1)], axis=1).astype(np.float32),
+            np.stack([dy.max(axis=1), dy.min(axis=1), dx.max(axis=1), dx.min(axis=1)], axis=1).astype(np.float32))
+
+
 def registration_quality(movie: np.ndarray) -> np.ndarray:
     """Per-frame Pearson correlation of a (T, H, W) movie with its own mean image."""
     flat = np.asarray(movie, dtype=np.float32).reshape(len(movie), -1)

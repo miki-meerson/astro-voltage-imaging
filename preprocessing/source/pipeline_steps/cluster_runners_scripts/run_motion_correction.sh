@@ -3,7 +3,8 @@
 #SBATCH --constraint=avx
 #SBATCH -N 1
 #SBATCH -c 16
-#SBATCH -t 0-1:00:00
+# a rigid correction takes about 15 minutes, a non-rigid one about an hour: the limit leaves room for the slower one
+#SBATCH -t 0-4:00:00
 #SBATCH --mem=128G
 #SBATCH --mail-type=END
 

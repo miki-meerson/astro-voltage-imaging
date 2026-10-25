@@ -1,18 +1,21 @@
 """Experiment registry (index, add, scan, remove, reset, star), notes, validation, the analysis launch and the data endpoints of the experiment pages."""
 from __future__ import annotations
 
+import json
 import threading
 
-from flask import jsonify, redirect, render_template, request, url_for
+from flask import jsonify, redirect, render_template, request, send_file, url_for
 
 from app.db import experiment_repository as repo
 from app.db.run_repository import latest_run, latest_step_statuses
 from app.services import caches
-from app.services.behavior_view import behavior_payload
+from app.services.behavior_view import behavior_payload, behavior_unavailable_message
 from app.services.border_view import border_snippets
+from app.services.cell_views import pooled_row
 from app.services.experiments import (
     ANALYSIS_STEPS,
     add_experiment,
+    experiment_steps,
     launch_default_steps,
     remove_experiment_from_registry,
     reset_experiment_app_data,
@@ -24,6 +27,7 @@ from app.services.global_trends import global_trends
 from app.services.hypothesis_summary import anatomy_cluster_summary, chosen_step
 from app.services.run_views import STEP_LABELS
 from app.services.runs import pipeline_status
+from app.services.visualizations import render_result_map
 from app.web.common import FlatBlueprint, get_settings, movie_chunk_response, movie_meta_response
 from app.web.security import safe_next
 from utils import globals_utils as g
@@ -37,7 +41,7 @@ def index():
     experiments, last = repo.experiment_list(settings, favorites_only)
     statuses = latest_step_statuses(settings)
     for e in experiments:
-        e.update(pipeline_status(statuses.get(int(e["id"]), {})))
+        e.update(pipeline_status(statuses.get(int(e["id"]), {}), experiment_steps(json.loads(e["validation_report"] or "{}"))))
     active = any(e.get("job_status") in {"running", "pending"} for e in experiments)
     return render_template("index.html", experiments=experiments, settings=settings, last_scan=last, active=active, favorites_only=favorites_only, step_labels=STEP_LABELS,
                            rerun_steps=ANALYSIS_STEPS)
@@ -117,6 +121,15 @@ def experiment_anatomy_clusters(experiment_id):
         return jsonify({"available": False, "message": str(exc)}), 400
 
 
+@bp.get("/experiments/<int:experiment_id>/pooled-sta-map.png")
+def experiment_pooled_sta_map(experiment_id):
+    settings = get_settings()
+    try:
+        return send_file(render_result_map(settings, pooled_row(settings, experiment_id), chosen_step(request.args.get("h")), request.args.get("type", "")), mimetype="image/png")
+    except ValueError as exc:
+        return render_template("error.html", title="Missing Map", message=str(exc)), 404
+
+
 @bp.get("/experiments/<int:experiment_id>/border-snippets.json")
 def experiment_border_snippets(experiment_id):
     settings = get_settings()
@@ -194,7 +207,11 @@ def run_analysis(experiment_id):
 @bp.get("/experiments/<int:experiment_id>/behavior/data")
 def behavior_data(experiment_id):
     settings = get_settings()
-    return jsonify(behavior_payload(settings, latest_run(settings, experiment_id, g.BEHAVIOR_STEP)))
+    run = latest_run(settings, experiment_id, g.BEHAVIOR_STEP)
+    payload = behavior_payload(settings, run)
+    if run is None:
+        payload["message"] = behavior_unavailable_message(settings, experiment_id)
+    return jsonify(payload)
 
 
 @bp.get("/experiments/<int:experiment_id>/movie/meta")
