@@ -15,7 +15,7 @@ import numpy as np
 from utils.file_utils import read_json
 from utils.motion_diagnostics import align_shifts_to_analysed_frames, load_patch_extent, load_shifts
 from utils.paths_utils import PathKind, path_for
-from utils.qc_utils import excluded_mask, read_excluded_segments, read_trimmed_frames
+from utils.qc_utils import read_excluded_segments, read_trimmed_frames
 
 INTERPOLATION_PX = 2  # the cubic interpolation of the registration reads this many pixels on each side of a pixel
 
@@ -64,7 +64,9 @@ def border_margins_px(shifts: np.ndarray, extra_px: int = INTERPOLATION_PX, keep
 def experiment_border_margins(experiment_dir: str | Path, n_frames: int, extra_px: int = INTERPOLATION_PX, excluded: list | None = None) -> tuple[int, int, int, int]:
     """(top, bottom, left, right) margins of an experiment, from the shifts (of every patch after a non-rigid correction) of the analysed frames outside its excluded segments
     (`excluded`, or the experiment's own when None): what the STA job leaves out, and what the Overview panel shows. Raises what analysed_shifts raises."""
-    keep = ~excluded_mask(n_frames, read_excluded_segments(experiment_dir) if excluded is None else excluded)
+    keep = np.ones(int(n_frames), dtype=bool)
+    for start, end in read_excluded_segments(experiment_dir) if excluded is None else excluded:
+        keep[start:end] = False
     return border_margins_px(analysed_shifts(experiment_dir, n_frames, with_patches=True), extra_px, keep)
 
 
