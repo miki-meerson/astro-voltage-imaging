@@ -51,13 +51,16 @@ button.tab.active { border-bottom-color: var(--accent); }
 #cluster-map-panel .cm-head { display: flex; justify-content: space-between; gap: var(--s2); font-size: var(--fs-sm); margin-bottom: var(--s2); }
 #cluster-map-panel .cm-pair, #cluster-map-panel .cm-spikes-pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); }  /* the field of view above its trace, and the two spike plots one above the other */
 #cluster-map-panel .cm-spikes-pair { margin-top: var(--s2); }
-#cluster-map-panel .cm-full { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); margin-top: var(--s2); }
 #cluster-map-panel canvas { display: block; width: 100%; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius-sm); }
 #cluster-map-panel .cm-trace, #cluster-map-panel .cm-spike-plot { height: 200px; }
-#cluster-map-panel .cm-full-plot { height: 170px; }
+#cluster-map-panel .cm-raw { display: flex; flex-direction: column; gap: 3px; }
+#cluster-map-panel [hidden] { display: none; }  /* the grid and the rows set their own display, which would otherwise win over `hidden` */
+#cluster-map-panel .cm-raw-axis { height: 20px; position: sticky; top: 0; z-index: 2; }
+#cluster-map-panel .cm-raw-row { height: 260px; }
 #cluster-map-panel details { margin-top: var(--s2); font-size: var(--fs-sm); }
 #cluster-map-panel summary { cursor: pointer; }
 #gt-map { height: 380px; }
+
 #border-panel .bm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); margin-top: var(--s2); }
 #border-panel figure { margin: 0; }
 #border-panel figcaption { margin-top: var(--s1); font-size: var(--fs-sm); color: var(--muted); text-align: center; }
@@ -74,6 +77,10 @@ button.tab.active { border-bottom-color: var(--accent); }
 .spike-canvas { height: clamp(420px, 62vh, 820px); cursor: crosshair; }
 
 /* ---- the cell panel (Cells tab) ---- */
+/* the list column is as wide as the list needs (with room for its scroll bar) */
+.cells-split { grid-template-columns: max-content minmax(0, 1fr); }
+.cells-split .cell-list { padding-right: 20px; }
+@media (max-width: 900px) { .cells-split { grid-template-columns: 1fr; } }
 .cell-list { max-height: 78vh; overflow: auto; }
 .cell-list th, .cell-list td { white-space: nowrap; padding: 6px 8px; }
 .spk-wrap { position: relative; margin-top: var(--s2); }
@@ -123,3 +130,12 @@ button.tab.active { border-bottom-color: var(--accent); }
 .controls input[type=range] { flex: 1 1 120px; width: auto; min-width: 100px; padding: 0; }
 #smv-trace, #smv-groups { height: 150px; margin-top: 0; }
 @media (max-width: 1000px) { .movie-layout { grid-template-columns: minmax(0, 1fr); } }
+
+/* the cards on paper (Export cards to PDF; last in the file, so the narrow-window rules above do not undo it): only the cluster-map panel, its cards two across, none split between pages */
+@media print {
+  .app-header, .app-main > :not(#cluster-map-panel) { display: none; }  /* the page's header, step bar, tabs and other panels */
+  #cluster-map-panel, #cluster-map-panel * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #cluster-map-panel .ac-controls, #cluster-map-panel .muted.small, #cluster-map-panel details { display: none; }
+  #cluster-map-panel .cm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #cluster-map-panel .cm-card { break-inside: avoid; }
+}

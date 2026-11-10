@@ -141,6 +141,8 @@
     $("pre-tab-main").hidden = name !== "main"; $("pre-tab-roi").hidden = name !== "roi";
     document.querySelectorAll("[data-pre-tab]").forEach(b => b.classList.toggle("active", b.dataset.preTab === name));
     if (name === "roi") { if (!loaded) load(); else stage.parentNode._zv.fit(); }
+    history.replaceState(null, "", name === "roi" ? "#roi" : location.pathname + location.search);  // a reload keeps the tab
+    if (window.autoRefresh) name === "roi" ? window.autoRefresh.stop() : window.autoRefresh.start();  // the page reloads itself while a run is active: not while the ROI types are being labelled
   }
   if (location.hash === "#roi") showTab("roi");
 })();

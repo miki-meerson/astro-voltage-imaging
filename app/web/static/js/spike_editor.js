@@ -5,6 +5,7 @@
   const ctx = canvas.getContext("2d");
   let trace = [], peaks = [], labels = [], selected = -1, fps = 1;
   let start = 0, stop = 1000;
+  let hoverFrame = null;  // the frame under the cursor: a click here (ctrl + click adds a spike) acts on exactly this frame
   let initialDetectionParams = {}, detectTimer = null, detectRequestId = 0;
   const colors = {spike: "#4fa3ff", exclude: "#e05260"};
   const MIN_SPAN = 20;  // frames: the most zoomed-in view
@@ -119,6 +120,39 @@
     ctx.restore();
     ctx.restore();
   }
+  // a guide line at the frame under the cursor, with its frame number, time and dF/F, and a dot on the trace there
+  function drawHover(lo, hi) {
+    if (hoverFrame === null) return;
+    const x = frameToX(hoverFrame), value = trace[hoverFrame];
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, plot.top);
+    ctx.lineTo(x, plot.top + plotHeight());
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (Number.isFinite(value)) {
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(x, valToY(value, lo, hi), 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const text = `Frame ${hoverFrame}  |  ${fmtTime(hoverFrame)}` + (Number.isFinite(value) ? `  |  dF/F ${fmtDff(value)}` : "");
+    ctx.font = "16px Segoe UI";
+    const w = ctx.measureText(text).width + 16;
+    const bx = x + 10 + w > plot.left + plotWidth() ? x - 10 - w : x + 10;
+    ctx.fillStyle = "rgba(11, 15, 20, 0.92)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+    ctx.fillRect(bx, plot.top + 6, w, 26);
+    ctx.strokeRect(bx, plot.top + 6, w, 26);
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, bx + 8, plot.top + 19);
+    ctx.restore();
+  }
   function draw() {
     resizeCanvas();
     ctx.fillStyle = "#0b0f14";
@@ -172,6 +206,7 @@
       ctx.fillRect(x0, plot.top, w, plotHeight());
       ctx.strokeRect(x0, plot.top, w, plotHeight());
     }
+    drawHover(lo, hi);
     ctx.fillStyle = "#d6dde6";
     ctx.fillText(`Frames ${start} - ${stop}  (${fmtTime(start)} - ${fmtTime(stop)})`, plot.left, 22);
     const legendY = 24;
@@ -316,6 +351,14 @@
     }
     drag = null;
     canvas.style.cursor = "";
+  });
+  canvas.addEventListener("mousemove", (event) => {
+    const p = canvasPoint(event);
+    const frame = insidePlot(p) ? Math.min(trace.length - 1, xToFrame(p.x)) : null;
+    if (frame !== hoverFrame) { hoverFrame = frame; draw(); }
+  });
+  canvas.addEventListener("mouseleave", () => {
+    if (hoverFrame !== null) { hoverFrame = null; draw(); }
   });
   canvas.addEventListener("click", (event) => {
     if (dragged) { dragged = false; return; }

@@ -2,7 +2,7 @@
 {# The frame of every experiment page: title, step bar, tabs, notices. A page fills the block "tab". #}
 {% set active_tab = (tabs | selectattr("active") | first).key %}
 {% block title %}{{ exp.canonical_id }} · {{ (tabs | selectattr("active") | first).label }}{% endblock %}
-{% block head_extra %}{% if active and refresh|default(true) and active_tab in ("overview", "preprocessing", "runs") %}<meta http-equiv="refresh" content="15">{% endif %}{% block tab_head %}{% endblock %}{% endblock %}
+{% block head_extra %}{% if active and refresh|default(true) and active_tab in ("overview", "preprocessing", "runs") %}<script>window.autoRefresh = (() => { let timer = null; const start = () => { clearTimeout(timer); timer = setTimeout(() => location.reload(), 15000); }; start(); return {start, stop: () => clearTimeout(timer)}; })();</script>{% endif %}{% block tab_head %}{% endblock %}{% endblock %}
 {% block body %}
 <div class="page-head">
   <div>

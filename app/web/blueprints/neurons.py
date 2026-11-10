@@ -11,8 +11,8 @@ from app.services.hypothesis_summary import chosen_step
 from app.services.runs import run_dir
 from app.services.spikes import (
     load_spike_payload,
+    refresh_review_entry,
     save_spike_payload,
-    spike_review_info,
     stale_suite2p_cell_message,
 )
 from app.services.visualizations import render_result_map
@@ -71,4 +71,4 @@ def mark_cell_reviewed(neuron_id):
     except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
     save_spike_payload(run_folder, cell, payload["peaks_all"], payload["labels"])
-    return jsonify({"ok": True, **spike_review_info(settings, spike_run, cell)})
+    return jsonify({"ok": True, **refresh_review_entry(settings, int(n["experiment_id"]), spike_run, cell)})

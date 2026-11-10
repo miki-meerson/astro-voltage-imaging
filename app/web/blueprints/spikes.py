@@ -10,6 +10,7 @@ from app.services.spikes import (
     load_spike_payload,
     save_spike_payload,
     spike_detection_params,
+    refresh_review_entry,
     stale_suite2p_cell_message,
 )
 from app.services.suite2p_data import experiment_suite2p_context
@@ -114,4 +115,5 @@ def save_spike_data(neuron_id):
     if stale_message:
         return jsonify({"error": stale_message}), 400
     save_spike_payload(run_dir(settings, int(spike_run["id"]), bool(spike_run["is_test"])), n["pipeline_neuron_id"], peaks, labels, params)
+    refresh_review_entry(settings, int(n["experiment_id"]), spike_run, n["pipeline_neuron_id"])
     return jsonify({"ok": True, "n_peaks": int(peaks.size), "params": params})

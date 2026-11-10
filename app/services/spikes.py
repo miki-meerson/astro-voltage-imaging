@@ -145,41 +145,22 @@ def save_spike_payload(spike_run_folder: Path, pipeline_neuron_id: str, peaks: n
     )
 
 
-def review_cache_key(settings, experiment_id: int, spike_run, neurons: list[dict], source_path) -> tuple | None:
-    """Key under which the cell-review summary of an experiment can be reused (PERF-01).
-
-    It changes when any cell's label file or review mark is written or removed, when the spike run changes, or when
-    Suite2p's iscell.npy changes. None (= do not cache) when there is no spike run.
-    """
+def review_cache_key(experiment_id: int, spike_run, neurons: list[dict]) -> tuple | None:
+    """Key under which the cell-review summary of an experiment is kept: the experiment, its spike run and its cells (None, not kept, when there is no spike run). No file is
+    looked at: the summary is made again when the spike run or the cells change, when Suite2p is confirmed (the caches of the experiment are dropped) and, for the one cell,
+    when it is saved or marked reviewed (refresh_review_entry)."""
     if spike_run is None:
         return None
-    newest = labels_seen = marks_seen = 0
-    run_folder = run_dir(settings, int(spike_run["id"]), bool(spike_run["is_test"]))
-    for neuron in neurons:
-        for kind in (PathKind.SPIKE_LABELS, PathKind.SPIKE_MANUAL_REVIEW):
-            try:
-                stamp = path_for(kind, run_folder, cell=str(neuron["pipeline_neuron_id"])).stat().st_mtime_ns
-            except OSError:
-                continue
-            newest = max(newest, stamp)
-            if kind is PathKind.SPIKE_LABELS:
-                labels_seen += 1
-            else:
-                marks_seen += 1
-    try:
-        iscell_stamp = path_for(PathKind.SUITE2P_ISCELL, source_path).stat().st_mtime_ns
-    except (OSError, TypeError):
-        iscell_stamp = 0
-    return (int(experiment_id), int(spike_run["id"]), tuple(int(n["id"]) for n in neurons), newest, labels_seen, marks_seen, iscell_stamp)
+    return (int(experiment_id), int(spike_run["id"]), tuple(int(n["id"]) for n in neurons))
 
 
 def experiment_spike_review(settings, experiment_id: int) -> dict:
     """What the Spikes tab lists: {has_spike_run, reviewed_count, total_count, cells: [{id, cell, reviewed, n_peaks, n_excluded}]} for the current Suite2p
-    cells of an experiment. Reused while no label file, review mark or iscell.npy changed (the key says so)."""
+    cells of an experiment. Kept (review_cache_key) so that going between cells does not read the files of every cell again."""
     source_path = experiment_repository.experiment_source_path(settings, experiment_id)
     spike_run = run_repository.latest_run(settings, experiment_id, g.SPIKE_STEP)
     neurons = experiment_repository.experiment_neurons(settings, experiment_id)
-    key = review_cache_key(settings, experiment_id, spike_run, neurons, source_path)
+    key = review_cache_key(experiment_id, spike_run, neurons)
     cached = caches.CELL_REVIEW.get(key) if key is not None else None
     if cached is not None:
         return cached
@@ -189,3 +170,15 @@ def experiment_spike_review(settings, experiment_id: int) -> dict:
     if key is not None:
         caches.CELL_REVIEW.put(key, result)
     return result
+
+
+def refresh_review_entry(settings, experiment_id: int, spike_run, pipeline_neuron_id: str) -> dict:
+    """A cell was saved or marked reviewed: its entry in the kept review of the experiment (when there is one) is made again from its files and the others stay as they are.
+    Returns the cell's {reviewed, n_peaks, n_excluded}."""
+    info = spike_review_info(settings, spike_run, str(pipeline_neuron_id))
+    key = review_cache_key(experiment_id, spike_run, experiment_repository.experiment_neurons(settings, experiment_id))
+    kept = caches.CELL_REVIEW.get(key) if key is not None else None
+    if kept is not None:
+        cells = [{**c, **info} if c["cell"] == int(pipeline_neuron_id) else c for c in kept["cells"]]
+        caches.CELL_REVIEW.put(key, {**kept, "cells": cells, "reviewed_count": sum(c["reviewed"] for c in cells)})
+    return info
