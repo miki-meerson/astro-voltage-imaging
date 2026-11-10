@@ -31,12 +31,13 @@ def read_json(path: str | Path, what: str, default=REQUIRED, missing: str | None
         raise ValueError(f"{what} {path} is not valid JSON ({exc}).") from exc
 
 
-def write_json(path: str | Path, data) -> None:
-    """Save `data` as an indented utf-8 json file, creating its folder. It is written to a temporary file next to it and moved into place, so a reader never sees half a file."""
+def write_json(path: str | Path, data, indent: int | None = 2) -> None:
+    """Save `data` as a utf-8 json file (indented for people to read; `indent=None` for a big file only the app reads: one line, a third of the size), creating its folder. It is
+    written to a temporary file next to it and moved into place, so a reader never sees half a file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=indent), encoding="utf-8")
     tmp.replace(path)
 
 

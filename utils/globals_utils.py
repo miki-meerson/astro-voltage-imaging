@@ -15,6 +15,7 @@ PLANE0_DIR = "plane0"
 ASTRO_PB_MOVIE = "astro_photobleaching_corrected.tif"
 NEURON_PB_MOVIE = "neuron_photobleaching_corrected.tif"
 BAD_SEGMENTS = "bad_segments.json"
+EXCLUDED_SEGMENTS = "excluded_segments.json"  # <experiment>/pipeline_results/qc/: [start, end) frames of the analysed movie the analysis leaves out (the movie is not cut)
 RAW_MOVIE = "Image_scan_1_region_0_0.tif"
 STA_MOVIES_TIF_DIR = "sta_movies_tif"  # <experiment>/sta_movies_tif/<hypothesis>/cell_<N>/sta_<group>_bin<B>.tif (Fiji copies of the STA movies)
 HYPOTHESIS_DIR_TEMPLATE = "{hypothesis}"
