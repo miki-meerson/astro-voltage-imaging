@@ -23,7 +23,7 @@ from utils.motion_diagnostics import (
     motion_sta_stats,
     registration_quality,
 )
-from utils.border import INTERPOLATION_PX, analysed_shifts, border_margins_px, read_bad_segments, valid_mask
+from utils.border import INTERPOLATION_PX, analysed_shifts, experiment_border_margins, read_bad_segments, valid_mask
 from utils.global_trends import compute_global_trends
 from utils.hypotheses import frame_windows, run_settings, seconds_to_frames, time_bin_frames
 from utils.movie_utils import read_astro_movie, read_frame_rate, spatial_bin_movie
@@ -45,7 +45,7 @@ from utils.sta_stats_utils import (
 from utils.paths_utils import PathKind, cell_dirs, path_for, resolve_sta_paths, result_file_name
 from utils.file_utils import read_json, write_json
 from utils.sta_trace_utils import crop_bounds
-from utils.qc_utils import read_trimmed_frames
+from utils.qc_utils import read_excluded_segments, read_trimmed_frames
 from utils.tif_export import sta_note, write_imagej_stack
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 
@@ -98,6 +98,7 @@ MOTION_REG_QUALITY_BIN = 0  # spatial bin of the movie used for the registration
 SAVE_BINNED_STA_MOVIES = True
 SAVE_FIJI_TIFS = False  # save each binned STA movie as an ImageJ .tif in <experiment>/sta_movies_tif/<hypothesis>/cell_<N>/ INSTEAD of the .npy in the run folder (needs SAVE_BINNED_STA_MOVIES)
 OVERWRITE = True
+SAVE_CLUSTER_RESULTS = True  # False: the cells' cluster result files (~300 MB each, the permutations included) are not written, only the summary table: for runs that only count significant cells
 CELL_IDS: list[int] | str = g.ALL_GROUP
 RESULT_TYPES = (g.ALL_GROUP,)
 BEHAVIORAL_GROUPS = ("active", "inactive")
@@ -147,7 +148,7 @@ def apply_config(config: dict) -> None:
     global OVERWRITE, CELL_IDS, RESULT_TYPES, SUMMARY_CSV, HYPOTHESIS
     global MIN_SPIKES_FOR_CLUSTER, NULL_STANDARDIZATION, NULL_SD_FLOOR_QUANTILE, SMOOTH_SIGMA_FULLRES_PX, PER_SIGN_NULL
     global MIN_CLUSTER_FOOTPRINT_FULLRES_PX, MIN_CLUSTER_FRAMES, MOTION_DIAGNOSTICS, MOTION_FLAG_ALPHA, MOTION_PERMUTATIONS, MOTION_REG_QUALITY_BIN, MASK_BORDER, BORDER_EXTRA_PX
-    global EXCLUDE_SPIKES_NEAR_CUTS
+    global EXCLUDE_SPIKES_NEAR_CUTS, SAVE_CLUSTER_RESULTS
 
     if "home_dir" in config:
         HOME_DIR = Path(config["home_dir"])
@@ -188,6 +189,7 @@ def apply_config(config: dict) -> None:
     MOTION_REG_QUALITY_BIN = int(config.get("motion_reg_quality_bin", MOTION_REG_QUALITY_BIN))
     SAVE_BINNED_STA_MOVIES = bool(config.get("save_binned_sta_movies", SAVE_BINNED_STA_MOVIES))
     SAVE_FIJI_TIFS = bool(config.get("save_fiji_tifs", SAVE_FIJI_TIFS))
+    SAVE_CLUSTER_RESULTS = bool(config.get("save_cluster_results", SAVE_CLUSTER_RESULTS))
     OVERWRITE = bool(config.get("overwrite", OVERWRITE))
     RESULT_TYPES = config.get("result_types", RESULT_TYPES)
     RESULT_TYPES = (RESULT_TYPES,) if isinstance(RESULT_TYPES, str) else tuple(RESULT_TYPES)
@@ -447,8 +449,9 @@ def export_fiji_sta(cell_id: int, group: str, observed_sta: np.ndarray, pre: int
         return False
 
 
-def valid_centers(n_frames: int, pre: int, post: int, cuts=None) -> np.ndarray:
-    """Spike frames whose window [c - pre, c + post] fits in the movie and, when `cuts` is given, contains no splice.
+def valid_centers(n_frames: int, pre: int, post: int, cuts=None, excluded=None) -> np.ndarray:
+    """Spike frames whose window [c - pre, c + post] fits in the movie and, when `cuts` is given, contains no splice and, when `excluded` ([start, end) frame ranges the user left
+    out of the analysis) is given, does not overlap any of them.
 
     A cut k means frames k-1 and k are not adjacent in time (a bad segment was removed between them). The splice lies in the
     window when c - pre <= k - 1 and k <= c + post. The same centres are where the random-frame chance copies are drawn, so the null is matched.
@@ -459,6 +462,8 @@ def valid_centers(n_frames: int, pre: int, post: int, cuts=None) -> np.ndarray:
         first = np.searchsorted(k, centers.astype(np.int64) - pre + 1, side="left")  # first cut at or after c - pre + 1
         hit = (first < k.size) & (k[np.minimum(first, k.size - 1)] <= centers + post)
         centers = centers[~hit]
+    for start, end in excluded or []:
+        centers = centers[(centers + post < start) | (centers - pre >= end)]
     return centers
 
 
@@ -544,7 +549,7 @@ def load_spikes(
 ) -> tuple[np.ndarray, int]:
     """(spikes used, number of valid spikes before the silence rule) of a cell.
 
-    `centers` (the run's valid centres, splice-free when exclude_spikes_near_cuts is on) also drops spikes near splices. `silence` = (frames
+    `centers` (the run's valid centres: splice-free when exclude_spikes_near_cuts is on, and clear of the excluded segments) also drops the spikes that are not valid centres. `silence` = (frames
     before, frames after): a spike is used only if the cell has no other kept spike (also outside the valid centres) that close."""
     peaks = load_kept_peaks(cell_id)
     valid = filter_valid_peaks(peaks, n_frames, pre, post).astype(np.int32)
@@ -635,7 +640,8 @@ def movie_frames(movie: np.ndarray, index, crop: tuple[int, int, int, int] | Non
     """The frames `index` (an index array or a slice) of `movie` as float32 rows of pixels, cut to `crop` (y0, y1, x0, x1) when given."""
     frames = movie[index] if crop is None else movie[index, crop[0]:crop[1], crop[2]:crop[3]]
     frames = np.asarray(frames, dtype=np.float32)
-    return frames.reshape(frames.shape[0], int(np.prod(frames.shape[1:])))
+    rows = frames.reshape(frames.shape[0], int(np.prod(frames.shape[1:])))
+    return rows
 
 
 def baseline_rels(pre: int, post: int, windows: tuple) -> np.ndarray:
@@ -1081,8 +1087,10 @@ def analyze_groups(
             )
             result.update(extra_result or {})
             with timed(timing, "saving"):
-                if OVERWRITE or not cluster_path.exists():
+                if SAVE_CLUSTER_RESULTS and (OVERWRITE or not cluster_path.exists()):
                     save_cluster_result(cluster_path, result)
+            if not SAVE_CLUSTER_RESULTS:
+                cluster_path = ""
             del result
         elif OVERWRITE and cluster_path.exists():
             cluster_path.unlink()
@@ -1135,10 +1143,13 @@ def sta_run_parameters(
     anatomy_settings: dict | None,
     silence: tuple[int, int],
     border_margins: tuple[int, int, int, int] | None = None,
+    excluded_segments: list[list[int]] = (),
 ) -> dict:
     return {
         "mask_border": bool(MASK_BORDER),
         "border_margins_px": [int(v) for v in border_margins] if border_margins else [],
+        "save_cluster_results": bool(SAVE_CLUSTER_RESULTS),
+        "excluded_segments": [[int(start), int(end)] for start, end in excluded_segments],  # frames of the analysed movie left out: no spike window and no chance copy overlaps them
         "home_dir": str(home_dir()),
         "source_home_dir": str(source_home_dir()),
         "spatial_bin": int(SPATIAL_BIN),
@@ -1301,14 +1312,14 @@ def build_run_motion_series(paths, n_frames: int) -> dict | None:
     return series
 
 
-def run_border_margins(paths) -> tuple[int, int, int, int] | None:
-    """(top, bottom, left, right) border margins in full-resolution pixels from the applied shifts of the analysed frames, None when mask_border is off.
+def run_border_margins(paths, excluded: list[list[int]]) -> tuple[int, int, int, int] | None:
+    """(top, bottom, left, right) border margins in full-resolution pixels from the applied shifts of the analysed frames outside `excluded`, None when mask_border is off.
     Raises ValueError saying what is missing when the shifts cannot be read or matched: without them the border cannot be left out."""
     if not MASK_BORDER:
         return None
     try:
         n_frames = int(read_astro_movie(str(paths.astro_movie_path), as_memmap=True).shape[0])
-        margins = border_margins_px(analysed_shifts(Path(paths.mc_dir).parents[1], n_frames, with_patches=True), BORDER_EXTRA_PX)
+        margins = experiment_border_margins(paths.home_dir, n_frames, BORDER_EXTRA_PX, excluded)
     except (OSError, ValueError) as exc:
         raise ValueError(f"The border mask needs the applied shifts of the analysed frames: {exc} Fix that, or set mask_border: false to run without the mask.") from exc
     print(f"Border left out of the test (top, bottom, left, right): {margins} px", flush=True)
@@ -1320,7 +1331,7 @@ def analysis_valid(margins: tuple[int, int, int, int] | None) -> np.ndarray | No
     return None if margins is None else valid_mask(_MOVIE_SHAPE[1:], margins, SPATIAL_BIN)
 
 
-def save_global_trends(paths, movie: np.ndarray, motion_series: dict | None, fps: float, cuts: list[int], margins: tuple[int, int, int, int] | None) -> None:
+def save_global_trends(paths, movie: np.ndarray, motion_series: dict | None, fps: float, cuts: list[int], margins: tuple[int, int, int, int] | None, excluded: list[list[int]]) -> None:
     """global_trends.npz of the run: the traces and the amplitude maps of the signals the whole field shares (utils/global_trends.py), from the movie
     the standard result types analyse. A diagnostic like the motion test: a problem is reported and does not fail the run."""
     print("Global trends of the field (frame mean and motion series; amplitude maps) ...", flush=True)
@@ -1329,7 +1340,7 @@ def save_global_trends(paths, movie: np.ndarray, motion_series: dict | None, fps
         paths.sta_dir.mkdir(parents=True, exist_ok=True)
         np.savez(
             path_for(PathKind.GLOBAL_TRENDS, paths.sta_dir), **trends, fps=np.asarray(fps), spatial_bin=np.asarray(SPATIAL_BIN), cuts=np.asarray(cuts, dtype=np.int32),
-            border_margins_px=np.asarray(margins or (0, 0, 0, 0), dtype=np.int32),
+            border_margins_px=np.asarray(margins or (0, 0, 0, 0), dtype=np.int32), excluded_segments=np.asarray(excluded, dtype=np.int32).reshape(-1, 2),
         )
     except (OSError, ValueError, MemoryError) as exc:
         print(f"WARNING: the global trends were not saved ({exc}). The Hypotheses tab needs them: rerun STA Maps.", flush=True)
@@ -1344,7 +1355,7 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     timing = dict.fromkeys(TIMING_PHASES, 0.0)
     silence = cfg["silence"]
     with timed(timing, "spikes+pool"):
-        spikes, n_before = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS if EXCLUDE_SPIKES_NEAR_CUTS else None, silence)
+        spikes, n_before = load_spikes(cell_id, cfg["n_frames"], pre, post, _VALID_CENTERS, silence)
         pool = cell_surrogate_pool(cell_id, _VALID_CENTERS, silence)
     save_neuron_sta_metadata(out_dir, cell_id, pre, post)
     motion_row = run_motion_diagnostics(cell_id, spikes, pool, cfg, out_dir)
@@ -1471,8 +1482,11 @@ def main() -> None:
     time_bin = time_bin_frames(HYPOTHESIS, fps)
     standard_result_types = tuple(result_type for result_type in RESULT_TYPES if result_type not in {"behavioral", g.ANATOMY_GROUP})
     anatomy_settings = load_anatomy_radius(ANATOMY_SPATIAL_BIN) if g.ANATOMY_GROUP in RESULT_TYPES else None
-    border = run_border_margins(paths)
-    used_params = sta_run_parameters(fps, pre, post, windows, standard_result_types, anatomy_settings, silence, border)
+    excluded = read_excluded_segments(resolved_source_home)
+    if excluded and "behavioral" in RESULT_TYPES:
+        raise ValueError(f"The experiment excludes the frames {excluded} from the analysis, which the behavioral result types do not support yet: leave 'behavioral' out of the result types, or remove the excluded segments.")
+    border = run_border_margins(paths, excluded)
+    used_params = sta_run_parameters(fps, pre, post, windows, standard_result_types, anatomy_settings, silence, border, excluded)
     save_sta_run_parameters(paths.sta_dir, used_params)
     cells = list_cells()
     if not cells:
@@ -1503,7 +1517,7 @@ def main() -> None:
     if standard_result_types:
         movie = ensure_binned_movie(paths, SPATIAL_BIN)
         cuts = run_cut_frames(paths, int(movie.shape[0]))
-        centers = valid_centers(int(movie.shape[0]), pre, post, cuts)
+        centers = valid_centers(int(movie.shape[0]), pre, post, cuts, excluded)
         f0_by_pos = f0_for_valid_centers(movie, centers, windows[3])
         cfg = analysis_cfg(
             pre,
@@ -1517,7 +1531,7 @@ def main() -> None:
         )
         cfg["result_types"] = standard_result_types
         cfg["motion_series"] = build_run_motion_series(paths, int(movie.shape[0]))
-        save_global_trends(paths, movie, cfg["motion_series"], fps, cuts, border)
+        save_global_trends(paths, movie, cfg["motion_series"], fps, cuts, border, excluded)
         init_args = (str(movie_input_path(paths, SPATIAL_BIN)), centers, f0_by_pos, str(paths.suite2p_path), None, SPATIAL_BIN, RUN_CONFIG)
         rows.extend(run_pool(process_cell, cfg, cells, paths.sta_dir, init_args, movie))
         del movie, centers, f0_by_pos, cfg, init_args  # the next result type has its own movie
@@ -1525,7 +1539,7 @@ def main() -> None:
 
     if g.ANATOMY_GROUP in RESULT_TYPES:
         anatomy_movie = ensure_binned_movie(paths, ANATOMY_SPATIAL_BIN)
-        anatomy_centers = valid_centers(int(anatomy_movie.shape[0]), pre, post, run_cut_frames(paths, int(anatomy_movie.shape[0])))
+        anatomy_centers = valid_centers(int(anatomy_movie.shape[0]), pre, post, run_cut_frames(paths, int(anatomy_movie.shape[0])), excluded)
         anatomy_f0 = f0_for_valid_centers(anatomy_movie, anatomy_centers, windows[3])
         anatomy_cfg = analysis_cfg(
             pre,
@@ -1629,7 +1643,7 @@ def main() -> None:
     write_summary(rows, summary_path)
     print(f"Done. Summary saved to {summary_path}")
 
-    if not HYPOTHESIS["pool_cells"]:  # the cluster map and the cluster traces panels read this file (a pooled hypothesis has one result for the whole experiment, no map of cells)
+    if SAVE_CLUSTER_RESULTS and not HYPOTHESIS["pool_cells"]:  # the cluster map and the cluster traces panels read this file (made from the cells' result files) (a pooled hypothesis has one result for the whole experiment, no map of cells)
         print("Saving the cluster map summary for the experiment page ...", flush=True)
         try:
             print(f"Cluster map summary saved to {save_cluster_map_summary(paths.sta_dir, resolved_source_home, summary_csv=summary_path, log=lambda m: print(m, flush=True))}")

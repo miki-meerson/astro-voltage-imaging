@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from scipy.ndimage import gaussian_filter
+from scipy.stats import binomtest
 
 NULL_STANDARDIZATION_MODES = ("none", "per_pixel_z")
 
@@ -116,6 +117,17 @@ def cluster_trace_wide(
     mask2d = np.asarray(mask2d, dtype=bool)
     trace = (np.asarray(sta_movie[sel], dtype=np.float32)[:, mask2d] - baseline_map[mask2d]).mean(axis=1)
     return rels[sel], trace.astype(np.float32)
+
+
+def significant_fraction(significant: int, tested: int, chance: float) -> dict:
+    """{fraction, ci (the 95% Wilson interval), p_vs_chance (one-sided binomial test that more cells than `chance` of them are significant)} of `significant` cells out of
+    `tested`; all None when nothing was tested."""
+    if tested == 0:
+        return {"fraction": None, "ci": None, "p_vs_chance": None}
+    return {
+        "fraction": significant / tested, "ci": list(binomtest(significant, tested).proportion_ci(confidence_level=0.95, method="wilson")),
+        "p_vs_chance": float(binomtest(significant, tested, chance, alternative="greater").pvalue),
+    }
 
 
 def filter_valid_peaks(peaks: np.ndarray, n_frames: int, pre_frames: int, post_frames: int) -> np.ndarray:
