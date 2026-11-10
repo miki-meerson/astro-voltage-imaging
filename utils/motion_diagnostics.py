@@ -17,6 +17,7 @@ import pandas as pd
 from scipy.io import loadmat
 
 from utils import globals_utils as g
+from utils.qc_utils import merge_segments
 
 SERIES_NAMES = ("dy", "dx", "shift_mag", "jerk", "reg_corr")
 
@@ -175,14 +176,8 @@ def align_shifts_to_analysed_frames(shifts: np.ndarray, n_frames: int, trimmed: 
 
 def cuts_from_bad_segments(bad, trimmed: int = 0) -> list[int]:
     """Positions (in analysed frames) where removed bad segments leave a discontinuity. Overlapping segments are merged."""
-    merged: list[list[int]] = []
-    for a, b in sorted((int(x[0]), int(x[1])) for x in bad or []):
-        if merged and a <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], b)
-        else:
-            merged.append([a, b])
     removed, cuts = 0, []
-    for a, b in merged:
+    for a, b in merge_segments(bad):
         pos = a - removed - int(trimmed)
         if pos > 0:
             cuts.append(pos)

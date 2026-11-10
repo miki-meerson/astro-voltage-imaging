@@ -9,6 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from utils import globals_utils as g
+from utils.border import blank_border, motion_border_margins
 from utils.file_utils import make_shared_dir
 from utils.movie_utils import cast_movie_for_tiff_save, get_signed_movie_dtype, read_frame_rate
 from utils.paths_utils import PathKind, channel_file_name, path_for
@@ -153,7 +154,7 @@ def _movie_mean_trace(movie_path):
     return means
 
 
-def _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_path):
+def _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_path, border_margins):
     target_dtype = get_signed_movie_dtype(raw_video_path)
     mc_path = pb_correct_dict["mc_path"]
     start_frame = int(pb_correct_dict["start_frame"])
@@ -168,16 +169,16 @@ def _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_p
             if abs(denom) < eps:
                 denom = eps
             frame = np.asarray(page.asarray(), dtype=np.float32)
-            corrected = (frame / denom) * scale
+            corrected = blank_border((frame / denom) * scale, border_margins)  # the border the registration exposes: Suite2p must not see it
             writer.write(cast_movie_for_tiff_save(corrected, target_dtype), contiguous=True)
 
 
-def save_pb_correct_data(home_dir, pb_correct_dict, raw_video_path, channel_name):
+def save_pb_correct_data(home_dir, pb_correct_dict, raw_video_path, channel_name, border_margins):
     make_shared_dir(path_for(PathKind.PB_CORRECTED_DIR, home_dir))
     pb_movie_path = path_for(PathKind.PB_FILE, home_dir, name=channel_file_name(channel_name, g.PB_MOVIE))
     pb_fit_path = path_for(PathKind.PB_FILE, home_dir, name=channel_file_name(channel_name, g.PB_FIT_FILE))
 
-    _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_path)
+    _write_corrected_movie_streaming(pb_movie_path, pb_correct_dict, raw_video_path, border_margins)
 
     np.savez(
         pb_fit_path,
@@ -248,6 +249,9 @@ def main(args):
     print("GUI TIME:", gui_time)
     home_dir = os.path.dirname(raw_video_path)
 
+    border_margins = motion_border_margins(home_dir, trimmed)
+    print("Border blanked in the corrected movies (top, bottom, left, right px):", border_margins)
+
     for ch in CHANNELS:
         mc_video_path = mc_video_paths[ch]
         print(f"Photobleaching correction on ({ch}):", mc_video_path)
@@ -263,8 +267,10 @@ def main(args):
             home_dir,
             pb_correct_dict,
             raw_video_path,
-            channel_name=ch
+            channel_name=ch,
+            border_margins=border_margins
         )
+        pb_correct_dict["qc_metrics"]["border_margins_px"] = list(border_margins)
         save_pb_qc(
             home_dir,
             pb_correct_dict,

@@ -15,7 +15,7 @@ import numpy as np
 from utils.file_utils import read_json
 from utils.motion_diagnostics import align_shifts_to_analysed_frames, load_patch_extent, load_shifts
 from utils.paths_utils import PathKind, path_for
-from utils.qc_utils import read_trimmed_frames
+from utils.qc_utils import excluded_mask, read_excluded_segments, read_trimmed_frames
 
 INTERPOLATION_PX = 2  # the cubic interpolation of the registration reads this many pixels on each side of a pixel
 
@@ -47,11 +47,25 @@ def analysed_shifts(experiment_dir: str | Path, n_frames: int, with_patches: boo
     return np.concatenate([extent[:, [0, 2]], extent[:, [1, 3]]])
 
 
-def border_margins_px(shifts: np.ndarray, extra_px: int = INTERPOLATION_PX) -> tuple[int, int, int, int]:
-    """(top, bottom, left, right) margins in full-resolution pixels for the shifts (dy, dx) of the analysed frames."""
-    dy, dx = np.asarray(shifts, dtype=np.float64)[:, 0], np.asarray(shifts, dtype=np.float64)[:, 1]
+def border_margins_px(shifts: np.ndarray, extra_px: int = INTERPOLATION_PX, keep: np.ndarray | None = None) -> tuple[int, int, int, int]:
+    """(top, bottom, left, right) margins in full-resolution pixels for the shifts (dy, dx) of the analysed frames. keep: a boolean per analysed frame, the frames whose shifts
+    count (all when None); for the stacked rows of analysed_shifts(with_patches=True) it applies to each block of rows."""
+    shifts = np.asarray(shifts, dtype=np.float64)
+    if keep is not None:
+        keep = np.asarray(keep, dtype=bool)
+        if not keep.any():
+            raise ValueError("Every frame is excluded: there are no shifts left to take the border from.")
+        shifts = shifts[np.tile(keep, len(shifts) // len(keep))]
+    dy, dx = shifts[:, 0], shifts[:, 1]
     exposed = (max(0.0, dy.max()), max(0.0, -dy.min()), max(0.0, dx.max()), max(0.0, -dx.min()))
     return tuple(int(np.ceil(v)) + int(extra_px) for v in exposed)
+
+
+def experiment_border_margins(experiment_dir: str | Path, n_frames: int, extra_px: int = INTERPOLATION_PX, excluded: list | None = None) -> tuple[int, int, int, int]:
+    """(top, bottom, left, right) margins of an experiment, from the shifts (of every patch after a non-rigid correction) of the analysed frames outside its excluded segments
+    (`excluded`, or the experiment's own when None): what the STA job leaves out, and what the Overview panel shows. Raises what analysed_shifts raises."""
+    keep = ~excluded_mask(n_frames, read_excluded_segments(experiment_dir) if excluded is None else excluded)
+    return border_margins_px(analysed_shifts(experiment_dir, n_frames, with_patches=True), extra_px, keep)
 
 
 def valid_mask(shape_hw: tuple[int, int], margins_px: tuple[int, int, int, int], spatial_bin: int) -> np.ndarray:
@@ -64,3 +78,27 @@ def valid_mask(shape_hw: tuple[int, int], margins_px: tuple[int, int, int, int],
     valid = np.ones((height, width), dtype=bool)
     valid[:top], valid[height - bottom:], valid[:, :left], valid[:, width - right:] = False, False, False, False
     return valid
+
+
+def motion_border_margins(experiment_dir: str | Path, trimmed: int = 0) -> tuple[int, int, int, int]:
+    """(top, bottom, left, right) margins from the registration shifts of the frames after the first `trimmed` ones (the movie the photobleaching step writes), from every patch after a
+    non-rigid correction. The photobleaching step blanks these margins, so it needs no photobleaching QC file yet. Raises FileNotFoundError when the shifts file is missing."""
+    path = path_for(PathKind.MC_SHIFTS, experiment_dir)
+    shifts = load_shifts(path)
+    if shifts is None:
+        raise FileNotFoundError(f"The motion-correction shifts file is missing ({path}). The motion correction step writes it: rerun that step.")
+    extent = load_patch_extent(path)
+    rows = shifts[int(trimmed):] if extent is None else np.concatenate([extent[int(trimmed):, [0, 2]], extent[int(trimmed):, [1, 3]]])
+    return border_margins_px(rows)
+
+
+def blank_border(frame: np.ndarray, margins_px: tuple[int, int, int, int]) -> np.ndarray:
+    """`frame` (H, W) with its border set to the mean of the pixels inside it, in place; returned. Raises ValueError when the margins cover the whole field."""
+    top, bottom, left, right = (int(m) for m in margins_px)
+    height, width = frame.shape
+    if top + bottom >= height or left + right >= width:
+        raise ValueError(f"The border margins {tuple(margins_px)} px leave no pixels of a {height}x{width} frame.")
+    inside = frame[top:height - bottom, left:width - right]
+    fill = inside.mean()
+    frame[:top], frame[height - bottom:], frame[:, :left], frame[:, width - right:] = fill, fill, fill, fill
+    return frame
