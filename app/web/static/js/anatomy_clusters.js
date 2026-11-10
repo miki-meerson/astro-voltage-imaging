@@ -83,7 +83,7 @@
     const hit = pts.map(p => ({p, d: Math.hypot(p.x - mx, p.y - my)})).filter(o => o.d < 10).sort((a, b) => a.d - b.d)[0];
     if (!hit) { tip.style.display = "none"; e.currentTarget.style.cursor = "default"; return; }
     const c = hit.p.c; e.currentTarget.style.cursor = "pointer";
-    tip.innerHTML = `Cell ${c.cell} &middot; ${c.result_type} &middot; ${Polarity.of(c.sign)}<br>distance ${c.dist.toFixed(1)} px &middot; p=${c.p == null ? 'n/a' : c.p.toFixed(3)} &middot; ${c.n_px} px, ${(c.first_rel / D.fps).toFixed(2)}..${(c.last_rel / D.fps).toFixed(2)} s<br><span style="color:#9aa8b7">click to open the cell</span>`;
+    tip.innerHTML = `Cell ${c.cell} &middot; ${c.result_type} &middot; ${Polarity.of(c.sign)}<br>distance ${c.dist.toFixed(1)} px &middot; p=${c.p == null ? 'n/a' : PlotCanvas.pValue(c.p)} &middot; ${c.n_px} px, ${(c.first_rel / D.fps).toFixed(2)}..${(c.last_rel / D.fps).toFixed(2)} s<br><span style="color:#9aa8b7">click to open the cell</span>`;
     tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px";
   });
   $("ac-scatter").addEventListener("mouseleave", () => { tip.style.display = "none"; });
@@ -107,7 +107,7 @@
       const s = g.stats[k];
       if (!s || s.p === null || s.p === undefined) return `<tr><td>${label}</td><td>${s && s.real != null ? f(s.real) : "n/a"}</td><td colspan="3" class="muted">too few clusters in the fake groups to compare</td></tr>`;
       const hit = s.p < 0.05, col = hit ? "#37c6a6" : "#9aa8b7";
-      return `<tr><td>${label}</td><td><b>${f(s.real)}</b></td><td>${f(s.fake_median)} <span class="muted">(${f(s.fake_low)} to ${f(s.fake_high)})</span></td><td>${s.p < 0.001 ? "<0.001" : s.p.toFixed(3)}</td><td style="color:${col}">${hit ? claim : "within chance"}</td></tr>`;
+      return `<tr><td>${label}</td><td><b>${f(s.real)}</b></td><td>${f(s.fake_median)} <span class="muted">(${f(s.fake_low)} to ${f(s.fake_high)})</span></td><td>${PlotCanvas.pValue(s.p)}</td><td style="color:${col}">${hit ? claim : "within chance"}</td></tr>`;
     }).join("");
     el.innerHTML = `
       <h3 style="margin:0 0 4px">Is this more than chance?</h3>

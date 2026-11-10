@@ -12,11 +12,12 @@ from utils import globals_utils as g
 from utils.cluster_map_summary import load_cluster_map_summary
 from utils.file_utils import read_json
 from utils.movie_utils import read_frame_rate
+from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for
 
 
 def cluster_map(settings, experiment_id: int, step: str) -> dict:
-    """The saved summary of the newest completed run of the hypothesis `step` (see utils/cluster_map_summary.py): {run_id, fps, run_folder, result_types, cells: {cell: {roi, motion,
+    """The saved summary of the newest completed run of the hypothesis `step` (see utils/cluster_map_summary.py): {run_id, fps, excluded_segments, run_folder, result_types, cells: {cell: {roi, motion,
     n_spikes, neuron_trace}}, clusters: [{cell, result_type, sign, p, mass, first_rel, last_rel, n_px, center, ys, xs, t, trace}], dynamics}. Raises FileNotFoundError saying which
     step makes the file when the run has none, and ValueError for a pooled hypothesis (one result for the whole experiment, no cells to map)."""
     if hypothesis_for(step).pool_cells:
@@ -28,7 +29,9 @@ def cluster_map(settings, experiment_id: int, step: str) -> dict:
     if hit is None:
         hit = load_cluster_map_summary(sta_dir, run_label=int(run["id"]))  # a failed read is not cached
         caches.CLUSTER_MAP.put(key, hit)
-    return dict(hit, run_id=int(run["id"]), fps=read_frame_rate(experiment_repository.experiment_source_path(settings, int(experiment_id))))  # the times of the clusters are frames
+    used = read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA used-parameters file", missing=missing_output_message("The used-parameters file", run["id"]))
+    return dict(hit, run_id=int(run["id"]), fps=read_frame_rate(experiment_repository.experiment_source_path(settings, int(experiment_id))),  # the times of the clusters are frames
+                excluded_segments=used.get("excluded_segments", []))  # [start, end) frames left out of the analysis
 
 
 def cluster_offsets(settings, experiment_id: int, step: str) -> dict:

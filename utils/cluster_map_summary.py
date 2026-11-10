@@ -157,7 +157,7 @@ def build_cluster_map_summary(sta_dir: str | Path, source_dir: str | Path, summa
 def save_cluster_map_summary(sta_dir: str | Path, source_dir: str | Path, summary_csv: str | Path | None = None, log=None) -> Path:
     """Build the summary and save it as <sta_dir>/cluster_map_summary.json. What the STA job and tools.cluster_map_summary call."""
     path = path_for(PathKind.CLUSTER_MAP_SUMMARY, sta_dir)
-    write_json(path, build_cluster_map_summary(sta_dir, source_dir, summary_csv, log))
+    write_json(path, build_cluster_map_summary(sta_dir, source_dir, summary_csv, log), indent=None)  # it holds a trace of every frame: compact
     return path
 
 
