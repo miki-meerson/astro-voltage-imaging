@@ -7,6 +7,28 @@
   {% include "_run_analysis.html" %}
 </section>
 
+<section class="panel" id="excluded-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Excluded segments</h2>
+      <p class="muted">Stretches of the recording to leave out of the analysis, for example where the image moved. The movie is <b>not cut</b>: its frames, the Suite2p traces, the spikes and your cleaning stay as they are, and nothing before the analysis is redone. The analysis leaves the frames out: no spike whose window (from before to after the spike) overlaps them is used, no chance copy is drawn from them, and the image shifts inside them do not count for the border the test leaves out. Hypotheses that were run before have to be <b>run again</b> (they say so below). Times are seconds of the recording shown in the traces of this tab.</p>
+    </div>
+  </div>
+  {% if excluded.error %}
+  <p class="muted">{{ excluded.error }}</p>
+  {% else %}
+  <form method="post" action="{{ url_for('experiment_excluded_segments', experiment_id=exp.id) }}" class="toolbar">
+    <label class="field" style="min-width: 22em">Segments to leave out (seconds: start-end, separated by commas)
+      <input type="text" name="segments" value="{{ excluded.text }}" placeholder="for example 120-180, 400-430">
+    </label>
+    <button class="secondary" type="submit">Save</button>
+  </form>
+  <p class="muted small">
+    {% if not excluded.segments %}Nothing is excluded. {% endif %}The recording has {{ excluded.frames }} frames ({{ "%.1f"|format(excluded.frames / excluded.fps) }} s).
+  </p>
+  {% endif %}
+</section>
+
 <section class="panel">
   <div class="panel-head">
     <div>
@@ -33,6 +55,7 @@
             <span class="chip {{ s.status }}">{{ s.status.replace("_", " ") }}</span>
             {% if s.waiting_for %}<div class="muted small">waiting for: {{ s.waiting_for | join(", ") }}</div>{% endif %}
             {% if s.results and s.status != "completed" %}<div class="muted small">results of run {{ s.results.run_id }}</div>{% endif %}
+            {% if s.results and not excluded.error and s.results.excluded_segments != excluded.segments %}<div class="small" style="color: var(--wait-fg)">made with other excluded segments: run it again</div>{% endif %}
             {% if s.results_warning %}<div class="muted small">{{ s.results_warning }}</div>{% endif %}
             {% if analysis_ready and s.status not in ("running", "pending", "waiting", "queued") %}<div><button class="secondary small" type="submit" form="run-analysis-form" name="hypothesis" value="{{ s.name }}">{{ "Rerun" if s.status != "not_run" else "Run" }}</button></div>{% endif %}
           </td>
@@ -49,7 +72,7 @@
           <td class="num">{{ "%g"|format(r.spikes_median) if r.spikes_median is not none else "&ndash;"|safe }}</td>
           <td class="num">{{ r.cells_significant }}{% if r.cells_significant_motion_suspected %} <span class="muted small" title="significant cells whose spikes line up with image motion">({{ r.cells_significant_motion_suspected }} motion?)</span>{% endif %}</td>
           <td class="num">{{ "%.1f"|format(r.cells_expected_by_chance) }}</td>
-          <td class="num">{{ "%.3f"|format(r.p_versus_chance) if r.p_versus_chance is not none else "&ndash;"|safe }}</td>
+          <td class="num">{{ r.p_versus_chance|pval }}</td>
           {% else %}
           <td colspan="7" class="muted">{% if s.status == "not_run" %}not run yet{% else %}no results yet{% endif %}</td>
           {% endif %}
@@ -117,7 +140,7 @@
           <td>{{ c.label }}</td><td class="num">{{ c.tested }}</td><td class="num">{{ c.significant }}</td>
           <td class="num">{{ "%.0f%%"|format(c.fraction * 100) if c.fraction is not none else "&ndash;"|safe }}</td>
           <td class="num">{% if c.ci %}{{ "%.0f"|format(c.ci[0] * 100) }}&ndash;{{ "%.0f"|format(c.ci[1] * 100) }}%{% else %}&ndash;{% endif %}</td>
-          <td class="num">{{ "%.3f"|format(c.p_vs_chance) if c.p_vs_chance is not none else "&ndash;"|safe }}</td>
+          <td class="num">{{ c.p_vs_chance|pval }}</td>
           <td class="num">{{ "%g"|format(c.spikes_median) if c.spikes_median is not none else "&ndash;"|safe }}</td>
         </tr>
         {% endfor %}
@@ -125,7 +148,7 @@
     </table>
   </div>
   {% if rt.comparison %}
-  <p>Soma &minus; dendrite: <b>{{ "%+.0f"|format(rt.comparison.difference * 100) }} percentage points</b> in the fraction of significant cells. Fisher's exact p = <b>{{ "%.3f"|format(rt.comparison.fisher_p) }}</b>; matched for spike count ({{ rt.comparison.strata }} group{{ "s" if rt.comparison.strata != 1 }} of spike counts) permutation p = <b>{{ "%.3f"|format(rt.comparison.matched_p) }}</b>.</p>
+  <p>Soma &minus; dendrite: <b>{{ "%+.0f"|format(rt.comparison.difference * 100) }} percentage points</b> in the fraction of significant cells. Fisher's exact p = <b>{{ rt.comparison.fisher_p|pval }}</b>; matched for spike count ({{ rt.comparison.strata }} group{{ "s" if rt.comparison.strata != 1 }} of spike counts) permutation p = <b>{{ "%.3f"|format(rt.comparison.matched_p) }}</b>.</p>
   {% else %}
   <p class="muted">{{ rt.comparison_message }}</p>
   {% endif %}
@@ -141,12 +164,17 @@
       <p id="cm-summary" class="muted">Loading...</p>
     </div>
   </div>
-  <p class="muted small">One card per cell, three cells per row. Top: the mean astro field of view with the cell's ROI (<span style="color:#f7d154"><b>yellow</b></span>) and its significant clusters (<span style="color:#ff5d6c"><b>red</b></span> = depolarizing, <span style="color:#4fa3ff"><b>blue</b></span> = hyperpolarizing; solid = <b>all</b> result type, dashed = <b>anatomy</b>; a ring marks each cluster, they are small). Below it: the mean astro trace of each cluster (left axis, shaded where the cluster is) and the cell's own spike-triggered neuron dF/F (yellow, right axis). Click the cell number to open the cell. Every plot zooms with the mouse wheel (Shift: time only, Alt: height only), pans by dragging and goes back with a double click. Open <b>individual spikes</b> under a card to see the moments the mean is made of: the mean of the cluster's pixels around every spike of the cell (thin) with their mean (bold), next to the same for the pixels right around the cluster (as many as the cluster has), on the same scale; under them the mean intensity of the same two groups of pixels over the whole recording, with the spikes of the cell as dashed vertical lines (the two plots zoom and pan together in time).</p>
+  <p class="muted small"><b>Raw traces</b>: choose a cell in the dropdown (only cells with a significant cluster are listed); a full-width plot per significant cluster of that cell shows the mean intensity of the cluster's pixels in every frame of the recording (<span style="color:#ff5d6c"><b>red</b></span> = depolarizing cluster, <span style="color:#4fa3ff"><b>blue</b></span> = hyperpolarizing; solid = <b>all</b> result type, dashed = <b>anatomy</b>; depolarization is up) with the spikes of the cell as dashed white vertical lines. The plots of a cell share the time: zoom or pan the time in one and the others follow, and each height fits the part of the trace that is shown (zoom the height by hand and it stays until the time changes). <b>Cards</b>: one card per cell with the mean astro field of view (the cell's ROI in <span style="color:#f7d154"><b>yellow</b></span>, its clusters outlined, a ring on each), the clusters' mean traces and the cell's own spike-triggered neuron dF/F (yellow, right axis), and under it, for each cluster, <b>individual spikes</b>: the mean of the cluster's pixels around every spike of the cell (thin) with their mean (bold), next to the same for the pixels right around the cluster (as many as the cluster has), on the same scale.</p>
+  <p class="muted small"><b>Zoom</b>: the mouse wheel zooms around the pointer; over the left axis it zooms the height only, over the time axis the time only (Shift: time only, Alt: height only anywhere in the plot); <b>Shift + drag</b> draws a box and zooms to it, as wide and as tall as you draw it (a thin box zooms one axis); drag pans; double click goes back to the whole plot. The field of view zooms with its proportions kept. Click the cell number on a card to open the cell.</p>
   <div class="ac-controls">
+    <label class="check">view <select id="cm-view" style="width:auto"><option value="raw" selected>raw traces (one cell at a time)</option><option value="cards">cards (field of view, traces, individual spikes)</option></select></label>
+    <label class="check" id="cm-cell-field">cell <select id="cm-cell" style="width:auto"></select></label>
     <span id="cm-types"></span>
     <label class="check"><input type="checkbox" id="cm-motion" checked> cells flagged for motion</label>
+    <button type="button" class="secondary" id="cm-pdf" title="Opens the print dialog with the cards of the cells that are listed: choose Save as PDF as the printer">Export cards to PDF</button>
   </div>
-  <div id="cm-grid" class="cm-grid"></div>
+  <div id="cm-raw" class="cm-raw"></div>
+  <div id="cm-grid" class="cm-grid" hidden></div>
 </section>
 
 <section class="panel" id="global-trends-panel">
@@ -161,7 +189,7 @@
       </label>
     </div>
   </div>
-  <p class="muted small">Slow signals that the whole field shares, taken from the movie of this hypothesis's run (they do not depend on any spike): the field-mean intensity and the image shifts. The map shows, for every pixel, how strongly the chosen signal drives it: <span style="color:#d0443c"><b>red</b></span> = strong, <span style="color:#4a7bd0"><b>blue</b></span> = weak. The dashed frame marks the inner edge of the border that the STA test leaves out (the border the image shifts of this recording expose); dotted lines in the traces are splices where bad segments were removed.</p>
+  <p class="muted small">Slow signals that the whole field shares, taken from the movie of this hypothesis's run (they do not depend on any spike): the field-mean intensity and the image shifts. The map shows, for every pixel, how strongly the chosen signal drives it: <span style="color:#d0443c"><b>red</b></span> = strong, <span style="color:#4a7bd0"><b>blue</b></span> = weak. The dashed frame marks the inner edge of the border that the STA test leaves out (the border the image shifts of this recording expose); dotted lines in the traces are splices where bad segments were removed; amber bands are the segments left out of the analysis (see Excluded segments).</p>
   <div class="gt-grid">
     <div><canvas id="gt-traces"></canvas></div>
     <div><canvas id="gt-map"></canvas><div id="gt-readout" class="muted small">&nbsp;</div></div>

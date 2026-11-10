@@ -29,6 +29,7 @@
       ctx.font = "11px sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
       for (const v of TimeAxis.nice(lo, hi, 4)) { ctx.strokeStyle = "#1c2630"; ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(W - R, Y(v)); ctx.stroke(); ctx.fillStyle = "#9aa8b7"; ctx.fillText(fmt(v), L - 6, Y(v)); }
       ctx.save(); ctx.beginPath(); ctx.rect(L, top, W - L - R, plotH); ctx.clip();
+      D.excluded.forEach(([a, b]) => { ctx.fillStyle = "rgba(240, 180, 60, 0.16)"; ctx.fillRect(X(a), top, X(b) - X(a), plotH); });  // the segments left out of the analysis
       D.cuts.forEach(c => { ctx.setLineDash([2, 4]); ctx.strokeStyle = "#5a6b7d"; ctx.beginPath(); ctx.moveTo(X(c), top); ctx.lineTo(X(c), top + plotH); ctx.stroke(); ctx.setLineDash([]); });
       group.forEach(s => {
         const on = s.name === chosen();

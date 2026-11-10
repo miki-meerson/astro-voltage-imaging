@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 
 import pandas as pd
-from scipy.stats import binomtest
 
 from app.db import run_repository
 from app.services import caches
@@ -15,6 +14,7 @@ from utils import globals_utils as g
 from utils.file_utils import read_json
 from utils.hypotheses import hypothesis_name, sta_step
 from utils.output_errors import missing_output_message
+from utils.sta_stats_utils import significant_fraction
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 
 
@@ -44,7 +44,7 @@ def _result_type_summary(rows: pd.DataFrame, used: dict) -> dict:
         "spikes_median": float(tested["n_peaks"].median()) if len(tested) else None,
         "spikes_removed_by_silence": int((rows["n_peaks_before_silence"] - rows["n_peaks"]).sum()),
         "cells_significant": n_sig, "cells_expected_by_chance": len(tested) * alpha,
-        "p_versus_chance": float(binomtest(n_sig, len(tested), alpha, alternative="greater").pvalue) if len(tested) else None,
+        "p_versus_chance": significant_fraction(n_sig, len(tested), alpha)["p_vs_chance"],
     }
     if g.MOTION_STATUS_COLUMN in tested:
         result["cells_significant_motion_suspected"] = int(((tested["n_significant_clusters"].fillna(0) > 0) & (tested[g.MOTION_STATUS_COLUMN] == g.MOTION_SUSPECTED)).sum())
@@ -62,14 +62,15 @@ def _pooled_summary(rows: pd.DataFrame) -> dict:
 
 
 def hypothesis_results(settings, experiment_id: int, step: str) -> dict:
-    """The numbers of the newest completed run of one hypothesis: {run_id, result_types: {name: numbers}, group_test (when the group test job has run)}."""
+    """The numbers of the newest completed run of one hypothesis: {run_id, result_types: {name: numbers}, group_test (when the group test job has run), excluded_segments (the
+    [start, end) frames left out of the analysis when it ran; [] for a run made before that could be set)}."""
     run, sta_dir = completed_sta_run(settings, experiment_id, step)
     table = pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta_dir))
     used = read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA used-parameters file", missing=missing_output_message("The used-parameters file", run["id"]))  # what the job really used
     pooled = hypothesis_for(step).pool_cells
     results = {str(name): _pooled_summary(rows) if pooled else _result_type_summary(rows, used) for name, rows in table.groupby(table["spike_group"].astype(str))}
     group_test = read_json(path_for(PathKind.GROUP_TEST, sta_dir), "The real-vs-fake group test", default=None)
-    return {"run_id": int(run["id"]), "result_types": results, "group_test": group_test}
+    return {"run_id": int(run["id"]), "result_types": results, "group_test": group_test, "excluded_segments": used.get("excluded_segments", [])}
 
 
 def waiting_for(settings, experiment_id: int, run: dict) -> list[str]:
@@ -116,7 +117,7 @@ def chosen_step(name: str | None) -> str:
 
 def cell_table(settings, experiment_id: int, step: str) -> dict:
     """The flags of every cell of the newest completed run of a hypothesis, from its summary csv: {run_id, cells: {cell: {spikes, spikes_before (before the
-    silence rule), significant, anatomy, motion}}}. significant: a significant cluster in any result type; anatomy: in the anatomy result type. Raises FileNotFoundError when the
+    silence rule), clusters, significant, anatomy, motion}}}. clusters: the significant clusters over all result types; significant: a significant cluster in any result type; anatomy: in the anatomy result type. Raises FileNotFoundError when the
     hypothesis has no completed run."""
     run, sta_dir = completed_sta_run(settings, experiment_id, step)
     csv = path_for(PathKind.STA_SUMMARY_CSV, sta_dir)
@@ -130,7 +131,7 @@ def cell_table(settings, experiment_id: int, step: str) -> dict:
     cells = {}
     for cell, rows in table.groupby("cell_id"):
         cells[int(cell)] = {
-            "spikes": int(rows["n_peaks"].max()), "spikes_before": int(rows["n_peaks_before_silence"].max()), "significant": bool(rows["significant"].any()),
+            "spikes": int(rows["n_peaks"].max()), "spikes_before": int(rows["n_peaks_before_silence"].max()), "clusters": int(rows["n_significant_clusters"].fillna(0).sum()), "significant": bool(rows["significant"].any()),
             "anatomy": bool(rows.loc[rows["spike_group"].astype(str) == g.ANATOMY_GROUP, "significant"].any()),
             "motion": str(rows[g.MOTION_STATUS_COLUMN].iloc[0]) if g.MOTION_STATUS_COLUMN in rows else g.MOTION_NOT_TESTED,
         }

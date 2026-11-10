@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.stats import binomtest, fisher_exact
+from scipy.stats import fisher_exact
 
 from app.services.hypothesis_summary import completed_sta_run, tested_cells
 from app.services.runs import hypothesis_for
 from app.services.suite2p_data import experiment_rois
 from utils import roi_classification as rc
 from utils.file_utils import read_json
+from utils.sta_stats_utils import significant_fraction
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for
 
@@ -28,11 +29,7 @@ NO_LABEL = "unclassified"
 def _class_row(label: str, tested: pd.DataFrame, alpha: float) -> dict:
     """The numbers of the tested cells of one class."""
     n, k = len(tested), int(tested["significant"].sum())
-    row = {"label": label, "tested": n, "significant": k, "fraction": k / n if n else None, "ci": None, "p_vs_chance": None, "spikes_median": float(tested["n_peaks"].median()) if n else None}
-    if n:
-        row["ci"] = list(binomtest(k, n).proportion_ci(confidence_level=0.95, method="wilson"))
-        row["p_vs_chance"] = float(binomtest(k, n, alpha, alternative="greater").pvalue)
-    return row
+    return {"label": label, "tested": n, "significant": k, **significant_fraction(k, n, alpha), "spikes_median": float(tested["n_peaks"].median()) if n else None}
 
 
 def _soma_vs_dendrite(tested: pd.DataFrame) -> dict:
