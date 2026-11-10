@@ -12,9 +12,11 @@ from app.db import experiment_repository as repo
 from app.db import neuron_repository
 from app.db.run_repository import latest_run
 from app.services.cell_views import pooled_row
+from app.services.excluded_segments import excluded_segments, set_excluded_segments
 from app.services.experiments import start_spike_detection
 from app.services.hypothesis_summary import cell_table, chosen_step, hypothesis_status, hypothesis_summaries, waiting_for
 from app.services.roi_class_stats import roi_class_statistics
+from app.services.roi_classes import roi_class_payload
 from app.services.run_views import build_validation_rows, run_view, validation_all_ok
 from app.services.runs import STA_RESULT_TYPES, hypothesis_for, sta_steps
 from app.services.spikes import current_suite2p_neurons, experiment_spike_review, spikes_edited_after_sta
@@ -90,22 +92,40 @@ def experiment_hypotheses(experiment_id):
         class_stats = roi_class_statistics(settings, data["exp"], step)
     except FileNotFoundError as exc:  # the hypothesis has no completed run, or Suite2p results are missing
         class_stats = {"available": False, "message": str(exc)}
+    try:
+        excluded = excluded_segments(settings, experiment_id)
+    except (FileNotFoundError, ValueError) as exc:  # no corrected movie to count the frames of, or a damaged file
+        excluded = {"error": str(exc), "segments": [], "listed": [], "text": ""}
     summaries = hypothesis_summaries(settings, experiment_id)
     n_tests = sum(len(summary["results"]["result_types"]) for summary in summaries if summary["results"])  # hypothesis x result type: each is one test per cell
-    return render_template("hypotheses.html", **data, summaries=summaries, selected=hypothesis_name(step), class_stats=class_stats, n_tests=n_tests, result_types=STA_RESULT_TYPES,
+    return render_template("hypotheses.html", **data, summaries=summaries, selected=hypothesis_name(step), class_stats=class_stats, excluded=excluded, n_tests=n_tests, result_types=STA_RESULT_TYPES,
                            sta_defaults=dict(settings.defaults.get("sta", {})), analysis_ready=data["exp"]["workflow_stage"] == repo.STAGE_ANALYSIS_READY)
 
 
-def _cell_list(settings, experiment_id: int, step: str, args) -> tuple[list[dict], dict | None, str]:
+@bp.post("/experiments/<int:experiment_id>/excluded-segments")
+def experiment_excluded_segments(experiment_id):
+    try:
+        set_excluded_segments(get_settings(), experiment_id, request.form.get("segments", ""))
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        return render_template("error.html", title="Excluded Segments", message=str(exc)), 400
+    return redirect(url_for("experiment_hypotheses", experiment_id=experiment_id))
+
+
+def _cell_list(settings, exp: dict, step: str, args) -> tuple[list[dict], dict | None, str]:
     """(the cells to list, the run of the hypothesis' table or None, a message when there is no table): the current Suite2p cells with their flags,
-    cut by the filters in the address (?significant=1, ?anatomy=1)."""
+    cut by the filters in the address (?significant=1, ?anatomy=1). Every cell also has its ROI type (soma / dendrite, None when the ROIs are not classified)."""
+    experiment_id = int(exp["id"])
     neurons = current_suite2p_neurons(repo.experiment_source_path(settings, experiment_id), repo.experiment_neurons(settings, experiment_id))
+    try:
+        roi_types = {entry["cell"]: entry["label"] for entry in roi_class_payload(settings, exp)["rois"]}
+    except FileNotFoundError:  # Suite2p has not run
+        roi_types = {}
     try:
         table = cell_table(settings, experiment_id, step)
     except FileNotFoundError as exc:
-        return [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"])} for n in neurons], None, str(exc)
+        return [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), "roi_type": roi_types.get(int(n["pipeline_neuron_id"]))} for n in neurons], None, str(exc)
     flags = table["cells"]
-    cells = [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), **flags.get(int(n["pipeline_neuron_id"]), {})} for n in neurons]
+    cells = [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), "roi_type": roi_types.get(int(n["pipeline_neuron_id"])), **flags.get(int(n["pipeline_neuron_id"]), {})} for n in neurons]
     if args.get("significant") == "1":
         cells = [cell for cell in cells if cell.get("significant")]
     if args.get("anatomy") == "1":
@@ -123,7 +143,7 @@ def experiment_cells(experiment_id):
         step = chosen_step(request.args.get("h"))
     except ValueError as exc:
         return render_template("error.html", title="Unknown Hypothesis", message=str(exc)), 400
-    cells, table, message = _cell_list(settings, experiment_id, step, request.args)
+    cells, table, message = _cell_list(settings, data["exp"], step, request.args)
     pooled = hypothesis_for(step).pool_cells  # one result for the whole experiment: the only "cell" of the list is the pooled one
     wanted = g.POOLED_CELL_ID if pooled else request.args.get("cell", type=int)
     if pooled and table is not None:

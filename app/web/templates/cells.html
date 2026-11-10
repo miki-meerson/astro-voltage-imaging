@@ -1,7 +1,7 @@
 {% extends "workspace.html" %}
 {% block tab %}
 {% set keep = {"h": selected_hypothesis, "significant": "1" if only_significant else None, "anatomy": "1" if only_anatomy else None} %}
-<div class="split">
+<div class="split cells-split">
   <section class="panel cell-list" style="margin:0">
     <div class="panel-head"><h3>Cells</h3><span class="muted small">{{ cells|length }} shown</span></div>
     <form method="get" class="stack">
@@ -12,12 +12,14 @@
     </form>
     <div class="table-wrap" style="margin-top:8px">
       <table>
-        <thead><tr><th>Cell</th><th class="num">Spikes</th><th></th></tr></thead>
+        <thead><tr><th>Cell</th><th class="num">Spikes</th><th class="num" title="significant clusters, all result types">Clusters</th><th>ROI type</th><th></th></tr></thead>
         <tbody>
           {% for cell in cells %}
           <tr{% if selected and selected.cell == cell.cell %} class="selected"{% endif %}>
             <td><a href="{{ url_for('experiment_cells', experiment_id=exp.id, cell=cell.cell, **keep) }}">{% if pooled %}All cells pooled{% else %}Cell {{ cell.cell }}{% endif %}</a></td>
             <td class="num">{{ cell.spikes if cell.spikes is defined else "" }}</td>
+            <td class="num">{{ cell.clusters if cell.clusters is defined else "" }}</td>
+            <td>{{ cell.roi_type or "" }}</td>
             <td>
               {% if cell.significant %}<span class="chip completed" title="a significant cluster in some result type">sig</span>{% endif %}
               {% if cell.anatomy %}<span class="chip running" title="a significant cluster in the anatomy result type">anat</span>{% endif %}
@@ -25,7 +27,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="3" class="muted">No cells to show.</td></tr>
+          <tr><td colspan="5" class="muted">No cells to show.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -67,6 +69,7 @@
       </div>
       <div class="stat"><div class="value">{{ cards | selectattr("n_significant") | list | length }}</div><div class="label">result types with a significant cluster</div></div>
       <div class="stat"><div class="value">{{ cards | sum(attribute="n_significant") }}</div><div class="label">significant clusters</div></div>
+      <div class="stat"><div class="value">{{ selected.roi_type or "not classified" }}</div><div class="label">ROI type (set on the Preprocessing page)</div></div>
       <div class="stat">
         <div class="value">{% if selected.motion == "ok" %}<span class="chip completed">ok</span>{% elif selected.motion == "motion_suspected" %}<span class="chip warn">motion?</span>{% else %}<span class="chip off">not tested</span>{% endif %}</div>
         <div class="label">motion test (do the spikes line up with image motion?)</div>
@@ -86,7 +89,7 @@
         <canvas class="result-plot" data-card="{{ loop.index0 }}"></canvas>
         <div class="cluster-list">
           {% for cluster in card.clusters %}
-          <div class="cluster-row"><span class="sign {{ 'dep' if cluster.polarity == 'depolarizing' else 'hyper' }}">{{ cluster.polarity }}</span> {{ "%+.2f"|format(cluster.first_rel / card.fps) }} &hellip; {{ "%+.2f"|format(cluster.last_rel / card.fps) }} s &middot; p {{ "%.3f"|format(cluster.p) }} &middot; {{ cluster.n_px }} px</div>
+          <div class="cluster-row"><span class="sign {{ 'dep' if cluster.polarity == 'depolarizing' else 'hyper' }}">{{ cluster.polarity }}</span> {{ "%+.2f"|format(cluster.first_rel / card.fps) }} &hellip; {{ "%+.2f"|format(cluster.last_rel / card.fps) }} s &middot; p {{ cluster.p|pval }} &middot; {{ cluster.n_px }} px</div>
           {% else %}
           <div class="cluster-row">{{ card.n_peaks }} spikes &middot; no significant cluster</div>
           {% endfor %}
@@ -153,7 +156,7 @@
         <div class="card-head">
           <b>{{ series.label }}</b>
           {% if series.p is none %}<span class="chip off">no data</span>
-          {% else %}<span class="chip {{ 'warn' if motion.verdict == 'flag' and series.p <= motion.alpha else 'off' }}" title="p of this measure alone, not corrected for the 5 measures">p {{ "%.3f"|format(series.p) }} &middot; z {{ "%.1f"|format(series.z) }}</span>{% endif %}
+          {% else %}<span class="chip {{ 'warn' if motion.verdict == 'flag' and series.p <= motion.alpha else 'off' }}" title="p of this measure alone, not corrected for the 5 measures">p {{ series.p|pval }} &middot; z {{ "%.1f"|format(series.z) }}</span>{% endif %}
         </div>
         <canvas class="result-plot motion-plot" data-motion="{{ loop.index0 }}"></canvas>
       </div>
@@ -175,6 +178,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/cell_list.js') }}"></script>
 {% if selected and not message %}
 <script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
 <script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
