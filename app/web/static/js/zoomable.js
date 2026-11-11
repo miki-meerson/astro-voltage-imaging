@@ -1,10 +1,19 @@
-// Zoom / pan / fit / 1:1 / fullscreen for every .zv box (images or the movie stage). Exposes zoomable(host) and sets host._zv = {fit}.
+// Zoom / pan / fit / 1:1 / fullscreen for every .zv box (images or the movie stage). Exposes zoomable(host) and sets host._zv = {fit, update}.
+// The scale bar: a page that knows what one pixel of its picture is sets host.dataset.um (micrometres per pixel of the content, with the binning of the picture in it) and calls
+// host._zv.update(); the bar then follows every zoom (scale_bar.js has the lengths).
 // ---- zoom / pan / fit / 1:1 / fullscreen for every .zv box -------------------------------------------------------
 function zoomable(host) {
   const content = host.firstElementChild;
   const st = {k: 1, x: 0, y: 0, fit: true};
   const nat = () => content.tagName === "IMG" ? [content.naturalWidth, content.naturalHeight] : [content.offsetWidth, content.offsetHeight];
-  const apply = () => { content.style.transform = `translate(${st.x}px,${st.y}px) scale(${st.k})`; };
+  const scale = document.createElement("div"); scale.className = "zv-scale"; scale.innerHTML = "<span></span><i></i>"; host.appendChild(scale);
+  function updateScale() {
+    const um = Number(host.dataset.um);
+    if (!um) { scale.style.display = "none"; return; }
+    const perScreenPixel = um / st.k, length = ScaleBar.roundLength(host.clientWidth * perScreenPixel);
+    scale.style.display = "block"; scale.firstChild.textContent = ScaleBar.label(length); scale.lastChild.style.width = `${length / perScreenPixel}px`;
+  }
+  const apply = () => { content.style.transform = `translate(${st.x}px,${st.y}px) scale(${st.k})`; updateScale(); };
   let autoH = true, setH = null;
   function sizeBox(w, h) {  // height follows the picture's aspect ratio at the available width, capped to the window
     if (!autoH || document.fullscreenElement === host || !host.clientWidth) return;
@@ -45,7 +54,7 @@ function zoomable(host) {
     if (st.fit) fit();
   }).observe(host);
   if (content.tagName === "IMG") { content.addEventListener("load", fit); if (content.complete && content.naturalWidth) fit(); }
-  host._zv = {fit};
+  host._zv = {fit, update: updateScale};
 }
 
 document.querySelectorAll(".zv").forEach(zoomable);

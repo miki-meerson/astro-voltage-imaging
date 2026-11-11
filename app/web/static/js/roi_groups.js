@@ -181,6 +181,7 @@
       for (const c of [base, ovl]) { c.width = W * S; c.height = H * S; }
       stage.style.width = W * S + "px"; stage.style.height = H * S + "px";
       base.getContext("2d").drawImage(image, 0, 0, W * S, H * S);
+      if (ScaleBar.PIXEL_UM) stage.parentNode.dataset.um = ScaleBar.umPerPixel() / S;  // the field of view is at the recorded pixels
       request("roi-groups.json").then(payload => { setPayload(payload); stage.parentNode._zv.fit(); }).catch(error => { $("rg-summary").textContent = error.message; });
     };
     image.onerror = () => { $("rg-summary").textContent = "The field of view could not be loaded: the mean image of the neuron channel is missing (the motion correction step saves it)."; };

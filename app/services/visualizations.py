@@ -17,8 +17,9 @@ from utils.cluster_result import cluster_records, load_cluster_result
 from utils.db_utils import collect_cluster_result_metadata
 from utils.format_utils import format_p
 from utils.hypotheses import hypothesis_name
-from utils.movie_utils import get_mean_images, read_frame_rate
+from utils.movie_utils import get_mean_images, read_frame_rate, read_pixel_size_um
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths, sta_dir_of_run
+from utils.scale_bar import format_length_um, scale_bar_length_um, um_per_pixel
 from utils.suite2p_utils import suite2p_roi_mask
 
 RESULT_ORDER = {
@@ -73,12 +74,26 @@ def _overlay_mask_pixels(base: Image.Image, mask: np.ndarray, color: str, alpha:
     return Image.alpha_composite(base.convert("RGBA"), Image.fromarray(rgba, mode="RGBA"))
 
 
-def _fit_tile(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+def draw_scale_bar(image: Image.Image, um_per_px: float, left: int = 12) -> Image.Image:
+    """`image` with a scale bar in its bottom left corner (`left` pixels from the left edge): a round length (utils/scale_bar.py) of at most a fifth of its width, white on a dark
+    outline, with its label above. `um_per_px`: micrometres in one pixel of `image`. Draws on the image itself and returns it."""
+    length_um = scale_bar_length_um(image.width * um_per_px)
+    y, end = image.height - 14, left + length_um / um_per_px
+    draw = ImageDraw.Draw(image)
+    for color, width in ((PANEL, 7), ("#ffffff", 3)):
+        draw.line((left, y, end, y), fill=color, width=width)
+    draw.text((left, y - 26), format_length_um(length_um), fill="#ffffff", font=_font(15), stroke_width=2, stroke_fill=PANEL)
+    return image
+
+
+def _fit_tile(image: Image.Image, size: tuple[int, int], um_per_px: float | None = None) -> Image.Image:
+    """`image` fitted into a tile of `size` (the whole image, centred), with a scale bar when `um_per_px` (micrometres in one pixel of `image`) is given."""
     tile = Image.new("RGBA", size, PANEL)
     scale = min(size[0] / max(image.width, 1), size[1] / max(image.height, 1))
     work = image.resize((max(1, int(round(image.width * scale))), max(1, int(round(image.height * scale)))), Image.Resampling.BICUBIC)
-    tile.alpha_composite(work.convert("RGBA"), ((size[0] - work.width) // 2, (size[1] - work.height) // 2))
-    return tile
+    offset = ((size[0] - work.width) // 2, (size[1] - work.height) // 2)
+    tile.alpha_composite(work.convert("RGBA"), offset)
+    return tile if um_per_px is None else draw_scale_bar(tile, um_per_px / scale, offset[0] + 12)
 
 
 def _message(title: str, message: str) -> BytesIO:
@@ -156,9 +171,10 @@ def _load_result(path):
 
 def cell_result_cards(settings: Settings, neuron_row, step: str) -> list[dict]:
     """One card per result type of a cell for the Cells tab: {result_type, title, n_peaks, n_significant, tested_window, fps, clusters: [{polarity, p,
-    first_rel, last_rel, n_px, t, trace}]} with plain numbers only (the page draws the plots). Raises FileNotFoundError when there is nothing to show."""
+    first_rel, last_rel, n_px (pixels of the result), area_um2, t, trace}]} with plain numbers only (the page draws the plots). Raises FileNotFoundError when there is nothing to show and
+    ValueError when the pixel size cannot be read from Experiment.xml."""
     _, _, rows = _result_rows(settings, neuron_row, step)
-    fps = read_frame_rate(neuron_row["source_path"])
+    fps, pixel_um = read_frame_rate(neuron_row["source_path"]), read_pixel_size_um(neuron_row["source_path"])
     cards = []
     for row in rows.itertuples():
         effect, t_rel, clusters, meta = _load_result(row.path)
@@ -167,6 +183,7 @@ def cell_result_cards(settings: Settings, neuron_row, step: str) -> list[dict]:
             mask = record.pop("mask")
             found.append({
                 **record, "polarity": polarity.polarity_from_sign(record["sign"]), "n_px": int(mask.sum()),
+                "area_um2": round(int(mask.sum()) * um_per_pixel(pixel_um, int(meta["spatial_bin"])) ** 2, 1),  # a pixel of the result is a block of recorded pixels
                 "t": [round(float(v), 2) for v in record["t"]], "trace": [round(float(v), 5) for v in record["trace"]],
             })
         cards.append({
@@ -218,24 +235,27 @@ def render_result_map(settings: Settings, neuron_row, step: str, result_type: st
             stat_cells = experiment_stat_cells(source_path)
         except (OSError, ValueError, IndexError, KeyError) as exc:
             return _message("STA map", f"Could not read Suite2p outlines: {exc}")
-        image = _map_image(paths, stat_cells, int(neuron_row["pipeline_neuron_id"]), _load_result(row.path))
+        result = _load_result(row.path)
+        image = _map_image(paths, stat_cells, int(neuron_row["pipeline_neuron_id"]), result)
         if image is None:
             return _message("STA map", "The mean image of this result is missing.")
-    except FileNotFoundError as exc:
+        um_per_px = um_per_pixel(read_pixel_size_um(source_path), int(result[3]["spatial_bin"]))  # a pixel of the map is a block of recorded pixels
+    except (FileNotFoundError, ValueError) as exc:  # a missing file, or no pixel size in Experiment.xml: the picture says so
         return _message("STA map", str(exc))
-    response = _image_response(_fit_tile(image, (MAP_SIZE, MAP_SIZE)))
+    response = _image_response(_fit_tile(image, (MAP_SIZE, MAP_SIZE), um_per_px))
     caches.STA_SUMMARY_PNG.put(key, response.getvalue())
     response.seek(0)
     return response
 
 
 MOTION_SERIES_LABELS = {
-    "dy": "Registration shift dy (px)",
-    "dx": "Registration shift dx (px)",
-    "shift_mag": "Shift magnitude (px)",
-    "jerk": "Frame-to-frame jerk (px)",
+    "dy": "Registration shift dy (µm)",
+    "dx": "Registration shift dx (µm)",
+    "shift_mag": "Shift magnitude (µm)",
+    "jerk": "Frame-to-frame jerk (µm)",
     "reg_corr": "Registration quality (corr. to mean)",
 }
+MOTION_LENGTH_SERIES = ("dy", "dx", "shift_mag", "jerk")  # saved in recorded pixels, shown in micrometres
 
 
 def _motion_verdict(flag: bool, p_family: float, alpha: float, p_floor: float) -> tuple[str, str]:
@@ -262,13 +282,15 @@ def cell_motion(settings: Settings, neuron_row, step: str) -> dict:
     def numbers(values):
         return [None if not np.isfinite(v) else round(float(v), 6) for v in np.asarray(values, dtype=float).ravel()]
 
+    pixel_um = read_pixel_size_um(neuron_row["source_path"])  # raises when Experiment.xml has no pixel size: the shifts cannot be given in micrometres
     with np.load(path, allow_pickle=True) as d:
         names = [str(n) for n in d["series_names"]]
         rels = [int(v) for v in np.asarray(d["rels_analysis"]).ravel()]
         flag, p_family, alpha, p_floor = bool(d["flag"]), float(d["p_family"]), float(d["flag_alpha"]), float(d["p_floor"])
+        unit = {name: pixel_um if name in MOTION_LENGTH_SERIES else 1.0 for name in names}  # micrometres per saved unit
         series = [{
-            "name": name, "label": MOTION_SERIES_LABELS.get(name, name), "rels": rels, "observed": numbers(d["observed"][i]), "null_mean": numbers(d["null_mean"][i]),
-            "null_sd": numbers(d["null_sd"][i]), "p": numbers([d["p"][i]])[0], "z": numbers([d["z"][i]])[0],
+            "name": name, "label": MOTION_SERIES_LABELS.get(name, name), "rels": rels, "observed": numbers(np.asarray(d["observed"][i]) * unit[name]), "null_mean": numbers(np.asarray(d["null_mean"][i]) * unit[name]),
+            "null_sd": numbers(np.asarray(d["null_sd"][i]) * unit[name]), "p": numbers([d["p"][i]])[0], "z": numbers([d["z"][i]])[0],
         } for i, name in enumerate(names)]
         n_peaks = int(d["n_peaks_used"])
     verdict, text = _motion_verdict(flag, p_family, alpha, p_floor)

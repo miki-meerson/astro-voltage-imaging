@@ -177,9 +177,9 @@
     ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(X(frame), 4); ctx.lineTo(X(frame), h - 16); ctx.stroke(); ctx.lineWidth = 1;
     ctx.fillStyle = "#9aa8b7"; ctx.textBaseline = "bottom"; ctx.fillText(`${fmtSec(rel(0))} s`, L, h - 1); ctx.textAlign = "right"; ctx.fillText(`${fmtSec(rel(T - 1))} s`, w - 8, h - 1); ctx.textAlign = "left";
     ctx.fillStyle = "#9aa8b7"; ctx.textBaseline = "top"; ctx.fillText("up = depolarization, down = hyperpolarization", L + 4, 0); ctx.textBaseline = "bottom";
-    note.innerHTML = `Change from baseline${unit === "%" ? " (% dF/F; up = depolarization)" : unit}: ` +
-      G.groups.map(g => `<span style="color:${COL[g.sign]}">${Polarity.of(g.sign)} cluster pixels (${g.idx.length} px)</span>`).join(", ") +
-      `, <span style="color:#c5ced8">all other pixels (${G.others.length} px)</span>. Shaded: 5-95% of 120 random compact patches of other pixels with the same pixel count.`;
+    note.innerHTML = `Change from baseline${unit === "%" ? " (% dF/F)" : unit}: ` +
+      G.groups.map(g => `<span style="color:${COL[g.sign]}">${Polarity.of(g.sign)} cluster pixels (${areaText(g.idx.length)})</span>`).join(", ") +
+      `, <span style="color:#c5ced8">all other pixels (${areaText(G.others.length)})</span>. Grey band: random patches of other pixels of the same area.`;
   }
   function niceStep(raw) { const p = 10 ** Math.floor(Math.log10(raw || 1)), r = raw / p; return (r < 1.5 ? 1 : r < 3.5 ? 2 : r < 7.5 ? 5 : 10) * p; }
   const fromGroups = e => { const r = groupsCv.getBoundingClientRect(); show(((e.clientX - r.left - 40) / Math.max(1, r.width - 48)) * (M.frames - 1)); };
@@ -187,12 +187,15 @@
   groupsCv.addEventListener("pointerdown", e => { stop(); dragG = true; groupsCv.setPointerCapture(e.pointerId); fromGroups(e); });
   groupsCv.addEventListener("pointermove", e => { if (dragG) fromGroups(e); });
   groupsCv.addEventListener("pointerup", () => { dragG = false; });
+  const binOf = () => M.spatial_bin || 1;  // recorded pixels per movie pixel (the movie of the whole field is binned; the crop around the cell is not)
+  const sizeText = () => ScaleBar.PIXEL_UM ? `${ScaleBar.length(M.width, binOf()).toFixed(0)} x ${ScaleBar.length(M.height, binOf()).toFixed(0)} ${ScaleBar.UNIT}` : `${M.width}x${M.height} px`;
+  const areaText = pixels => `${ScaleBar.area(pixels, binOf()).toFixed(0)} ${ScaleBar.AREA_UNIT}`;
   function show(f) {
     frame = Math.max(0, Math.min(M.frames - 1, Math.round(f)));
     scrub.value = frame; drawBase(); drawOverlay(); drawTrace(); drawGroups();
     const tags = [];
     if (rel(frame) === 0) tags.push("SPIKE");
-    info.textContent = `${M.width}x${M.height} px, ${M.n_peaks} spikes` + (tags.length ? "  |  " + tags.join(" + ") : "");
+    info.textContent = `${sizeText()}, ${M.n_peaks} spikes` + (tags.length ? "  |  " + tags.join(" + ") : "");
     info.style.color = tags.length ? COL.neuron : "";
     info.style.fontWeight = tags.length ? "700" : "";
     readout.textContent = `frame ${frame + 1}/${M.frames} | ${fmtSec(rel(frame))} s (${fmtRel(rel(frame))} frames)` +
@@ -236,10 +239,11 @@
       ovl.width = M.width * S; ovl.height = M.height * S;
       base.style.width = ovl.style.width = M.width * S + "px"; base.style.height = ovl.style.height = M.height * S + "px";
       stage.style.width = M.width * S + "px"; stage.style.height = M.height * S + "px";
+      if (ScaleBar.PIXEL_UM) stage.parentNode.dataset.um = ScaleBar.umPerPixel(binOf()) / S; else delete stage.parentNode.dataset.um;  // the scale bar: a movie pixel is a block of recorded pixels
       buildBaseMap();
       win = globalWindow();
       scrub.max = M.frames - 1;
-      info.textContent = `${M.width}x${M.height} px, ${M.n_peaks} spikes`;
+      info.textContent = `${sizeText()}, ${M.n_peaks} spikes`;
       buildGroups();
       show(Math.max(0, M.relative_frames.indexOf(0)));
       stage.parentNode._zv.fit();

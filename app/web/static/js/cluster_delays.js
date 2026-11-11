@@ -17,6 +17,7 @@
   const measure = () => $("dd-measure").value;
   const usable = () => D.points.filter(p => p.distances[measure()] !== null);
   const ms = seconds => seconds * 1000;
+  const dist = pixels => ScaleBar.length(pixels);  // the distances are measured in recorded pixels: micrometres on the page
   const pointsOf = cell => usable().filter(p => p.cell === cell);
   const label = p => `${p.result_type}, ${p.sign}${p.p == null ? "" : ", p=" + pValue(p.p)}`;
 
@@ -25,7 +26,7 @@
     pts = [];
     ctx.font = "12px sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left";
     if (!data.length) { ctx.fillStyle = TEXT; ctx.fillText("No clusters with this distance", 20, 30); return; }
-    const xs = data.map(p => p.distances[key]), ys = data.map(p => ms(p.delay));
+    const xs = data.map(p => dist(p.distances[key])), ys = data.map(p => ms(p.delay));
     const xMax = Math.max(...xs) * 1.08 || 1, span = Math.max(...ys.map(Math.abs), 10) * 1.15;
     const X = v => L + v / xMax * (W - L - R), Y = v => T + (1 - (v + span) / (2 * span)) * (H - T - B);
     ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.font = "11px sans-serif";
@@ -33,24 +34,24 @@
     ctx.textAlign = "center"; ctx.textBaseline = "top";
     TimeAxis.nice(0, xMax, 8).forEach(v => { ctx.strokeStyle = GRID; ctx.beginPath(); ctx.moveTo(X(v), T); ctx.lineTo(X(v), H - B); ctx.stroke(); ctx.fillStyle = TEXT; ctx.fillText(fmt(v), X(v), H - B + 4); });
     const stat = D.stats[key];
-    if (stat) {  // the straight line the slope is of (seconds per pixel -> milliseconds)
+    if (stat) {  // the straight line the slope is of (seconds per pixel -> milliseconds per micrometre)
       ctx.strokeStyle = "#e7edf4"; ctx.lineWidth = 1.4; ctx.setLineDash([6, 4]); ctx.beginPath();
-      ctx.moveTo(X(0), Y(ms(stat.intercept))); ctx.lineTo(X(xMax), Y(ms(stat.intercept + stat.slope * xMax))); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+      ctx.moveTo(X(0), Y(ms(stat.intercept))); ctx.lineTo(X(xMax), Y(ms(stat.intercept + stat.slope * xMax / dist(1)))); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
     }
     data.forEach(p => {
-      const x = X(p.distances[key]), y = Y(ms(p.delay));
+      const x = X(dist(p.distances[key])), y = Y(ms(p.delay));
       ctx.globalAlpha = 0.85; ctx.fillStyle = Polarity.color(p.sign); ctx.beginPath();
       if (p.result_type === "all") ctx.rect(x - 5, y - 5, 10, 10); else ctx.arc(x, y, 5, 0, 2 * Math.PI);
       ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = "#0b0f14"; ctx.stroke(); pts.push({x, y, p});
     });
     if (current && current.distances[key] !== null) {  // the cluster the picture on the right shows
-      ctx.strokeStyle = BRIGHT; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(current.distances[key]), Y(ms(current.delay)), 9, 0, 2 * Math.PI); ctx.stroke(); ctx.lineWidth = 1;
+      ctx.strokeStyle = BRIGHT; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(dist(current.distances[key])), Y(ms(current.delay)), 9, 0, 2 * Math.PI); ctx.stroke(); ctx.lineWidth = 1;
     }
     ctx.fillStyle = BRIGHT; ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    ctx.fillText(`distance, ${MEASURES[key]} (px)`, L + (W - L - R) / 2, H - 4);
+    ctx.fillText(`distance, ${MEASURES[key]} (${ScaleBar.UNIT})`, L + (W - L - R) / 2, H - 4);
     ctx.save(); ctx.translate(12, T + (H - T - B) / 2); ctx.rotate(-Math.PI / 2); ctx.fillText("cluster peak minus neuron peak (ms)", 0, 0); ctx.restore();
     ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = TEXT; ctx.font = "11px sans-serif";
-    ctx.fillText(stat ? `${key}: n=${stat.n}, Spearman rho=${stat.rho.toFixed(2)}, p=${pValue(stat.p)}; line ${ms(stat.slope).toFixed(2)} ms/px, p=${pValue(stat.slope_p)}` : `${key}: too few points for a correlation`, L, 5);
+    ctx.fillText(stat ? `${key}: n=${stat.n}, Spearman rho=${stat.rho.toFixed(2)}, p=${pValue(stat.p)}; line ${(ms(stat.slope) / dist(1)).toFixed(2)} ms/${ScaleBar.UNIT}, p=${pValue(stat.slope_p)}` : `${key}: too few points for a correlation`, L, 5);
   }
 
   // The mean astro image as the background, with the neuron's ROI (grey), the cluster the distance is computed by (coloured) and the two points the distance of the chosen kind is
@@ -77,7 +78,8 @@
     if (axis) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(X(current.paths.along[1][1]), Y(current.paths.along[1][0]), 3, 0, 2 * Math.PI); ctx.fill(); }
     mark(neuronPoint, Polarity.NEURON); mark(clusterPoint, Polarity.color(current.sign));
     ctx.font = "12px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = BRIGHT;
-    ctx.fillText(full ? `field of view, cell ${current.cell}` : `${key} ${current.distances[key].toFixed(1)} px`, 8, 6);
+    ctx.fillText(full ? `field of view, cell ${current.cell}` : `${key} ${dist(current.distances[key]).toFixed(1)} ${ScaleBar.UNIT}`, 8, 6);
+    ScaleBar.draw(ctx, W, H, ScaleBar.umPerPixel() / scale);
     if (!full) { ctx.font = "11px sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "bottom"; ctx.fillStyle = Polarity.NEURON; ctx.fillText("on the neuron", W - 6, H - 18); ctx.fillStyle = Polarity.color(current.sign); ctx.fillText("on the cluster", W - 6, H - 4); }
   }
 
@@ -176,7 +178,7 @@
     const hit = near(e, canvas.getBoundingClientRect());
     if (!hit) { tip.style.display = "none"; canvas.style.cursor = "default"; return; }
     const p = hit.o.p; canvas.style.cursor = "pointer";
-    tip.innerHTML = `Cell ${p.cell} &middot; ${p.result_type} &middot; ${p.sign}<br>delay ${ms(p.delay).toFixed(0)} ms &middot; ${measure()} ${p.distances[measure()].toFixed(1)} px &middot; p=${p.p == null ? "n/a" : pValue(p.p)} &middot; ${p.n_px} px${p.clear ? "" : " &middot; peak on the edge of its window"}`;
+    tip.innerHTML = `Cell ${p.cell} &middot; ${p.result_type} &middot; ${p.sign}<br>delay ${ms(p.delay).toFixed(0)} ms &middot; ${measure()} ${dist(p.distances[measure()]).toFixed(1)} ${ScaleBar.UNIT} &middot; p=${p.p == null ? "n/a" : pValue(p.p)} &middot; ${ScaleBar.area(p.n_px).toFixed(0)} ${ScaleBar.AREA_UNIT}${p.clear ? "" : " &middot; peak on the edge of its window"}`;
     tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px";
   });
   canvas.addEventListener("mouseleave", () => { tip.style.display = "none"; });

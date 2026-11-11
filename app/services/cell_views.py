@@ -152,6 +152,16 @@ def _pack_stack(movie: np.ndarray, header: dict) -> bytes:
     return struct.pack("<I", len(header_bytes)) + header_bytes + q.tobytes()
 
 
+def binned_roi_pixels(source_path: str | Path, cell: int, spatial_bin: int, height: int, width: int) -> list[list[int]]:
+    """The cell's Suite2p ROI in the pixels of a `height` x `width` movie binned by `spatial_bin`, as [[y, x], ...]: an optional marker, [] when the Suite2p files cannot be read."""
+    try:
+        ys, xs = roi_pixels(experiment_stat_cells(source_path)[int(cell)])
+        binned = np.unique(np.stack([np.asarray(ys) // spatial_bin, np.asarray(xs) // spatial_bin], axis=1), axis=0)
+        return binned[(binned[:, 0] < height) & (binned[:, 1] < width)].tolist()
+    except (OSError, IndexError, KeyError):
+        return []
+
+
 def sta_all_stack_payload(all_npz: Path, source_path: str | Path, pipeline_neuron_id: int) -> bytes:
     """The STA movie of the 'all' result of a cell (the whole field, at the spatial bin of the run) as one payload, like sta_crop_stack_payload: read from the movie the
     result file holds, with its significant clusters in the pixels of that movie. Raises FileNotFoundError when the result is missing."""
@@ -175,12 +185,7 @@ def sta_all_stack_payload(all_npz: Path, source_path: str | Path, pipeline_neuro
             if len(pixels):
                 clusters.append({**cluster_basic_fields(c, window_start, time_bin), "centroid": [float(pixels[:, 0].mean()), float(pixels[:, 1].mean())], "pixels": pixels.tolist()})
     rel = np.arange(-pre, post + 1, dtype=int)
-    try:  # the cell's Suite2p ROI in the pixels of the binned movie: an optional marker, [] when the Suite2p files cannot be read
-        ys, xs = roi_pixels(experiment_stat_cells(source_path)[int(pipeline_neuron_id)])
-        binned = np.unique(np.stack([np.asarray(ys) // spatial_bin, np.asarray(xs) // spatial_bin], axis=1), axis=0)
-        roi = binned[(binned[:, 0] < movie.shape[1]) & (binned[:, 1] < movie.shape[2])].tolist()
-    except (OSError, IndexError, KeyError):
-        roi = []
+    roi = binned_roi_pixels(source_path, int(pipeline_neuron_id), spatial_bin, movie.shape[1], movie.shape[2])
     payload = _pack_stack(movie, {
         "relative_frames": rel.tolist(), "fps": fps, "baseline_window": baseline, "n_peaks": int(peaks.size), "result_type": g.ALL_GROUP, "spatial_bin": spatial_bin,
         "neuron": {"pixels": roi, **_neuron_trace(source_path, int(pipeline_neuron_id), peaks, rel)}, "anatomy_clusters": clusters,

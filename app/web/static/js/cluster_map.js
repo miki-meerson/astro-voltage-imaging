@@ -33,6 +33,7 @@
       ctx.beginPath(); ctx.arc(c.center[1] * scale, c.center[0] * scale, 10, 0, 2 * Math.PI); ctx.stroke(); ctx.globalAlpha = 1;
     }
     ctx.restore();
+    ScaleBar.draw(ctx, W, H, ScaleBar.umPerPixel() / scale);  // the image is the field of view at the recorded pixels
   }
 
   // the frame of a plot of traces against the seconds from the spike: the grid, the ticks of the left axis, the time axis and the line at the spike, for the shown ranges
@@ -89,7 +90,7 @@
     ctx.globalAlpha = 0.28; rows.forEach(r => line(ctx, t, r, X, Y, color, 0.8)); ctx.globalAlpha = 1;
     line(ctx, t, mean, X, Y, color, 2.6);
     ctx.restore();
-    ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = "10px sans-serif"; ctx.fillStyle = FG; ctx.fillText(`${title} (${rows.length} spikes, ${c.n_px} px)`, a.L + 4, 3);
+    ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = "10px sans-serif"; ctx.fillStyle = FG; ctx.fillText(`${title} (${rows.length} spikes, ${ScaleBar.area(c.n_px).toFixed(0)} ${ScaleBar.AREA_UNIT})`, a.L + 4, 3);
   }
 
   function spikeSection(card, c) {
@@ -139,6 +140,7 @@
     ctx.restore();
     ctx.font = "11px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.fillStyle = FG;
     ctx.fillText("bold filled outline: neuron ROI   |   dashed ring: its clusters", 6, H - 5);
+    ScaleBar.draw(ctx, W, H, ScaleBar.umPerPixel() / scale, true);
   }
 
   // the spikes of the cells of a group over the whole recording, one row per cell: the ticks line up when the spikes are the same

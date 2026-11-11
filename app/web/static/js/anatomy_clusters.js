@@ -56,23 +56,24 @@
     const [ctx, W, H] = setup($("ac-scatter")), L = 46, R = 14, T = 26, B = 40;
     pts = [];
     if (!shown().length) return;
-    const maxAbs = Math.max(8, ...shown().map(c => Math.max(Math.abs(c.dx), Math.abs(c.dy)))) * 1.18;
+    const u = ScaleBar.length;  // the offsets are in recorded pixels: the plot is in micrometres
+    const maxAbs = Math.max(u(8), ...shown().map(c => Math.max(Math.abs(u(c.dx)), Math.abs(u(c.dy))))) * 1.18;
     const side = Math.min(W - L - R, H - T - B), cx0 = L + (W - L - R) / 2, cy0 = T + (H - T - B) / 2, k = side / 2 / maxAbs;
     const PX = x => cx0 + x * k, PY = y => cy0 + y * k;  // image orientation: +dy points down
     ctx.font = "11px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
     const rings = niceTicks(0, maxAbs, 4).filter(r => r > 0);
-    rings.forEach(r => { ctx.strokeStyle = "#26303a"; ctx.beginPath(); ctx.arc(cx0, cy0, r * k, 0, 2 * Math.PI); ctx.stroke(); ctx.fillStyle = "#7d8c9c"; ctx.fillText(`${fmt(r)} px`, cx0 + r * k * 0.707 + 2, cy0 - r * k * 0.707 - 2); });
+    rings.forEach(r => { ctx.strokeStyle = "#26303a"; ctx.beginPath(); ctx.arc(cx0, cy0, r * k, 0, 2 * Math.PI); ctx.stroke(); ctx.fillStyle = "#7d8c9c"; ctx.fillText(`${fmt(r)} ${ScaleBar.UNIT}`, cx0 + r * k * 0.707 + 2, cy0 - r * k * 0.707 - 2); });
     ctx.strokeStyle = "#3b4a5b"; ctx.beginPath(); ctx.moveTo(cx0 - side / 2, cy0); ctx.lineTo(cx0 + side / 2, cy0); ctx.moveTo(cx0, cy0 - side / 2); ctx.lineTo(cx0, cy0 + side / 2); ctx.stroke();
     ctx.strokeStyle = Polarity.NEURON; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx0 - 6, cy0); ctx.lineTo(cx0 + 6, cy0); ctx.moveTo(cx0, cy0 - 6); ctx.lineTo(cx0, cy0 + 6); ctx.stroke(); ctx.lineWidth = 1;
     shown().forEach(c => {
-      const x = PX(c.dx), y = PY(c.dy); ctx.globalAlpha = 0.85; ctx.fillStyle = Polarity.color(c.sign); ctx.beginPath();
+      const x = PX(u(c.dx)), y = PY(u(c.dy)); ctx.globalAlpha = 0.85; ctx.fillStyle = Polarity.color(c.sign); ctx.beginPath();
       if (c.result_type === "all") ctx.rect(x - 5, y - 5, 10, 10); else ctx.arc(x, y, 5, 0, 2 * Math.PI);
       ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = "#0b0f14"; ctx.stroke(); pts.push({x, y, c});
     });
     ctx.fillStyle = "#edf3fa"; ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    ctx.fillText("dx from ROI centre (px)", cx0, H - 4);
-    ctx.save(); ctx.translate(12, cy0); ctx.rotate(-Math.PI / 2); ctx.fillText("dy from ROI centre (px, + = down)", 0, 0); ctx.restore();
-    const med = g => { const d = shown().filter(c => Polarity.of(c.sign) === g).map(c => c.dist); return d.length ? `${g}: median ${median(d).toFixed(1)} px (n=${d.length})` : null; };
+    ctx.fillText(`dx from ROI centre (${ScaleBar.UNIT})`, cx0, H - 4);
+    ctx.save(); ctx.translate(12, cy0); ctx.rotate(-Math.PI / 2); ctx.fillText(`dy from ROI centre (${ScaleBar.UNIT}, + = down)`, 0, 0); ctx.restore();
+    const med = g => { const d = shown().filter(c => Polarity.of(c.sign) === g).map(c => u(c.dist)); return d.length ? `${g}: median ${median(d).toFixed(1)} ${ScaleBar.UNIT} (n=${d.length})` : null; };
     ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = "#9aa8b7"; ctx.font = "11px sans-serif";
     ctx.fillText([med(Polarity.DEP), med(Polarity.HYPER)].filter(Boolean).join("   |   ") + "   |   yellow + = ROI centre", L, 5);
   }
@@ -83,7 +84,7 @@
     const hit = pts.map(p => ({p, d: Math.hypot(p.x - mx, p.y - my)})).filter(o => o.d < 10).sort((a, b) => a.d - b.d)[0];
     if (!hit) { tip.style.display = "none"; e.currentTarget.style.cursor = "default"; return; }
     const c = hit.p.c; e.currentTarget.style.cursor = "pointer";
-    tip.innerHTML = `Cell ${c.cell} &middot; ${c.result_type} &middot; ${Polarity.of(c.sign)}<br>distance ${c.dist.toFixed(1)} px &middot; p=${c.p == null ? 'n/a' : PlotCanvas.pValue(c.p)} &middot; ${c.n_px} px, ${(c.first_rel / D.fps).toFixed(2)}..${(c.last_rel / D.fps).toFixed(2)} s<br><span style="color:#9aa8b7">click to open the cell</span>`;
+    tip.innerHTML = `Cell ${c.cell} &middot; ${c.result_type} &middot; ${Polarity.of(c.sign)}<br>distance ${ScaleBar.length(c.dist).toFixed(1)} ${ScaleBar.UNIT} &middot; p=${c.p == null ? 'n/a' : PlotCanvas.pValue(c.p)} &middot; ${ScaleBar.area(c.n_px).toFixed(0)} ${ScaleBar.AREA_UNIT},${(c.first_rel / D.fps).toFixed(2)}..${(c.last_rel / D.fps).toFixed(2)} s<br><span style="color:#9aa8b7">click to open the cell</span>`;
     tip.style.display = "block"; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY + 12) + "px";
   });
   $("ac-scatter").addEventListener("mouseleave", () => { tip.style.display = "none"; });
@@ -97,7 +98,7 @@
     ["one_sidedness", "Share of the more common polarity", v => (v * 100).toFixed(0) + "%"],
     ["similarity_same_time", "Clusters alike, same timing (correlation)", v => v.toFixed(2)],
     ["similarity_shift3", "Clusters alike, allowing a shift of up to 3 frames", v => v.toFixed(2)],
-    ["distance_px", "Distance from the ROI centre (px)", v => v.toFixed(1)],
+    ["distance_px", `Distance from the ROI centre (${ScaleBar.UNIT})`, v => ScaleBar.length(v).toFixed(1)],  // saved in recorded pixels
   ];
   function showTest(g) {
     const el = $("ac-test");

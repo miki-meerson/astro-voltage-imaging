@@ -7,9 +7,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from app.services.visualizations import _font, _gray_rgb
+from app.services.visualizations import _font, _gray_rgb, draw_scale_bar
 from utils.file_utils import write_json
-from utils.movie_utils import read_astro_movie, spatial_bin_movie
+from utils.movie_utils import read_astro_movie, read_pixel_size_um, spatial_bin_movie
+from utils.scale_bar import um_per_pixel
 from utils.sta_trace_utils import crop_bounds
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths
@@ -32,7 +33,7 @@ def _sampled_mean_binned_movie(movie_path: Path, spatial_bin: int, max_frames: i
     return (acc / max(count, 1)).astype(np.float32)
 
 
-def _draw_preview(path: Path, mean_image: np.ndarray, suite2p_ctx: dict, radius: int, spatial_bin: int, max_cells: int = 8) -> None:
+def _draw_preview(path: Path, mean_image: np.ndarray, suite2p_ctx: dict, radius: int, spatial_bin: int, pixel_um: float, max_cells: int = 8) -> None:
     cells = list(range(min(int(suite2p_ctx["n_cells"]), max_cells)))
     tile_w, tile_h = 260, 260
     cols = min(4, max(1, len(cells)))
@@ -42,7 +43,7 @@ def _draw_preview(path: Path, mean_image: np.ndarray, suite2p_ctx: dict, radius:
     h = title_h + margin + rows * tile_h + (rows - 1) * gap
     canvas = Image.new("RGB", (w, h), "#0e1116")
     draw = ImageDraw.Draw(canvas)
-    draw.text((margin, 18), f"Anatomy Crop Preview | radius {radius} binned px", fill="#e7edf4", font=_font(22))
+    draw.text((margin, 18), f"Anatomy Crop Preview | radius {radius * um_per_pixel(pixel_um, spatial_bin):.0f} µm", fill="#e7edf4", font=_font(22))
 
     base = _gray_rgb(mean_image).convert("RGB")
     scale = min(tile_w / max(base.width, 1), tile_h / max(base.height, 1))
@@ -69,6 +70,7 @@ def _draw_preview(path: Path, mean_image: np.ndarray, suite2p_ctx: dict, radius:
         td.rectangle(rect, outline="#37c6a6", width=2)
         td.ellipse((cx - 4, cy - 4, cx + 4, cy + 4), fill="#f7d154")
         td.text((10, 10), f"Cell {cell_id}", fill="#e7edf4", font=_font(15))
+        draw_scale_bar(tile, um_per_pixel(pixel_um, spatial_bin) / scale, ox + 8)  # a pixel of the picture is a block of recorded pixels, shown at `scale`
         canvas.paste(tile, (x0, y0))
     path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(path)
@@ -102,7 +104,7 @@ def main() -> None:
         n_review_cells=np.asarray(int(suite2p_ctx["n_cells"]), dtype=np.int32),
     )
     np.save(path_for(PathKind.MEAN_ASTRO_BINNED, sta_dir), mean_image.astype(np.float32))
-    _draw_preview(path_for(PathKind.ANATOMY_CROP_PREVIEW_PNG, out), mean_image, suite2p_ctx, radius, spatial_bin)
+    _draw_preview(path_for(PathKind.ANATOMY_CROP_PREVIEW_PNG, out), mean_image, suite2p_ctx, radius, spatial_bin, read_pixel_size_um(home))
     write_json(
         path_for(PathKind.RUN_METRICS_JSON, out),
         {

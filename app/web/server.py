@@ -6,6 +6,7 @@ from flask import Flask
 from app.db.core import migrate
 from app.settings import load_settings
 from app.web.blueprints import experiments, files, neurons, preprocessing, runs, spikes, workspace
+from app.web.common import pixel_size_context
 from app.web.logging_setup import configure_logging, init_error_handling
 from app.web.security import init_security
 from utils.format_utils import format_p
@@ -22,6 +23,7 @@ def create_app() -> Flask:
     init_security(app, settings)
     init_error_handling(app)
     app.add_template_filter(format_p, "pval")
+    app.context_processor(pixel_size_context)
     for blueprint in BLUEPRINTS:
         app.register_blueprint(blueprint)
     return app

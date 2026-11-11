@@ -62,6 +62,22 @@ def read_frame_rate(source_dir) -> float:
         raise ValueError(f"The frame rate (fps) could not be read from {xml_path} ({type(exc).__name__}: {exc}). Check that {g.EXPERIMENT_XML} is there and has the LSM frameRate.") from exc
 
 
+@lru_cache(maxsize=None)
+def read_pixel_size_um(source_dir) -> float:
+    """Size of one pixel of the recorded images, in micrometres, from the LSM element of the experiment's Experiment.xml: pixelWidthUM (the field width widthUM over pixelX).
+    Not the LSM's pixelSizeUM, which is the same for every field size. The pixels must be square (pixelHeightUM equal). Read once per experiment (per process) and reused by everything
+    that shows a distance or a scale bar. There is no default: when it cannot be read this raises a ValueError that names the file (a failure is not cached)."""
+    xml_path = path_for(PathKind.EXPERIMENT_XML, source_dir)
+    try:
+        lsm = ET.parse(xml_path).getroot().find("LSM")
+        width, height = float(lsm.attrib["pixelWidthUM"].replace(",", "")), float(lsm.attrib["pixelHeightUM"].replace(",", ""))
+        if not width > 0 or abs(height - width) > 0.01 * width:
+            raise ValueError(f"pixelWidthUM is {width} and pixelHeightUM is {height}: the pixels must be square and larger than zero")
+        return width
+    except (OSError, ET.ParseError, AttributeError, KeyError, ValueError) as exc:
+        raise ValueError(f"The pixel size (um) could not be read from {xml_path} ({type(exc).__name__}: {exc}). Check that {g.EXPERIMENT_XML} is there and has the LSM pixelWidthUM and pixelHeightUM.") from exc
+
+
 def get_raw_movie_dtype(movie_path) -> np.dtype:
     """The dtype of a movie as it was recorded: uint16 for a .raw file, the stored dtype for a tif. Any other format is a ValueError."""
     ext = os.path.splitext(movie_path)[1].lower()

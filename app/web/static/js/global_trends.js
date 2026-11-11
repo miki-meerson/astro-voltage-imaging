@@ -57,6 +57,7 @@
     ctx.imageSmoothingEnabled = false; ctx.drawImage(image, x0, 0, size, size);
     const b = D.border_bins, k = size / w;  // the border the STA test leaves out: a dashed frame at its inner edge
     if (b.top + b.bottom + b.left + b.right > 0) { ctx.setLineDash([5, 4]); ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.2; ctx.strokeRect(x0 + b.left * k, b.top * k, size - (b.left + b.right) * k, size - (b.top + b.bottom) * k); ctx.setLineDash([]); }
+    ctx.save(); ctx.translate(x0, 0); ScaleBar.draw(ctx, size, size, ScaleBar.umPerPixel(D.spatial_bin) * w / size); ctx.restore();  // a map pixel is spatial_bin recorded pixels
     const barY = size + 12, barX = x0, barW = size;
     for (let i = 0; i < barW; i++) { const [r, g, b] = rampColor(i / (barW - 1)); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(barX + i, barY, 1, 12); }
     ctx.fillStyle = "#9aa8b7"; ctx.font = "11px sans-serif"; ctx.textBaseline = "top"; ctx.textAlign = "left"; ctx.fillText("weak", barX, barY + 15);
@@ -69,7 +70,7 @@
   $("gt-map").addEventListener("mousemove", e => {
     if (!layout) return;
     const box = e.currentTarget.getBoundingClientRect(), x = Math.floor((e.clientX - box.left - layout.x0) / layout.size * layout.w), y = Math.floor((e.clientY - box.top - layout.y0) / layout.size * layout.h);
-    $("gt-readout").textContent = x >= 0 && y >= 0 && x < layout.w && y < layout.h ? `row ${y}, column ${x} (map pixel of ${D.spatial_bin} px): ${layout.rows[y][x].toFixed(2)}` : layout.caption;
+    $("gt-readout").textContent = x >= 0 && y >= 0 && x < layout.w && y < layout.h ? `row ${y}, column ${x} (map pixel of ${ScaleBar.length(D.spatial_bin).toFixed(1)} ${ScaleBar.UNIT}): ${layout.rows[y][x].toFixed(2)}` : layout.caption;
   });
   $("gt-series").addEventListener("change", draw);
   window.addEventListener("resize", draw);
@@ -79,7 +80,7 @@
     .then(d => {
       D = d;
       $("gt-series").innerHTML = d.series.map(s => `<option value="${s.name}">${s.label}</option>`).join("");
-      $("gt-summary").textContent = `Run ${d.run_id}: ${d.frames} frames (${(d.frames / d.fps / 60).toFixed(1)} min); the STA test leaves out a border of ${[d.border_bins.top, d.border_bins.bottom, d.border_bins.left, d.border_bins.right].map(v => v * d.spatial_bin).join(" / ")} px (top / bottom / left / right).`;
+      $("gt-summary").textContent = `Run ${d.run_id}: ${d.frames} frames (${(d.frames / d.fps / 60).toFixed(1)} min); the STA test leaves out a border of ${[d.border_bins.top, d.border_bins.bottom, d.border_bins.left, d.border_bins.right].map(v => ScaleBar.length(v * d.spatial_bin).toFixed(0)).join(" / ")} ${ScaleBar.UNIT} (top / bottom / left / right).`;
       draw();
     })
     .catch(err => { $("gt-summary").textContent = err.message || "Not available."; root.querySelector(".gt-grid").style.display = "none"; });

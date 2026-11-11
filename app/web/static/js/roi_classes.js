@@ -53,7 +53,7 @@
     box.innerHTML = `<h3>ROI ${e.roi} <span class="muted small">(cell ${e.cell} in the analyses)</span></h3>
       <p>Label: <b style="color:${colorOf(e)}">${classOf(e.label).label}</b>${e.manual ? " (set by hand)" : ""}</p>
       <p class="muted small">Automatic: ${auto}</p>
-      ${f ? `<table class="roi-features"><tr><td>pixels</td><td>${f.npix}</td></tr><tr><td>elongation</td><td>${f.elongation.toFixed(2)}</td></tr><tr><td>solidity</td><td>${f.solidity.toFixed(2)}</td></tr><tr><td>max width (px)</td><td>${f.max_width.toFixed(1)}</td></tr><tr><td>length (px)</td><td>${f.length.toFixed(1)}</td></tr></table>` : ""}
+      ${f ? `<table class="roi-features"><tr><td>pixels</td><td>${f.npix}</td></tr><tr><td>elongation</td><td>${f.elongation.toFixed(2)}</td></tr><tr><td>solidity</td><td>${f.solidity.toFixed(2)}</td></tr><tr><td>max width (${ScaleBar.UNIT})</td><td>${ScaleBar.length(f.max_width).toFixed(1)}</td></tr><tr><td>length (${ScaleBar.UNIT})</td><td>${ScaleBar.length(f.length).toFixed(1)}</td></tr></table>` : ""}
       <div class="toolbar">${D.classes.filter(c => D.manual_labels.includes(c.name)).map(c => `<button class="secondary" data-set="${c.name}" style="border-color:${c.color}">${c.label}</button>`).join("")}
         <button class="secondary" data-set="" ${e.manual ? "" : "disabled"} title="Remove the label set by hand: the automatic one applies again">Use automatic</button></div>
       <p id="roi-save-status" class="muted small"></p>`;
@@ -116,6 +116,7 @@
       for (const canvas of [base, ovl]) { canvas.width = W * S; canvas.height = H * S; }
       stage.style.width = W * S + "px"; stage.style.height = H * S + "px";
       base.getContext("2d").drawImage(image, 0, 0, W * S, H * S);
+      if (ScaleBar.PIXEL_UM) stage.parentNode.dataset.um = ScaleBar.umPerPixel() / S;  // the field of view is at the recorded pixels
       request("roi-classes.json").then(payload => { setPayload(payload); stage.parentNode._zv.fit(); })
         .catch(error => { $("roi-summary").textContent = error.message; });
     };

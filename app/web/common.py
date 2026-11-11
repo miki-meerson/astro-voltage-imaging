@@ -9,7 +9,7 @@ from flask.blueprints import BlueprintSetupState
 from app.db.experiment_repository import experiment_source_path
 from app.services import polarity
 from app.services.movies import movie_chunk, movie_info, pb_movie_path
-from utils.movie_utils import read_frame_rate
+from utils.movie_utils import read_frame_rate, read_pixel_size_um
 
 
 class _FlatSetupState(BlueprintSetupState):
@@ -50,6 +50,19 @@ def json_payload(action):
 def get_settings():
     """The Settings object of the running app (set once in create_app)."""
     return current_app.config["SETTINGS"]
+
+
+def pixel_size_context() -> dict:
+    """What every page of an experiment is given for its scale bars: {pixel_um: the size of one recorded pixel in micrometres (read once per experiment from Experiment.xml), pixel_um_error:
+    why it could not be read, else ''}. A page that is not about one experiment gets neither. Without a pixel size the pages show pixels and the banner says what is missing."""
+    experiment_id = (request.view_args or {}).get("experiment_id")
+    source_path = None if experiment_id is None else experiment_source_path(get_settings(), experiment_id)
+    if source_path is None:
+        return {}
+    try:
+        return {"pixel_um": read_pixel_size_um(source_path), "pixel_um_error": ""}
+    except ValueError as exc:
+        return {"pixel_um": None, "pixel_um_error": f"{exc} Distances and scale bars are shown in pixels until then."}
 
 
 def _movie_of(experiment_id: int):

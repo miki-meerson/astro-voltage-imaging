@@ -6,20 +6,23 @@ from pathlib import Path
 
 import numpy as np
 
+from app.db.experiment_repository import experiment_source_path
 from app.services import caches
 from app.services.hypothesis_summary import completed_sta_run
 from utils.global_trends import GLOBAL_SERIES
+from utils.movie_utils import read_pixel_size_um
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for
 
 MAX_POINTS = 3000  # traces are averaged in blocks down to at most this many points
 SERIES_TEXT = {  # name -> (label, unit of the trace)
     GLOBAL_SERIES: ("Field mean intensity", "% change, up = depolarization"),
-    "dy": ("Vertical shift (dy)", "px"),
-    "dx": ("Horizontal shift (dx)", "px"),
-    "shift_mag": ("Shift size", "px"),
+    "dy": ("Vertical shift (dy)", "µm"),
+    "dx": ("Horizontal shift (dx)", "µm"),
+    "shift_mag": ("Shift size", "µm"),
     "reg_corr": ("Registration quality", "correlation with the mean image"),
 }
+LENGTH_SERIES = ("dy", "dx", "shift_mag")  # saved in recorded pixels, shown in micrometres
 MAP_UNIT = "% of the pixel's mean per standard deviation of the series"
 
 
@@ -41,6 +44,7 @@ def global_trends(settings, experiment_id: int, step: str) -> dict:
     hit = caches.GLOBAL_TRENDS.get(key)
     if hit is not None:
         return dict(hit, run_id=int(run["id"]))
+    pixel_um = read_pixel_size_um(experiment_source_path(settings, experiment_id))  # raises when Experiment.xml has no pixel size: the shifts cannot be given in micrometres
     with np.load(path, allow_pickle=True) as z:
         names, traces, amplitude = [str(n) for n in z["names"]], np.asarray(z["traces"], dtype=np.float64), np.asarray(z["amplitude"], dtype=np.float64)
         fps, spatial_bin = float(z["fps"]), int(z["spatial_bin"])
@@ -52,6 +56,7 @@ def global_trends(settings, experiment_id: int, step: str) -> dict:
     series = []
     for name, values, amp in zip(names, traces, amplitude):
         label, unit = SERIES_TEXT[name]
+        values = values * pixel_um if name in LENGTH_SERIES else values
         series.append({
             "name": name, "label": label, "unit": unit, "values": [round(float(v), 4) for v in _blocks(values, size)],
             "map": [[round(float(v), 3) for v in row] for row in amp], "map_max": round(float(np.percentile(amp, 99)), 3),

@@ -6,6 +6,7 @@
   <title>{% block title %}Astro Analysis Pipeline{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/design.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/pages.css') }}">
+  {% if pixel_um %}<meta name="pixel-um" content="{{ pixel_um }}">{% endif %}
   {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -16,8 +17,9 @@
       <button class="theme-toggle secondary" type="button">Theme</button>
     </nav>
   </header>
-  <main class="app-main">{% block body %}{% endblock %}</main>
+  <main class="app-main">{% if pixel_um_error %}<div class="callout warn">{{ pixel_um_error }}</div>{% endif %}{% block body %}{% endblock %}</main>
   <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/scale_bar.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
