@@ -247,21 +247,32 @@ def confirm_preprocessing(settings: Settings, experiment_id: int) -> None:
         )
 
 
+def _cancel_runs_on_old_cells(conn, experiment_id: int, cancel_steps, note: str) -> None:
+    conn.execute(
+        f"""
+        UPDATE analysis_runs
+        SET status='cancelled',
+            ended_at=CURRENT_TIMESTAMP,
+            review_note=?
+        WHERE experiment_id=?
+          AND step IN ({_in_list(cancel_steps)})
+          AND status IN ({_in_list(RUN_CANCELLABLE_STATUSES)})
+        """,
+        (note, experiment_id, *cancel_steps, *RUN_CANCELLABLE_STATUSES),
+    )
+
+
+def unconfirm_suite2p(settings: Settings, experiment_id: int, cancel_steps) -> None:
+    """Take back the confirmation of the Suite2p cells: cancel the runs of `cancel_steps` (they used these cells) and put the experiment back to awaiting Suite2p."""
+    with tx(settings) as conn:
+        _cancel_runs_on_old_cells(conn, experiment_id, cancel_steps, "Cancelled because the Suite2p confirmation was taken back.")
+        conn.execute("UPDATE experiments SET suite2p_review_state=?, workflow_stage=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (REVIEW_UNREVIEWED, STAGE_AWAITING_SUITE2P, experiment_id))
+
+
 def confirm_suite2p(settings: Settings, experiment_id: int, neurons: list[dict], report: dict, cancel_steps) -> None:
     """The Suite2p cells were confirmed: cancel the runs of `cancel_steps` (they used the old cells), replace the cells, mark the experiment analysis-ready."""
     with tx(settings) as conn:
-        conn.execute(
-            f"""
-            UPDATE analysis_runs
-            SET status='cancelled',
-                ended_at=CURRENT_TIMESTAMP,
-                review_note='Cancelled because Suite2p cells were refreshed.'
-            WHERE experiment_id=?
-              AND step IN ({_in_list(cancel_steps)})
-              AND status IN ({_in_list(RUN_CANCELLABLE_STATUSES)})
-            """,
-            (experiment_id, *cancel_steps, *RUN_CANCELLABLE_STATUSES),
-        )
+        _cancel_runs_on_old_cells(conn, experiment_id, cancel_steps, "Cancelled because Suite2p cells were refreshed.")
         conn.execute("DELETE FROM neurons WHERE experiment_id=?", (experiment_id,))
         _insert_neurons(conn, experiment_id, neurons)
         conn.execute(

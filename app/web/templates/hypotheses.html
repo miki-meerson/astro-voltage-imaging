@@ -11,7 +11,7 @@
   <div class="panel-head">
     <div>
       <h2>Excluded segments</h2>
-      <p class="muted">Stretches of the recording to leave out of the analysis, for example where the image moved. The movie is <b>not cut</b>: its frames, the Suite2p traces, the spikes and your cleaning stay as they are, and nothing before the analysis is redone. The analysis leaves the frames out: no spike whose window (from before to after the spike) overlaps them is used, no chance copy is drawn from them, and the image shifts inside them do not count for the border the test leaves out. Hypotheses that were run before have to be <b>run again</b> (they say so below). Times are seconds of the recording shown in the traces of this tab.</p>
+      <p class="muted">Frames left out of the analysis (the movie is not cut).</p>
     </div>
   </div>
   {% if excluded.error %}
@@ -101,7 +101,7 @@
       </label>
     </form>
   </div>
-  <p class="muted small">Cells with at least one significant cluster in the chosen result type (<b>anatomy</b>, <b>all</b>, or both) and no motion suspicion. Every significant cluster of those cells in the chosen result types is included; in the position plot a circle is an anatomy cluster and a square an <b>all</b> cluster. Click a point to open the cell.</p>
+  <p class="muted small">Cells with a significant cluster and no motion suspicion. Circle: anatomy, square: all. Click a point to open the cell.</p>
   <div class="ac-controls">
     <label class="check">result type <select id="ac-type" style="width:auto"></select></label>
     <label class="check"><input type="checkbox" id="ac-individual" checked> individual cluster traces</label>
@@ -114,47 +114,37 @@
     <div><canvas id="ac-traces"></canvas></div>
     <div><canvas id="ac-scatter"></canvas></div>
   </div>
-  <div id="ac-test" style="margin-top:12px"></div>
-  <div id="ac-tip"></div>
-</section>
-
-<section class="panel" id="roi-class-panel">
-  <div class="panel-head">
-    <div>
-      <h2>Soma vs dendrite</h2>
-      <p class="muted">Hypothesis <b>{{ selected }}</b>: how often the accepted ROIs of each class have a significant cluster (change the hypothesis in the selector of the anatomy clusters above).</p>
+  <div class="ac-lower">
+    <div id="ac-test"></div>
+    <div id="roi-class-panel">
+      <h3 style="margin:0 0 4px">Soma vs dendrite <span class="muted small">{{ selected }}</span></h3>
+      {% if not class_stats.available %}
+      <p class="muted">{{ class_stats.message }}</p>
+      {% else %}
+      {% for rt in class_stats.result_types %}
+      <div class="muted small">{{ rt.name }}</div>
+      <table>
+        <thead><tr><th>Class</th><th class="num">Tested</th><th class="num">Significant</th><th class="num">Fraction (95%)</th><th class="num">p vs chance ({{ "%g"|format(class_stats.alpha) }})</th></tr></thead>
+        <tbody>
+          {% for c in rt.classes %}
+          <tr>
+            <td>{{ c.label }}</td><td class="num">{{ c.tested }}</td><td class="num">{{ c.significant }}</td>
+            <td class="num">{{ "%.0f%%"|format(c.fraction * 100) if c.fraction is not none else "&ndash;"|safe }}{% if c.ci %} ({{ "%.0f"|format(c.ci[0] * 100) }}&ndash;{{ "%.0f"|format(c.ci[1] * 100) }}){% endif %}</td>
+            <td class="num">{{ c.p_vs_chance|pval }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if rt.comparison %}
+      <p class="small">Soma &minus; dendrite: <b>{{ "%+.0f"|format(rt.comparison.difference * 100) }} points</b>; Fisher p = <b>{{ rt.comparison.fisher_p|pval }}</b>; spike-matched p = <b>{{ "%.3f"|format(rt.comparison.matched_p) }}</b></p>
+      {% else %}
+      <p class="muted small">{{ rt.comparison_message }}</p>
+      {% endif %}
+      {% endfor %}
+      {% endif %}
     </div>
   </div>
-  {% if not class_stats.available %}
-  <p class="muted">{{ class_stats.message }}</p>
-  {% else %}
-  <p class="muted small">Counts are not compared as they are: a class with more cells has more chances for a significant cell. Each class shows the <b>fraction</b> of its tested cells that are significant, with a 95% interval, and a test against the false-positive rate alone ({{ "%g"|format(class_stats.alpha) }} of cells expected). The two classes are compared by Fisher's exact test (it allows for different group sizes) and by a permutation test that keeps the group sizes and shuffles the class only among cells with a similar number of spikes (cells with more spikes are more likely to be significant, and the classes may differ in that). Uncertain and unclassified cells are shown and not compared.</p>
-  {% for rt in class_stats.result_types %}
-  <h3>Result type: {{ rt.name }}</h3>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Class</th><th class="num">Cells tested</th><th class="num">Significant</th><th class="num">Fraction</th><th class="num">95% interval</th><th class="num">p vs chance</th><th class="num">Spikes (median)</th></tr></thead>
-      <tbody>
-        {% for c in rt.classes %}
-        <tr>
-          <td>{{ c.label }}</td><td class="num">{{ c.tested }}</td><td class="num">{{ c.significant }}</td>
-          <td class="num">{{ "%.0f%%"|format(c.fraction * 100) if c.fraction is not none else "&ndash;"|safe }}</td>
-          <td class="num">{% if c.ci %}{{ "%.0f"|format(c.ci[0] * 100) }}&ndash;{{ "%.0f"|format(c.ci[1] * 100) }}%{% else %}&ndash;{% endif %}</td>
-          <td class="num">{{ c.p_vs_chance|pval }}</td>
-          <td class="num">{{ "%g"|format(c.spikes_median) if c.spikes_median is not none else "&ndash;"|safe }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% if rt.comparison %}
-  <p>Soma &minus; dendrite: <b>{{ "%+.0f"|format(rt.comparison.difference * 100) }} percentage points</b> in the fraction of significant cells. Fisher's exact p = <b>{{ rt.comparison.fisher_p|pval }}</b>; matched for spike count ({{ rt.comparison.strata }} group{{ "s" if rt.comparison.strata != 1 }} of spike counts) permutation p = <b>{{ "%.3f"|format(rt.comparison.matched_p) }}</b>.</p>
-  {% else %}
-  <p class="muted">{{ rt.comparison_message }}</p>
-  {% endif %}
-  {% endfor %}
-  {% if n_tests > 1 %}<div class="callout warn">These p values are for one hypothesis and result type each; with {{ n_tests }} tests on this experiment, a p near 0.05 in one of them is weak evidence.</div>{% endif %}
-  {% endif %}
+  <div id="ac-tip"></div>
 </section>
 
 <section class="panel" id="cluster-map-panel">
@@ -164,17 +154,60 @@
       <p id="cm-summary" class="muted">Loading...</p>
     </div>
   </div>
-  <p class="muted small"><b>Raw traces</b>: choose a cell in the dropdown (only cells with a significant cluster are listed); a full-width plot per significant cluster of that cell shows the mean intensity of the cluster's pixels in every frame of the recording (<span style="color:#ff5d6c"><b>red</b></span> = depolarizing cluster, <span style="color:#4fa3ff"><b>blue</b></span> = hyperpolarizing; solid = <b>all</b> result type, dashed = <b>anatomy</b>; depolarization is up) with the spikes of the cell as dashed white vertical lines. The plots of a cell share the time: zoom or pan the time in one and the others follow, and each height fits the part of the trace that is shown (zoom the height by hand and it stays until the time changes). <b>Cards</b>: one card per cell with the mean astro field of view (the cell's ROI in <span style="color:#f7d154"><b>yellow</b></span>, its clusters outlined, a ring on each), the clusters' mean traces and the cell's own spike-triggered neuron dF/F (yellow, right axis), and under it, for each cluster, <b>individual spikes</b>: the mean of the cluster's pixels around every spike of the cell (thin) with their mean (bold), next to the same for the pixels right around the cluster (as many as the cluster has), on the same scale.</p>
-  <p class="muted small"><b>Zoom</b>: the mouse wheel zooms around the pointer; over the left axis it zooms the height only, over the time axis the time only (Shift: time only, Alt: height only anywhere in the plot); <b>Shift + drag</b> draws a box and zooms to it, as wide and as tall as you draw it (a thin box zooms one axis); drag pans; double click goes back to the whole plot. The field of view zooms with its proportions kept. Click the cell number on a card to open the cell.</p>
+  <p class="muted small"><b>Raw traces</b>: pick a cell; one plot per significant cluster (<span style="color:#ff5d6c"><b>red</b></span> depolarizing, <span style="color:#4fa3ff"><b>blue</b></span> hyperpolarizing).</p>
+  <p class="muted small"><b>Zoom</b>: wheel; Shift + drag: box; drag: pan; double click: reset.</p>
+  <p class="muted small"><b>Same spikes</b>: cells whose spikes match, one card per group, one colour per cell.</p>
   <div class="ac-controls">
-    <label class="check">view <select id="cm-view" style="width:auto"><option value="raw" selected>raw traces (one cell at a time)</option><option value="cards">cards (field of view, traces, individual spikes)</option></select></label>
+    <label class="check">view <select id="cm-view" style="width:auto"><option value="raw" selected>raw traces (one cell at a time)</option><option value="cards">cards (field of view, traces, individual spikes)</option><option value="same">cells with the same spikes</option></select></label>
+    <span id="cm-min-spikes-field" hidden><label class="check">at least <input type="number" id="cm-min-spikes" value="3" min="1" style="width:4.5em"> spikes</label> <label class="check">within <input type="number" id="cm-frames" value="5" min="0" style="width:4em"> frames</label> <label class="check">of <input type="number" id="cm-share" value="75" min="10" max="100" step="5" style="width:4.5em"> % of them</label> <label class="check">show <select id="cm-group" style="width:auto"><option value="all">all groups</option></select></label></span>
     <label class="check" id="cm-cell-field">cell <select id="cm-cell" style="width:auto"></select></label>
-    <span id="cm-types"></span>
-    <label class="check"><input type="checkbox" id="cm-motion" checked> cells flagged for motion</label>
     <button type="button" class="secondary" id="cm-pdf" title="Opens the print dialog with the cards of the cells that are listed: choose Save as PDF as the printer">Export cards to PDF</button>
   </div>
   <div id="cm-raw" class="cm-raw"></div>
   <div id="cm-grid" class="cm-grid" hidden></div>
+</section>
+
+<section class="panel" id="remote-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Remote clusters</h2>
+      <p id="rc-summary" class="muted">Loading...</p>
+    </div>
+  </div>
+  <div class="ac-controls">
+    <span id="rc-rule" class="muted"></span>
+  </div>
+  <canvas id="rc-hist"></canvas>
+</section>
+
+<section class="panel" id="delay-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Delay vs. distance</h2>
+      <p id="dd-summary" class="muted">Loading...</p>
+    </div>
+  </div>
+  <p class="muted small">Delay between each cluster peak and its neuron peak (positive: cluster later) against distance, in pixels.</p>
+  <div class="ac-controls">
+    <label class="check">distance <select id="dd-measure" style="width:auto"></select></label>
+    <span id="dd-types"></span>
+    <label class="check"><input type="checkbox" id="dd-clear" checked> only clear peaks</label>
+  </div>
+  <div class="ac-grid">
+    <div><canvas id="dd-scatter"></canvas></div>
+    <div id="dd-detail">
+      <div class="ac-controls">
+        <button type="button" class="secondary" id="dd-prev" title="Previous neuron">&lsaquo;</button>
+        <label class="check">neuron <select id="dd-cell" style="width:auto"></select></label>
+        <button type="button" class="secondary" id="dd-next" title="Next neuron">&rsaquo;</button>
+        <label class="check">cluster <select id="dd-cluster" style="width:auto"></select></label>
+        <a id="dd-open" href="#">open cell</a>
+      </div>
+      <div class="dd-fovs"><canvas id="dd-fov"></canvas><canvas id="dd-fov-full"></canvas></div>
+      <canvas id="dd-traces"></canvas>
+    </div>
+  </div>
+  <div id="dd-tip"></div>
 </section>
 
 <section class="panel" id="global-trends-panel">
@@ -189,7 +222,7 @@
       </label>
     </div>
   </div>
-  <p class="muted small">Slow signals that the whole field shares, taken from the movie of this hypothesis's run (they do not depend on any spike): the field-mean intensity and the image shifts. The map shows, for every pixel, how strongly the chosen signal drives it: <span style="color:#d0443c"><b>red</b></span> = strong, <span style="color:#4a7bd0"><b>blue</b></span> = weak. The dashed frame marks the inner edge of the border that the STA test leaves out (the border the image shifts of this recording expose); dotted lines in the traces are splices where bad segments were removed; amber bands are the segments left out of the analysis (see Excluded segments).</p>
+  <p class="muted small">Slow signals shared by the whole field (they do not depend on spikes). Map: <span style="color:#d0443c"><b>red</b></span> strong, <span style="color:#4a7bd0"><b>blue</b></span> weak.</p>
   <div class="gt-grid">
     <div><canvas id="gt-traces"></canvas></div>
     <div><canvas id="gt-map"></canvas><div id="gt-readout" class="muted small">&nbsp;</div></div>
@@ -204,6 +237,9 @@
 <script src="{{ url_for('static', filename='js/anatomy_clusters.js') }}"></script>
 <script src="{{ url_for('static', filename='js/fov_outline.js') }}"></script>
 <script src="{{ url_for('static', filename='js/plot_view.js') }}"></script>
+<script src="{{ url_for('static', filename='js/same_spikes.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cluster_map.js') }}"></script>
+<script src="{{ url_for('static', filename='js/remote_clusters.js') }}"></script>
+<script src="{{ url_for('static', filename='js/cluster_delays.js') }}"></script>
 <script src="{{ url_for('static', filename='js/global_trends.js') }}"></script>
 {% endblock %}

@@ -21,6 +21,7 @@
             <td class="num">{{ cell.clusters if cell.clusters is defined else "" }}</td>
             <td>{{ cell.roi_type or "" }}</td>
             <td>
+              {% if cell.group_size %}<span class="chip" title="a group of {{ cell.group_size }} ROIs merged into this one cell (ROI groups tab of the Preprocessing page)">group &times;{{ cell.group_size }}</span>{% endif %}
               {% if cell.significant %}<span class="chip completed" title="a significant cluster in some result type">sig</span>{% endif %}
               {% if cell.anatomy %}<span class="chip running" title="a significant cluster in the anatomy result type">anat</span>{% endif %}
               {% if cell.motion == "motion_suspected" %}<span class="chip warn" title="the spikes of this cell line up with image motion">motion?</span>{% endif %}
@@ -70,6 +71,7 @@
       <div class="stat"><div class="value">{{ cards | selectattr("n_significant") | list | length }}</div><div class="label">result types with a significant cluster</div></div>
       <div class="stat"><div class="value">{{ cards | sum(attribute="n_significant") }}</div><div class="label">significant clusters</div></div>
       <div class="stat"><div class="value">{{ selected.roi_type or "not classified" }}</div><div class="label">ROI type (set on the Preprocessing page)</div></div>
+      {% if selected.group_size %}<div class="stat"><div class="value">group &times;{{ selected.group_size }}</div><div class="label">ROIs merged into this cell (its anatomy is tested around each of them)</div></div>{% endif %}
       <div class="stat">
         <div class="value">{% if selected.motion == "ok" %}<span class="chip completed">ok</span>{% elif selected.motion == "motion_suspected" %}<span class="chip warn">motion?</span>{% else %}<span class="chip off">not tested</span>{% endif %}</div>
         <div class="label">motion test (do the spikes line up with image motion?)</div>
@@ -137,7 +139,7 @@
             <canvas id="smv-trace" class="plot"></canvas>
           </div>
           <div>
-            <p class="muted small">Change from baseline: the pixels of the significant clusters (red = depolarizing, blue = hyperpolarizing) against all other pixels of the movie (grey); shaded: the 5th to 95th percentile of random patches of other pixels. <span id="smv-groups-note"></span></p>
+            <p class="muted small">Change from baseline: significant-cluster pixels against all other pixels (grey band: 5th to 95th percentile of random patches). <span id="smv-groups-note"></span></p>
             <canvas id="smv-groups" class="plot"></canvas>
           </div>
         </div>
@@ -146,7 +148,7 @@
     {% endif %}
 
     <h3 style="margin-top:24px">Motion test</h3>
-    <p class="muted small">Are {% if pooled %}the pooled spikes{% else %}the spikes of this cell{% endif %} time-locked to image motion? Each plot is the average of one motion series around the spikes (the line) against what random frames give (grey band, &plusmn;2 sd). A red line (shown only when the cell is flagged) means that motion lines up with the spikes. The cell is flagged by one p-value, corrected for looking at 5 measures at once, from 2000 random-frame copies; when flagged, its clusters may be motion artifacts.</p>
+    <p class="muted small">Is {% if pooled %}the pooled spikes{% else %}the spikes of this cell{% endif %} time-locked to image motion? Line: mean motion around the spikes; grey: random frames (&plusmn;2 sd).</p>
     {% if motion %}
     <script type="application/json" id="motion-data">{{ motion|tojson }}</script>
     <div class="callout {{ 'warn' if motion.verdict == 'flag' else 'info' }}">{{ motion.text }} <span class="muted small">({{ motion.n_peaks }} spikes used)</span></div>

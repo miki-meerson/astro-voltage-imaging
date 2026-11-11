@@ -138,11 +138,12 @@
   // the tabs of the page: the ROI types are loaded when their tab is first opened
   document.querySelectorAll("[data-pre-tab]").forEach(button => button.addEventListener("click", () => showTab(button.dataset.preTab)));
   function showTab(name) {
-    $("pre-tab-main").hidden = name !== "main"; $("pre-tab-roi").hidden = name !== "roi";
+    document.querySelectorAll("[id^=pre-tab-]").forEach(panel => { panel.hidden = panel.id !== `pre-tab-${name}`; });
     document.querySelectorAll("[data-pre-tab]").forEach(b => b.classList.toggle("active", b.dataset.preTab === name));
     if (name === "roi") { if (!loaded) load(); else stage.parentNode._zv.fit(); }
-    history.replaceState(null, "", name === "roi" ? "#roi" : location.pathname + location.search);  // a reload keeps the tab
-    if (window.autoRefresh) name === "roi" ? window.autoRefresh.stop() : window.autoRefresh.start();  // the page reloads itself while a run is active: not while the ROI types are being labelled
+    document.dispatchEvent(new CustomEvent("pre-tab", {detail: name}));  // the other tabs load when they are first opened (roi_groups.js)
+    history.replaceState(null, "", name === "main" ? location.pathname + location.search : `#${name}`);  // a reload keeps the tab
+    if (window.autoRefresh) name === "main" ? window.autoRefresh.start() : window.autoRefresh.stop();  // the page reloads itself while a run is active: not while a tab is being worked in
   }
-  if (location.hash === "#roi") showTab("roi");
+  if (location.hash === "#roi" || location.hash === "#groups") showTab(location.hash.slice(1));
 })();

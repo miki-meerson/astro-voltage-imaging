@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.cluster.hierarchy import linkage
 from scipy.signal import butter, sosfiltfilt
+from scipy.spatial.distance import squareform
 
 from utils.sta_stats_utils import filter_valid_peaks
 
@@ -41,6 +43,15 @@ def lag_corr_matrix(traces: np.ndarray, lag: int) -> np.ndarray:
     num = a @ b.T
     den = np.sqrt((a ** 2).sum(1))[:, None] * np.sqrt((b ** 2).sum(1))[None, :]
     return num / np.maximum(den, 1e-12)
+
+
+def correlation_linkage(traces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(corr, linkage) of the traces (rows): their correlation matrix (1 on the diagonal; a flat trace has no shape to compare, so no correlation) and the hierarchical clustering
+    (average linkage on 1 - correlation) of them. Needs at least two traces."""
+    corr = lag_corr_matrix(np.asarray(traces, dtype=float), 0)
+    np.fill_diagonal(corr, 1.0)
+    distance = np.clip(1 - corr, 0, 2)
+    return corr, linkage(squareform((distance + distance.T) / 2, checks=False), method="average")
 
 
 def spike_triggered_dff_trace(trace: np.ndarray, peaks: np.ndarray, pre: int, post: int, baseline_frames: int | None = None) -> np.ndarray:

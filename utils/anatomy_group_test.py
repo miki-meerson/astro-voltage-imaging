@@ -66,6 +66,14 @@ def cell_records(npz_path, roi_center) -> dict:
     return {"real": real, "fake": fake}
 
 
+def combine_part_records(records: list[dict]) -> dict:
+    """The records of the parts of a merged ROI (one `cell_records` result per part, each with its own centre) as the record of the cell: its real clusters are the clusters of all the
+    parts, and its i-th fake is the i-th fake of every part (the fakes of a cell use the same random spike frames in every part, so they break the link in the same way). The cluster alpha
+    of each part was divided by the number of parts when the STA ran, so a fake is as likely to have a significant cluster as the real result."""
+    return {"real": [row for record in records for row in record["real"]],
+            "fake": [[row for record in records for row in record["fake"][i]] for i in range(min(len(record["fake"]) for record in records))]}
+
+
 def group_stats(rows: list[dict]) -> dict:
     """The five numbers for one group of clusters. rows carry 'cell' too. NaN when too few clusters to compare."""
     out = {k: float("nan") for k in STATS}

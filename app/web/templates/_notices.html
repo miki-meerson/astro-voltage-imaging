@@ -3,6 +3,8 @@
 <div class="callout info">This experiment was already in the registry, so no duplicate record was created.</div>
 {% elif notice and notice.startswith("suite2p_confirmed_") %}
 <div class="callout info">Suite2p confirmed: {{ notice.replace("suite2p_confirmed_", "") }} cells found. Spike detection was started for them; it is on the Runs tab.</div>
+{% elif notice == "suite2p_unconfirmed" %}
+<div class="callout info">Suite2p is unconfirmed: the runs made with its cells were cancelled. Merge the ROI groups or fix the cells, then press Confirm Suite2p complete.</div>
 {% elif notice and notice.startswith("data_reset_") %}
 <div class="callout info">The app data of this experiment was cleared. The experiment is still registered and can be processed again.</div>
 {% elif notice == "preprocessing_confirmed" %}

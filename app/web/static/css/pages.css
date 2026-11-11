@@ -31,6 +31,15 @@ button.tab { background: none; border: 0; border-bottom: 2px solid transparent; 
 button.tab.active { border-bottom-color: var(--accent); }
 #roi-panel .roi-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr); gap: var(--s3); align-items: start; margin-top: var(--s2); }
 #roi-panel canvas { display: block; }
+#rg-panel .roi-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr); gap: var(--s3); align-items: start; margin-top: var(--s2); }
+#rg-panel canvas { display: block; }
+#rg-panel .rg-traces { width: 100%; height: 320px; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius-sm); margin-top: var(--s2); }
+.rg-chips { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s2); }
+.rg-chip { min-height: 0; padding: 2px 8px; font-size: var(--fs-sm); }
+.rg-chip.off { opacity: .4; }
+.rg-chip i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.rg-matrix { border-collapse: collapse; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.rg-matrix th, .rg-matrix td { padding: 2px 6px; text-align: right; font-weight: normal; }
 .roi-legend { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s2); font-size: var(--fs-sm); }
 .roi-chip i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
 .roi-features { border-collapse: collapse; margin: var(--s2) 0; font-size: var(--fs-sm); }
@@ -38,15 +47,17 @@ button.tab.active { border-bottom-color: var(--accent); }
 .roi-features td:last-child { font-variant-numeric: tabular-nums; }
 
 /* ---- anatomy clusters (Hypotheses tab) ---- */
-#anatomy-clusters-panel .ac-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--s3); align-items: start; }
-#anatomy-clusters-panel canvas { display: block; width: 100%; height: 340px; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); }
-#anatomy-clusters-panel .ac-controls { display: flex; gap: var(--s4); flex-wrap: wrap; align-items: center; font-size: var(--fs-sm); margin: var(--s2) 0; }
+#anatomy-clusters-panel .ac-grid, #delay-panel .ac-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--s3); align-items: start; }
+#anatomy-clusters-panel canvas, #delay-panel canvas, #remote-panel canvas { display: block; width: 100%; height: 340px; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); }
+#anatomy-clusters-panel .ac-controls, #delay-panel .ac-controls, #remote-panel .ac-controls { display: flex; gap: var(--s4); flex-wrap: wrap; align-items: center; font-size: var(--fs-sm); margin: var(--s2) 0; }
 #global-trends-panel .gt-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--s3); align-items: start; }
 #global-trends-panel canvas { display: block; width: 100%; background: var(--plot-bg); border: 1px solid var(--plot-line); border-radius: var(--radius); }
 #gt-traces { height: 420px; }
 
 /* ---- cells with significant clusters (Hypotheses tab) ---- */
 #cluster-map-panel .cm-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
+#cluster-map-panel .cm-card.cm-wide { grid-column: 1 / -1; }
+#cluster-map-panel .cm-wide .cm-pair { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
 #cluster-map-panel .cm-card { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s2) var(--s3); background: var(--surface); }
 #cluster-map-panel .cm-head { display: flex; justify-content: space-between; gap: var(--s2); font-size: var(--fs-sm); margin-bottom: var(--s2); }
 #cluster-map-panel .cm-pair, #cluster-map-panel .cm-spikes-pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); }  /* the field of view above its trace, and the two spike plots one above the other */
@@ -65,7 +76,10 @@ button.tab.active { border-bottom-color: var(--accent); }
 #border-panel figure { margin: 0; }
 #border-panel figcaption { margin-top: var(--s1); font-size: var(--fs-sm); color: var(--muted); text-align: center; }
 #border-panel canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; background: #000; border: 1px solid var(--plot-line); border-radius: var(--radius); }
-#ac-tip { position: fixed; z-index: 50; pointer-events: none; background: #17202a; color: #e7edf4; border: 1px solid #333e4b; border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--fs-sm); display: none; }
+#delay-panel .dd-fovs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s2); margin-bottom: var(--s2); }
+#delay-panel #dd-fov, #delay-panel #dd-fov-full { height: 340px; }
+#delay-panel #dd-traces { height: 190px; }
+#ac-tip, #dd-tip { position: fixed; z-index: 50; pointer-events: none; background: #17202a; color: #e7edf4; border: 1px solid #333e4b; border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--fs-sm); display: none; }
 
 /* ---- spike editor (Spikes tab) ---- */
 .detector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s3); margin-top: var(--s3); }
@@ -102,11 +116,15 @@ button.tab.active { border-bottom-color: var(--accent); }
 .smv-controls button, .smv-controls select { min-height: 0; padding: 1px 8px; font-size: var(--fs-sm); }
 .smv-controls select { width: auto; max-width: 100%; }
 
+.ac-lower { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--s4); align-items: start; margin-top: var(--s3); }
+#roi-class-panel table { font-size: var(--fs-sm); }
+
 @media (max-width: 1500px) {
+  .ac-lower { grid-template-columns: minmax(0, 1fr); }
   #cluster-map-panel .cm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 1100px) {
-  #cluster-map-panel .cm-grid, #anatomy-clusters-panel .ac-grid, #global-trends-panel .gt-grid, #border-panel .bm-grid, #roi-panel .roi-grid { grid-template-columns: minmax(0, 1fr); }
+  #cluster-map-panel .cm-grid, #anatomy-clusters-panel .ac-grid, #delay-panel .ac-grid, #global-trends-panel .gt-grid, #border-panel .bm-grid, #roi-panel .roi-grid, #rg-panel .roi-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 1000px) {
   .pb-review-grid, .pb-plot-grid { grid-template-columns: 1fr; }

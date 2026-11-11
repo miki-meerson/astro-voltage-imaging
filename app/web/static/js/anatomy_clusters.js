@@ -63,7 +63,7 @@
     const rings = niceTicks(0, maxAbs, 4).filter(r => r > 0);
     rings.forEach(r => { ctx.strokeStyle = "#26303a"; ctx.beginPath(); ctx.arc(cx0, cy0, r * k, 0, 2 * Math.PI); ctx.stroke(); ctx.fillStyle = "#7d8c9c"; ctx.fillText(`${fmt(r)} px`, cx0 + r * k * 0.707 + 2, cy0 - r * k * 0.707 - 2); });
     ctx.strokeStyle = "#3b4a5b"; ctx.beginPath(); ctx.moveTo(cx0 - side / 2, cy0); ctx.lineTo(cx0 + side / 2, cy0); ctx.moveTo(cx0, cy0 - side / 2); ctx.lineTo(cx0, cy0 + side / 2); ctx.stroke();
-    ctx.strokeStyle = "#f7d154"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx0 - 6, cy0); ctx.lineTo(cx0 + 6, cy0); ctx.moveTo(cx0, cy0 - 6); ctx.lineTo(cx0, cy0 + 6); ctx.stroke(); ctx.lineWidth = 1;
+    ctx.strokeStyle = Polarity.NEURON; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx0 - 6, cy0); ctx.lineTo(cx0 + 6, cy0); ctx.moveTo(cx0, cy0 - 6); ctx.lineTo(cx0, cy0 + 6); ctx.stroke(); ctx.lineWidth = 1;
     shown().forEach(c => {
       const x = PX(c.dx), y = PY(c.dy); ctx.globalAlpha = 0.85; ctx.fillStyle = Polarity.color(c.sign); ctx.beginPath();
       if (c.result_type === "all") ctx.rect(x - 5, y - 5, 10, 10); else ctx.arc(x, y, 5, 0, 2 * Math.PI);
@@ -93,26 +93,26 @@
     if (hit) window.location.href = `/experiments/${EXP_ID}/cells?cell=${hit.p.c.cell}&h=${encodeURIComponent(HYPOTHESIS)}`;
   });
   const ROWS = [
-    ["cells_with_cluster", "Cells with a significant cluster", v => v.toFixed(0), "more cells than chance"],
-    ["one_sidedness", "Share of the more common polarity", v => (v * 100).toFixed(0) + "%", "more one-sided than chance"],
-    ["similarity_same_time", "Clusters alike, same timing (correlation)", v => v.toFixed(2), "more alike than chance"],
-    ["similarity_shift3", "Clusters alike, allowing a shift of up to 3 frames", v => v.toFixed(2), "more alike than chance"],
-    ["distance_px", "Distance from the ROI centre (px)", v => v.toFixed(1), "closer to the ROI than chance"],
+    ["cells_with_cluster", "Cells with a significant cluster", v => v.toFixed(0)],
+    ["one_sidedness", "Share of the more common polarity", v => (v * 100).toFixed(0) + "%"],
+    ["similarity_same_time", "Clusters alike, same timing (correlation)", v => v.toFixed(2)],
+    ["similarity_shift3", "Clusters alike, allowing a shift of up to 3 frames", v => v.toFixed(2)],
+    ["distance_px", "Distance from the ROI centre (px)", v => v.toFixed(1)],
   ];
   function showTest(g) {
     const el = $("ac-test");
     if (chosen.length !== 1 || chosen[0] !== "anatomy") { el.innerHTML = '<div class="muted" style="font-size:12px">The real vs fake test covers the anatomy clusters: choose the anatomy result type to see it.</div>'; return; }
     if (!g) { el.innerHTML = '<div class="muted" style="font-size:12px">Real vs fake test: not computed yet for this run (cluster job: <code>cluster-code/run_anatomy_group_test.sh</code>).</div>'; return; }
-    const rows = ROWS.map(([k, label, f, claim]) => {
+    const rows = ROWS.map(([k, label, f]) => {
       const s = g.stats[k];
-      if (!s || s.p === null || s.p === undefined) return `<tr><td>${label}</td><td>${s && s.real != null ? f(s.real) : "n/a"}</td><td colspan="3" class="muted">too few clusters in the fake groups to compare</td></tr>`;
+      if (!s || s.p === null || s.p === undefined) return `<tr><td>${label}</td><td>${s && s.real != null ? f(s.real) : "n/a"}</td><td colspan="2" class="muted">too few clusters in the fake groups to compare</td></tr>`;
       const hit = s.p < 0.05, col = hit ? "#37c6a6" : "#9aa8b7";
-      return `<tr><td>${label}</td><td><b>${f(s.real)}</b></td><td>${f(s.fake_median)} <span class="muted">(${f(s.fake_low)} to ${f(s.fake_high)})</span></td><td>${PlotCanvas.pValue(s.p)}</td><td style="color:${col}">${hit ? claim : "within chance"}</td></tr>`;
+      return `<tr><td>${label}</td><td><b>${f(s.real)}</b></td><td>${f(s.fake_median)} <span class="muted">(${f(s.fake_low)} to ${f(s.fake_high)})</span></td><td style="color:${col}">${PlotCanvas.pValue(s.p)}</td></tr>`;
     }).join("");
     el.innerHTML = `
       <h3 style="margin:0 0 4px">Is this more than chance?</h3>
       <p class="muted" style="font-size:12px; margin:0 0 6px">For every cell we kept ${g.n_fakes_per_cell} fake versions of its result (the spike times replaced by random frames of the recording, so spikes no longer line up with the movie). We ran the very same cluster search on the fakes, so fake clusters are picked exactly like the real ones. Then we built ${g.n_draws.toLocaleString()} fake groups (one fake per cell, ${g.n_cells} cells) and counted how often a fake group looked at least as striking as the real one. That fraction is the p-value. Fake columns: typical value and the middle 95% of the fake groups. Five numbers are tested, so one p below 0.05 by luck is not surprising.</p>
-      <div class="table-wrap"><table><tr><th>What we compare</th><th>Real</th><th>Fake groups</th><th>p</th><th>Verdict</th></tr>${rows}</table></div>`;
+      <div class="table-wrap"><table><tr><th>What we compare</th><th>Real</th><th>Fake groups</th><th>p</th></tr>${rows}</table></div>`;
     const pf = g.polarity_in_fakes;
     if (pf && pf.hyperpolarizing_share_fake != null) {
       const share = pf.hyperpolarizing_share_fake, lopsided = share >= 0.9 || share <= 0.1;

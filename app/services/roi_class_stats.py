@@ -19,6 +19,7 @@ from utils.file_utils import read_json
 from utils.sta_stats_utils import significant_fraction
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for
+from utils.roi_groups import fold_anatomy_parts
 
 PERMUTATIONS = 10000
 STRATA = 3  # cells are grouped by the number of spikes into this many equal groups, when there are enough cells for it
@@ -69,7 +70,7 @@ def roi_class_statistics(settings, exp: dict, step: str) -> dict:
     if saved is None:
         return {"available": False, "message": "This experiment has no ROI classification yet: run it on the ROI types tab of the Preprocessing page."}
     run, sta_dir = completed_sta_run(settings, exp["id"], step)
-    table = pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta_dir))
+    table = fold_anatomy_parts(pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta_dir)))
     used = read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA used-parameters file", missing=missing_output_message("The used-parameters file", run["id"]))
     alpha = float(used["cluster_alpha"])
     labels = {row["cell"]: row["label"] for row in saved["rows"].values()}

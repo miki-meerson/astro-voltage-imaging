@@ -47,6 +47,7 @@ from utils.file_utils import read_json, write_json
 from utils.sta_trace_utils import crop_bounds
 from utils.qc_utils import read_excluded_segments, read_trimmed_frames
 from utils.tif_export import sta_note, write_imagej_stack
+from utils.roi_groups import anatomy_group_of_part, part_centers
 from utils.suite2p_utils import load_suite2p_context, neuron_centroid_binned
 
 HOME_DIR = Path(r"Z:\Adam-Lab-Shared\Data\Miki_Meerson\Imaging\HYP-JEDI\Hyp3\L\02-02-2026-awake\FOV1\z-18-x2")
@@ -1101,10 +1102,10 @@ def analyze_groups(
     return rows
 
 
-def anatomy_analysis_kwargs(cell_id: int, baseline_window: tuple[int, int], anatomy_settings: dict | None = None, margins: tuple[int, int, int, int] | None = None) -> dict:
+def anatomy_analysis_kwargs(cell_id: int, baseline_window: tuple[int, int], anatomy_settings: dict | None = None, margins: tuple[int, int, int, int] | None = None, part: int = 0) -> dict:
     if _MOVIE_SHAPE is None or _VALID_CENTERS is None or _SUITE2P_CTX is None or _ANATOMY_RADIUS is None:
         raise RuntimeError("Anatomy result requested but anatomy crop settings were not initialized.")
-    center = neuron_centroid_binned(cell_id, SPATIAL_BIN, _MOVIE_SHAPE[1:], _SUITE2P_CTX)
+    center = neuron_centroid_binned(cell_id, SPATIAL_BIN, _MOVIE_SHAPE[1:], _SUITE2P_CTX, part)
     crop = crop_bounds(center, _ANATOMY_RADIUS, _MOVIE_SHAPE[1:])
     extra = {
         "anatomy_radius_binned": _ANATOMY_RADIUS,
@@ -1346,6 +1347,22 @@ def save_global_trends(paths, movie: np.ndarray, motion_series: dict | None, fps
         print(f"WARNING: the global trends were not saved ({exc}). The Hypotheses tab needs them: rerun STA Maps.", flush=True)
 
 
+def anatomy_rows(cell_id: int, spikes: np.ndarray, n_before: int, pre: int, post: int, windows: tuple, out_dir: Path, silence: tuple[int, int], pool: np.ndarray, timing: dict, cfg: dict) -> list[dict]:
+    """The anatomy result(s) of a cell: one pass around its ROI or, for a ROI merged from several (utils/roi_groups.py), one around each of its parts, each at the run's cluster alpha
+    (the parts are tested separately; the cell is anatomy-significant when any part is, which is more likely by chance the more parts it has: the real-vs-fake group test, whose
+    fakes count the clusters of all the parts too, is the test that accounts for it). Part 1 is the largest part and has the result type anatomy, the others anatomy_part2, ...;
+    `anatomy_part` and `anatomy_parts` in the rows say which of how many."""
+    n_parts = len(part_centers(_SUITE2P_CTX["stat_cells"][cell_id]))
+    rows = []
+    for part in range(1, n_parts + 1):
+        kwargs = anatomy_analysis_kwargs(cell_id, windows[3], cfg.get("anatomy_settings"), cfg["border_margins_px"], part - 1)
+        part_rows = analyze_groups(cell_id, [(anatomy_group_of_part(part), spikes, n_before)], pre, post, windows, out_dir, silence, pool, timing, time_bin=cfg["time_bin"], **kwargs)
+        for row in part_rows:
+            row.update(anatomy_part=part, anatomy_parts=n_parts)
+        rows.extend(part_rows)
+    return rows
+
+
 def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     cell_id, cfg, sta_dir_s = args
     pre, post = cfg["pre"], cfg["post"]
@@ -1363,9 +1380,7 @@ def process_cell(args: tuple[int, dict, str]) -> list[dict]:
     result_types = cfg.get("result_types", RESULT_TYPES)
     rows = analyze_groups(cell_id, [(g.ALL_GROUP, spikes, n_before)], pre, post, windows, out_dir, silence, pool, timing, time_bin=cfg["time_bin"], valid=analysis_valid(cfg["border_margins_px"])) if g.ALL_GROUP in result_types else []
     if g.ANATOMY_GROUP in result_types:  # its own crop of the movie: a pass of its own
-        kwargs = anatomy_analysis_kwargs(cell_id, windows[3], cfg.get("anatomy_settings"), cfg["border_margins_px"])
-        anatomy = [(g.ANATOMY_GROUP, spikes, n_before)]
-        rows.extend(analyze_groups(cell_id, anatomy, pre, post, windows, out_dir, silence, pool, timing, time_bin=cfg["time_bin"], **kwargs))
+        rows.extend(anatomy_rows(cell_id, spikes, n_before, pre, post, windows, out_dir, silence, pool, timing, cfg))
     for row in rows:
         row.update(motion_row)
     print(timing_line(cell_id, timing), flush=True)

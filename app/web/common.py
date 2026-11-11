@@ -1,8 +1,6 @@
 """Shared plumbing for the route modules."""
 from __future__ import annotations
 
-import math
-import re
 from io import BytesIO
 
 from flask import Blueprint, current_app, jsonify, request, send_file
@@ -36,14 +34,6 @@ class _FlatSetupState(BlueprintSetupState):
 class FlatBlueprint(Blueprint):
     def make_setup_state(self, app, options, first_registration=False):
         return _FlatSetupState(self, app, options, first_registration)
-
-
-def format_p(p) -> str:
-    """A p value with up to 5 decimals (at least 3, trailing zeros dropped): 0.043, 0.00012; "<0.00001" below that; an en dash when there is none. The `pval` filter of the templates
-    (static/js/plot_canvas.js has the same rule for the pages drawn in JS)."""
-    if p is None or not math.isfinite(p):
-        return "–"
-    return "<0.00001" if p < 0.00001 else re.sub(r"(\.\d{3}\d*?)0+$", r"\1", f"{p:.5f}")
 
 
 def json_payload(action):

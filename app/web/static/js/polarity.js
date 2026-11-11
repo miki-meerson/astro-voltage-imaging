@@ -3,10 +3,11 @@
 // stored data keep their sign and the server flips what it sends, so views only use the words and colours below.
 window.Polarity = (() => {
   const COLORS = {depolarizing: "#ff5d6c", hyperpolarizing: "#4fa3ff"};
+  const NEURON = "#f7d154";  // the neuron itself everywhere: its trace and its outline (yellow); clusters are coloured by COLORS
   // cluster sign ("positive" / "negative", flipped STA convention) or a polarity word -> "depolarizing" | "hyperpolarizing"
   const of = s => (s === "positive" || s === "depolarizing") ? "depolarizing" : "hyperpolarizing";
   return {
-    COLORS,
+    COLORS, NEURON,
     DEP: "depolarizing", HYPER: "hyperpolarizing",
     of,
     color: s => COLORS[of(s)],

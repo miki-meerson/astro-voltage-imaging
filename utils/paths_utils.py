@@ -78,10 +78,15 @@ class PathKind(Enum):
     SUITE2P_STAT = auto()  # anchor: Suite2p plane0 folder
     SUITE2P_F = auto()  # anchor: Suite2p plane0 folder
     SUITE2P_OPS = auto()  # anchor: Suite2p plane0 folder
+    SUITE2P_FNEU = auto()  # anchor: Suite2p plane0 folder
+    SUITE2P_SPKS = auto()  # anchor: Suite2p plane0 folder
+    SUITE2P_MERGE_BACKUP = auto()  # anchor: experiment
+    ROI_GROUPS_MERGED = auto()  # anchor: experiment
     MC_ASTRO_MEAN_IMAGE = auto()  # anchor: motion_corrected folder
     MC_NEURON_MEAN_IMAGE = auto()  # anchor: motion_corrected folder
     MC_SHIFTS = auto()  # anchor: experiment
     ROI_CLASSES = auto()  # anchor: experiment
+    ROI_GROUPS = auto()  # anchor: experiment
     ROI_LABEL_DATASET = auto()  # anchor: data root
     BINNED_ASTRO_MOVIE = auto()  # anchor: experiment; fields: bin
     RUN_BEHAVIORAL_BINNED_MOVIE = auto()  # anchor: run; fields: group, bin
@@ -184,11 +189,16 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.SUITE2P_STAT: _Spec(_P0, (g.SUITE2P_STAT_FILE,)),
     PathKind.SUITE2P_F: _Spec(_P0, (g.SUITE2P_F_FILE,)),
     PathKind.SUITE2P_OPS: _Spec(_P0, (g.SUITE2P_OPS_FILE,)),
+    PathKind.SUITE2P_FNEU: _Spec(_P0, (g.SUITE2P_FNEU_FILE,)),
+    PathKind.SUITE2P_SPKS: _Spec(_P0, (g.SUITE2P_SPKS_FILE,)),
+    PathKind.SUITE2P_MERGE_BACKUP: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.FOR_SUITE2P_DIR, g.SUITE2P_DIR, g.SUITE2P_MERGE_BACKUP_DIR)),
+    PathKind.ROI_GROUPS_MERGED: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.ROI_GROUP_DIR, g.ROI_GROUPS_MERGED_FILE)),
     PathKind.MC_ASTRO_MEAN_IMAGE: _Spec(_MC, (g.ASTRO_MEAN_IMAGE_FILE,)),
     PathKind.MC_NEURON_MEAN_IMAGE: _Spec(_MC, (g.NEURON_MEAN_IMAGE_FILE,)),
     PathKind.MC_SHIFTS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.MOTION_CORRECTED_DIR, g.MOTION_SHIFTS_DIR, g.MOTION_SHIFTS_FILE)),
     PathKind.ROI_LABEL_DATASET: _Spec(Anchor.DATA_ROOT, (g.ROI_LABEL_DATASET_FILE,)),
     PathKind.ROI_CLASSES: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.ROI_CLASS_DIR, g.ROI_CLASSES_FILE)),
+    PathKind.ROI_GROUPS: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.ROI_GROUP_DIR, g.ROI_GROUPS_FILE)),
     PathKind.BINNED_ASTRO_MOVIE: _Spec(_E, (g.PIPELINE_RESULTS_DIR, g.PB_CORRECTED_DIR, g.BINNED_ASTRO_MOVIE_TEMPLATE)),
     PathKind.RUN_BEHAVIORAL_BINNED_MOVIE: _Spec(_R, (g.STA_ANALYSIS_DIR, g.BEHAVIORAL_BINNED_MOVIE_TEMPLATE)),
     PathKind.RUN_BEHAVIORAL_BINNED_FRAMES: _Spec(_R, (g.STA_ANALYSIS_DIR, g.BEHAVIORAL_BINNED_FRAMES_TEMPLATE)),

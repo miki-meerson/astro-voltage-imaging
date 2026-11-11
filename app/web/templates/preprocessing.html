@@ -5,6 +5,7 @@
 <nav class="tabs" aria-label="Preprocessing views">
   <button type="button" class="tab active" data-pre-tab="main">Preprocessing</button>
   <button type="button" class="tab" data-pre-tab="roi">ROI types (soma / dendrite)</button>
+  <button type="button" class="tab" data-pre-tab="groups">ROI groups</button>
 </nav>
 <div id="pre-tab-main">
 
@@ -35,6 +36,7 @@
       <form method="post" action="/experiments/{{ exp.id }}/suite2p/confirm"><button>Confirm Suite2p complete</button></form>
       {% elif exp.workflow_stage == "analysis_ready" %}
       <form method="post" action="/experiments/{{ exp.id }}/suite2p/confirm" onsubmit="return confirm('Read the Suite2p cells again? Running analysis runs are cancelled and spike detection starts again for the new cells.');"><button class="secondary">Refresh Suite2p cells</button></form>
+      <form method="post" action="/experiments/{{ exp.id }}/suite2p/unconfirm" onsubmit="return confirm('Unconfirm Suite2p? The spike detection and analysis runs made with these cells are cancelled and the experiment goes back to waiting for Suite2p (for example to merge ROI groups). Confirm Suite2p again afterwards.');"><button class="danger">Unconfirm Suite2p</button></form>
       {% else %}
       <span class="muted small">Available after preprocessing is confirmed.</span>
       {% endif %}
@@ -190,10 +192,42 @@
   </div>
 </section>
 </div>
+
+<div id="pre-tab-groups" hidden>
+<section class="panel" id="rg-panel">
+  <div class="panel-head">
+    <div>
+      <h2>ROI groups</h2>
+      <p id="rg-summary" class="muted">Open this tab to load the ROIs.</p>
+    </div>
+    <div class="toolbar">
+      <label class="field">Correlation at least <input type="number" id="rg-threshold" min="0.05" max="1" step="0.01" value="0.8" style="width:6em"></label>
+      <button type="button" class="secondary" id="rg-find" title="Find the groups again with this correlation and save them (replaces the saved groups)">Find groups</button>
+      <button type="button" class="secondary" id="rg-confirm" title="Merge each group into one ROI in the Suite2p result, as the Suite2p GUI's merge does (the files as they are now are kept in a backup folder; it can be undone)" hidden>Confirm groups (merge)</button>
+      <button type="button" class="secondary" id="rg-undo" title="Put the Suite2p result back as it was before the groups were merged" hidden>Undo merge</button>
+      <label class="field">Group <select id="rg-group" style="width:auto" disabled></select></label>
+    </div>
+  </div>
+  <p class="muted small">ROIs with alike traces may be parts of one cell. Members correlate at least the chosen value on average.</p>
+  <div class="roi-grid">
+    <div>
+      <div class="zv" data-cap="0.9"><div class="smv-stage" id="rg-stage"><canvas id="rg-base"></canvas><canvas id="rg-ovl"></canvas></div></div>
+    </div>
+    <div>
+      <div id="rg-members"></div>
+      <canvas id="rg-traces" class="rg-traces"></canvas>
+    </div>
+  </div>
+</section>
+</div>
 {% endblock %}
 {% block scripts %}
 {% if pb_available %}<script src="{{ url_for('static', filename='js/preprocessing_pb.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
 <script src="{{ url_for('static', filename='js/fov_outline.js') }}"></script>
+<script src="{{ url_for('static', filename='js/time_axis.js') }}"></script>
+<script src="{{ url_for('static', filename='js/plot_canvas.js') }}"></script>
+<script src="{{ url_for('static', filename='js/plot_view.js') }}"></script>
+<script src="{{ url_for('static', filename='js/roi_groups.js') }}"></script>
 <script src="{{ url_for('static', filename='js/roi_classes.js') }}"></script>
 {% endblock %}

@@ -16,6 +16,7 @@ from utils.hypotheses import hypothesis_name, sta_step
 from utils.output_errors import missing_output_message
 from utils.sta_stats_utils import significant_fraction
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
+from utils.roi_groups import fold_anatomy_parts
 
 
 def completed_sta_run(settings, experiment_id: int, step: str) -> tuple[dict, str]:
@@ -65,7 +66,7 @@ def hypothesis_results(settings, experiment_id: int, step: str) -> dict:
     """The numbers of the newest completed run of one hypothesis: {run_id, result_types: {name: numbers}, group_test (when the group test job has run), excluded_segments (the
     [start, end) frames left out of the analysis when it ran; [] for a run made before that could be set)}."""
     run, sta_dir = completed_sta_run(settings, experiment_id, step)
-    table = pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta_dir))
+    table = fold_anatomy_parts(pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta_dir)))
     used = read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA used-parameters file", missing=missing_output_message("The used-parameters file", run["id"]))  # what the job really used
     pooled = hypothesis_for(step).pool_cells
     results = {str(name): _pooled_summary(rows) if pooled else _result_type_summary(rows, used) for name, rows in table.groupby(table["spike_group"].astype(str))}
@@ -126,7 +127,7 @@ def cell_table(settings, experiment_id: int, step: str) -> dict:
     cached = caches.STA_CELL_TABLE.get(key)
     if cached is not None:
         return cached
-    table = pd.read_csv(csv)
+    table = fold_anatomy_parts(pd.read_csv(csv))
     table["significant"] = table["n_significant_clusters"].fillna(0) > 0
     cells = {}
     for cell, rows in table.groupby("cell_id"):

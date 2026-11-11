@@ -18,17 +18,18 @@ from pathlib import Path
 
 import pandas as pd
 
-from utils.anatomy_group_test import cell_records, group_test
+from utils.anatomy_group_test import cell_records, combine_part_records, group_test
 from utils.file_utils import write_json
 from utils import globals_utils as g
 from utils.motion_diagnostics import cell_motion_status
-from utils.paths_utils import PathKind, cell_dirs, cells_with_anatomy_result, path_for
-from utils.suite2p_utils import roi_center, suite2p_stat_cells
+from utils.paths_utils import PathKind, cell_dirs, cells_with_anatomy_result, path_for, result_file_name
+from utils.roi_groups import anatomy_group_of_part, part_centers
+from utils.suite2p_utils import suite2p_stat_cells
 
 
 def _one(args):
-    cell, npz, roi_center = args
-    return cell, cell_records(npz, roi_center)
+    cell, parts = args  # parts: [(result file, centre of the part)]: one for a ROI, one per part for a merged ROI
+    return cell, combine_part_records([cell_records(npz, center) for npz, center in parts])
 
 
 def main() -> None:
@@ -52,8 +53,9 @@ def main() -> None:
         with_result = cells_with_anatomy_result(sta)
         skipped["no_anatomy_result"] = len(cell_dirs(sta)) - len(with_result)
         for cid in with_result:
-            npz = path_for(PathKind.ANATOMY_RESULT, sta, cell=cid)
-            if cid >= len(stat):
+            centers = part_centers(stat[cid]) if cid < len(stat) else []  # the anatomy of a merged ROI was done around each of its parts: one result file per part
+            parts = [(path_for(PathKind.CELL_DIR, sta, cell=cid) / result_file_name(anatomy_group_of_part(part)), center) for part, center in enumerate(centers, 1)]
+            if cid >= len(stat) or not all(npz.exists() for npz, _ in parts):
                 skipped["no_anatomy_result"] += 1
                 continue
             cell_status = status.get(cid, g.MOTION_NOT_TESTED)
@@ -62,7 +64,7 @@ def main() -> None:
             elif cell_status == g.MOTION_SUSPECTED:
                 skipped["motion_flagged"] += 1
             else:
-                jobs.append((cid, npz, roi_center(stat[cid])))
+                jobs.append((cid, parts))
         print(f"{len(jobs)} cells go into the test; left out: {skipped}", flush=True)
         records = {}
         with ProcessPoolExecutor(a.workers) as ex:

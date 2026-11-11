@@ -7,7 +7,7 @@ from flask import jsonify, redirect, render_template, request, send_file, url_fo
 
 from app.db import preprocessing_repository as repo
 from app.services import caches
-from app.services.experiments import PAST_PREPROCESSING, confirm_preprocessing, confirm_suite2p, start_preprocessing
+from app.services.experiments import PAST_PREPROCESSING, confirm_preprocessing, confirm_suite2p, start_preprocessing, unconfirm_suite2p
 from app.services.movies import (
     mean_intensity_payload,
     PB_KINDS,
@@ -15,6 +15,7 @@ from app.services.movies import (
 )
 from app.services.preprocessing import PREPROCESSING_STEPS, latest_preprocessing_params, rerun_preprocessing_step
 from app.services.roi_classes import export_manual_labels, roi_class_payload, roi_fov_png, run_auto_classification, set_manual_class
+from app.services.roi_groups import confirm_roi_groups, find_roi_groups, group_traces, roi_group_payload, undo_roi_groups
 from app.services.run_views import run_view
 from app.services.workspace import page_data
 from app.web.common import FlatBlueprint, get_settings
@@ -22,6 +23,7 @@ from utils import globals_utils as g
 from utils.file_utils import path_within
 from utils.movie_utils import read_frame_rate
 from utils.paths_utils import PathKind, path_for
+from utils.roi_groups import DEFAULT_THRESHOLD
 
 bp = FlatBlueprint("preprocessing", __name__)
 
@@ -102,6 +104,17 @@ def confirm_suite2p_route(experiment_id):
         return render_template("error.html", title="Suite2p Confirm Failed", message=str(exc)), 400
 
 
+@bp.post("/experiments/<int:experiment_id>/suite2p/unconfirm")
+def unconfirm_suite2p_route(experiment_id):
+    settings = get_settings()
+    try:
+        unconfirm_suite2p(settings, experiment_id)
+        caches.clear_experiment_result_caches()
+        return redirect(url_for("experiment_preprocessing", experiment_id=experiment_id, notice="suite2p_unconfirmed"))
+    except Exception as exc:
+        return render_template("error.html", title="Suite2p Unconfirm Failed", message=str(exc)), 400
+
+
 @bp.get("/experiments/<int:experiment_id>/preprocessing/mean-intensity/data")
 def preprocessing_mean_intensity_data(experiment_id):
     settings = get_settings()
@@ -151,4 +164,28 @@ def roi_classes_request(experiment_id, action, roi):
     except FileNotFoundError as exc:
         return jsonify({"message": str(exc)}), 404
     except (ValueError, OSError) as exc:
+        return jsonify({"message": str(exc)}), 400
+
+
+ROI_GROUP_ACTIONS = {"confirm": confirm_roi_groups, "undo": undo_roi_groups}  # the requests with nothing but the experiment that change the groups
+
+
+@bp.get("/experiments/<int:experiment_id>/preprocessing/roi-groups.json", defaults={"action": "data", "group": None})
+@bp.post("/experiments/<int:experiment_id>/preprocessing/roi-groups/<any(find, confirm, undo):action>", defaults={"group": None})
+@bp.get("/experiments/<int:experiment_id>/preprocessing/roi-groups/<int:group>/traces.json", defaults={"action": "traces"})
+def roi_groups_request(experiment_id, action, group):
+    """The ROI groups tab's requests: json of what the action returns, or {"message"} with the status of what went wrong."""
+    settings = get_settings()
+    exp = repo.experiment_row(settings, experiment_id)
+    if exp is None:
+        return jsonify({"message": "Experiment not found."}), 404
+    try:
+        if action == "find":
+            return jsonify(find_roi_groups(exp, float((request.get_json(silent=True) or {}).get("threshold", DEFAULT_THRESHOLD))))
+        if action in ROI_GROUP_ACTIONS:
+            return jsonify(ROI_GROUP_ACTIONS[action](exp))
+        return jsonify(group_traces(exp, group) if action == "traces" else roi_group_payload(exp))
+    except FileNotFoundError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except (TypeError, ValueError, OSError) as exc:
         return jsonify({"message": str(exc)}), 400

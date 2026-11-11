@@ -17,6 +17,7 @@ from app.services.experiments import start_spike_detection
 from app.services.hypothesis_summary import cell_table, chosen_step, hypothesis_status, hypothesis_summaries, waiting_for
 from app.services.roi_class_stats import roi_class_statistics
 from app.services.roi_classes import roi_class_payload
+from app.services.roi_groups import merged_group_sizes
 from app.services.run_views import build_validation_rows, run_view, validation_all_ok
 from app.services.runs import STA_RESULT_TYPES, hypothesis_for, sta_steps
 from app.services.spikes import current_suite2p_neurons, experiment_spike_review, spikes_edited_after_sta
@@ -118,14 +119,15 @@ def _cell_list(settings, exp: dict, step: str, args) -> tuple[list[dict], dict |
     neurons = current_suite2p_neurons(repo.experiment_source_path(settings, experiment_id), repo.experiment_neurons(settings, experiment_id))
     try:
         roi_types = {entry["cell"]: entry["label"] for entry in roi_class_payload(settings, exp)["rois"]}
+        group_sizes = merged_group_sizes(exp["source_path"])
     except FileNotFoundError:  # Suite2p has not run
-        roi_types = {}
+        roi_types, group_sizes = {}, {}
     try:
         table = cell_table(settings, experiment_id, step)
     except FileNotFoundError as exc:
-        return [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), "roi_type": roi_types.get(int(n["pipeline_neuron_id"]))} for n in neurons], None, str(exc)
+        return [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), "roi_type": roi_types.get(int(n["pipeline_neuron_id"])), "group_size": group_sizes.get(int(n["pipeline_neuron_id"]))} for n in neurons], None, str(exc)
     flags = table["cells"]
-    cells = [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), "roi_type": roi_types.get(int(n["pipeline_neuron_id"])), **flags.get(int(n["pipeline_neuron_id"]), {})} for n in neurons]
+    cells = [{"id": int(n["id"]), "cell": int(n["pipeline_neuron_id"]), "roi_type": roi_types.get(int(n["pipeline_neuron_id"])), "group_size": group_sizes.get(int(n["pipeline_neuron_id"])), **flags.get(int(n["pipeline_neuron_id"]), {})} for n in neurons]
     if args.get("significant") == "1":
         cells = [cell for cell in cells if cell.get("significant")]
     if args.get("anatomy") == "1":

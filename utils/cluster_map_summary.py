@@ -24,9 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import linkage
 from scipy.ndimage import distance_transform_edt
-from scipy.spatial.distance import squareform
 
 from utils import globals_utils as g
 from utils.cluster_result import cluster_pixels_fullres, cluster_records, load_cluster_result, read_result_header
@@ -35,8 +33,9 @@ from utils.motion_diagnostics import cell_motion_status
 from utils.movie_utils import read_astro_movie
 from utils.output_errors import missing_output_message
 from utils.paths_utils import PathKind, path_for, result_file_name, run_dir_of_sta_dir
+from utils.roi_groups import part_centers
 from utils.sta_stats_utils import f0_for_valid_centers, filter_valid_peaks
-from utils.sta_trace_utils import cluster_raw_trace_from_movie, event_triggered_mean, lag_corr_matrix
+from utils.sta_trace_utils import cluster_raw_trace_from_movie, correlation_linkage, event_triggered_mean
 from utils.suite2p_utils import load_suite2p_context, roi_pixels, suite2p_trace_dff
 
 MIN_CLUSTERS_FOR_DYNAMICS = 2
@@ -65,7 +64,8 @@ def _cell_record(sta_dir: Path, cell: int, t: list[int], spike_source: str, suit
     neuron = event_triggered_mean(suite2p_trace_dff(cell, suite2p_ctx=suite2p), head["peaks"], np.asarray(t, dtype=int))
     ys, xs = roi_pixels(suite2p["stat_cells"][cell])
     return {
-        "roi": {"ys": [int(v) for v in ys], "xs": [int(v) for v in xs]}, "motion": motion, "n_spikes": int(head["peaks"].size),
+        "roi": {"ys": [int(v) for v in ys], "xs": [int(v) for v in xs]}, "part_centers": [list(center) for center in part_centers(suite2p["stat_cells"][cell])], "motion": motion,
+        "n_spikes": int(head["peaks"].size),
         "spikes": [int(v) for v in head["peaks"]], "baseline_window": head["baseline_window"],
         "neuron_trace": [] if neuron is None else [round(float(v), 6) for v in neuron],
     }
@@ -117,10 +117,8 @@ def trace_dynamics(clusters: list[dict]) -> dict | None:
     same frames (the clusters of one STA run always do)."""
     if len(clusters) < MIN_CLUSTERS_FOR_DYNAMICS or len({tuple(c["t"]) for c in clusters}) != 1:
         return None
-    corr = lag_corr_matrix(np.asarray([c["trace"] for c in clusters], dtype=float), 0)  # a flat trace has no shape to compare: no correlation
-    np.fill_diagonal(corr, 1.0)
-    distance = np.clip(1 - corr, 0, 2)
-    return {"corr": np.round(corr, 4).tolist(), "linkage": linkage(squareform((distance + distance.T) / 2, checks=False), method="average").tolist()}
+    corr, tree = correlation_linkage(np.asarray([c["trace"] for c in clusters], dtype=float))
+    return {"corr": np.round(corr, 4).tolist(), "linkage": tree.tolist()}
 
 
 def build_cluster_map_summary(sta_dir: str | Path, source_dir: str | Path, summary_csv: str | Path | None = None, log=None) -> dict:

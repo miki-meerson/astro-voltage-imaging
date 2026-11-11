@@ -67,8 +67,12 @@ def suite2p_trace_dff(
     baseline_percentile: float = 10.0,
 ) -> np.ndarray:
     """Convert a raw Suite2p fluorescence trace to dF/F using a robust per-neuron baseline."""
-    F_raw = np.asarray(suite2p_ctx["F"], dtype=np.float32)
-    trace = np.asarray(F_raw[int(neuron_id)], dtype=np.float32).ravel()
+    return trace_to_dff(np.asarray(suite2p_ctx["F"])[int(neuron_id)], baseline_percentile)
+
+
+def trace_to_dff(raw_trace: np.ndarray, baseline_percentile: float = 10.0) -> np.ndarray:
+    """dF/F of one raw fluorescence trace, relative to its baseline (a low percentile; the median when that is about zero). NaN everywhere when there is no usable baseline."""
+    trace = np.asarray(raw_trace, dtype=np.float32).ravel()
     f0 = float(np.nanpercentile(trace, baseline_percentile))
     if not np.isfinite(f0) or abs(f0) <= 1e-6:
         f0 = float(np.nanmedian(trace))
@@ -77,9 +81,12 @@ def suite2p_trace_dff(
     return ((trace - f0) / (abs(f0) + 1e-6)).astype(np.float32)
 
 
-def neuron_centroid_binned(cell_id, spatial_bin, map_shape, suite2p_ctx):
+def neuron_centroid_binned(cell_id, spatial_bin, map_shape, suite2p_ctx, part=0):
+    """The centre of a cell in the binned map (y, x). A ROI merged from several (utils/roi_groups.py) has one centre per part, the largest first: `part` (0, 1, ...) chooses."""
     s = suite2p_ctx["stat_cells"][cell_id]
-    if "med" in s and len(s["med"]) >= 2:
+    if "part_centers" in s:
+        y, x = (float(v) for v in s["part_centers"][part])
+    elif "med" in s and len(s["med"]) >= 2:
         y, x = float(s["med"][0]), float(s["med"][1])
     else:
         y, x = roi_center(s)

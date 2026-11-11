@@ -23,7 +23,7 @@ from app.services.experiments import (
     start_analysis,
     validate_experiment,
 )
-from app.services.cluster_map import cluster_map, cluster_offsets
+from app.services.cluster_map import cluster_delays, cluster_map, cluster_offsets
 from app.services.global_trends import global_trends
 from app.services.hypothesis_summary import chosen_step
 from app.services.run_views import STEP_LABELS
@@ -114,6 +114,12 @@ def experiment(experiment_id):
 @bp.get("/experiments/<int:experiment_id>/cluster-offsets.json")
 def experiment_cluster_offsets(experiment_id):
     return json_payload(lambda: cluster_offsets(get_settings(), experiment_id, chosen_step(request.args.get("h"))))
+
+
+@bp.get("/experiments/<int:experiment_id>/cluster-delays.json")
+def experiment_cluster_delays(experiment_id):
+    types = request.args.get("types")  # the result types to use, comma separated (all of them when absent)
+    return json_payload(lambda: cluster_delays(get_settings(), experiment_id, chosen_step(request.args.get("h")), types.split(",") if types else None, request.args.get("clear", "1") == "1"))
 
 
 @bp.get("/experiments/<int:experiment_id>/pooled-sta-map.png")

@@ -7,7 +7,7 @@
   const base = $("smv-base"), ovl = $("smv-ovl"), stage = $("smv-stage"), trace = $("smv-trace");
   const info = $("smv-info"), readout = $("smv-readout"), scrub = $("smv-scrub"), play = $("smv-play");
   const S = 3;  // on-screen pixels per movie pixel
-  const COL = {positive: Polarity.color("positive"), negative: Polarity.color("negative"), neuron: "#f7d154", spike: "#ffffff"};  // cluster sign: positive = depolarizing
+  const COL = {positive: Polarity.color("positive"), negative: Polarity.color("negative"), neuron: Polarity.NEURON, spike: "#ffffff"};  // cluster sign: positive = depolarizing
   let M = null, data = null, frame = 0, timer = null, win = null;
 
   const rel = f => M.relative_frames[f];

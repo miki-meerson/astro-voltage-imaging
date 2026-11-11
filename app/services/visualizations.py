@@ -15,6 +15,7 @@ from app.settings import Settings
 from utils import globals_utils as g
 from utils.cluster_result import cluster_records, load_cluster_result
 from utils.db_utils import collect_cluster_result_metadata
+from utils.format_utils import format_p
 from utils.hypotheses import hypothesis_name
 from utils.movie_utils import get_mean_images, read_frame_rate
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths, sta_dir_of_run
@@ -240,11 +241,11 @@ MOTION_SERIES_LABELS = {
 def _motion_verdict(flag: bool, p_family: float, alpha: float, p_floor: float) -> tuple[str, str]:
     """(kind, sentence) of the motion test of a cell: kind is flag, unresolved, none or few_spikes."""
     if flag:
-        return "flag", f"The spikes of this cell are time-locked to motion (p = {p_family:.3f}, corrected over the 5 measures, limit {alpha:g}). Treat its clusters with caution."
+        return "flag", f"The spikes of this cell are time-locked to motion (p = {format_p(p_family)}, corrected over the 5 measures, limit {alpha:g}). Treat its clusters with caution."
     if p_floor > alpha:
-        return "unresolved", f"Cannot resolve p <= {alpha:g}: only {int(round(1 / p_floor)) - 1} random copies (the smallest possible p is {p_floor:.3f}). Read the curves against the grey band."
+        return "unresolved", f"Cannot resolve p <= {alpha:g}: only {int(round(1 / p_floor)) - 1} random copies (the smallest possible p is {format_p(p_floor)}). Read the curves against the grey band."
     if np.isfinite(p_family):
-        return "none", f"No spike-locked motion found (p = {p_family:.3f}, corrected over the 5 measures, limit {alpha:g}). The shifts are the motion that was corrected; motion left after the correction shows only in the registration quality."
+        return "none", f"No spike-locked motion found (p = {format_p(p_family)}, corrected over the 5 measures, limit {alpha:g}). The shifts are the motion that was corrected; motion left after the correction shows only in the registration quality."
     return "few_spikes", "There are not enough spikes for the motion test."
 
 

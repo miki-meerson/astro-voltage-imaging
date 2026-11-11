@@ -126,7 +126,7 @@
       ctx.strokeStyle = "#5d6a78";
       ctx.beginPath(); ctx.moveTo(x(0), plot.y0); ctx.lineTo(x(0), plot.y1); ctx.stroke();
     }
-    ctx.strokeStyle = flagged && series.p !== null && series.p <= alpha ? token("--dep") : "#f7d154";  // red only for a flagged cell (the p of one series is not corrected)
+    ctx.strokeStyle = flagged && series.p !== null && series.p <= alpha ? token("--dep") : Polarity.NEURON;  // red only for a flagged cell (the p of one series is not corrected)
     ctx.lineWidth = 2;
     ctx.beginPath();
     series.rels.forEach((t, i) => (i ? ctx.lineTo(x(t), y(series.observed[i])) : ctx.moveTo(x(t), y(series.observed[i]))));

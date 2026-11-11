@@ -10,8 +10,9 @@
   const PAGE = JSON.parse(document.getElementById("page-data").textContent);
   const EXP_ID = PAGE.expId, HYPOTHESIS = PAGE.hypothesis;
   const $ = id => document.getElementById(id);
-  const YELLOW = "#f7d154", FG = "#c9d4df", GRID = "#1c2630", CONTROL = "#c9d4df", SPIKE_LINE = "rgba(255, 255, 255, 0.85)", DASH = {all: [], anatomy: [5, 3]};
+  const YELLOW = Polarity.NEURON, FG = "#c9d4df", GRID = "#1c2630", CONTROL = "#c9d4df", SPIKE_LINE = "rgba(255, 255, 255, 0.85)", BAND = "rgba(154, 168, 183, 0.16)", DASH = {all: [], anatomy: [5, 3]};
   const PLOT = {L: 44, R: 44, T: 20, B: 28}, SPIKE_PLOT = {L: 44, R: 10, T: 20, B: 28}, RAW_ROW = {L: 64, R: 14, T: 6, B: 6}, RAW_AXIS = {L: 64, R: 14, T: 2, B: 18};
+  const CELL_COLORS = ["#4fa3ff", "#ff7a59", "#2fbf71", "#d65db1", "#f2b84b", "#7bd3ea", "#b79cff", "#e8e26d", "#ff6b9a", "#9ad06a"];
   const image = new Image();
   let D = null, repaintRaw = () => {};  // repaintRaw: draws the rows again (the window changed size)
   const {setup, format: fmt, pValue} = PlotCanvas;
@@ -57,7 +58,7 @@
 
   function band(ctx, c, X, a, H) {
     const x0 = X((c.first_rel - 0.5) / D.fps), x1 = X((c.last_rel + 0.5) / D.fps);
-    ctx.globalAlpha = 0.14; ctx.fillStyle = Polarity.color(c.sign); ctx.fillRect(x0, a.T, x1 - x0, H - a.T - a.B); ctx.globalAlpha = 1;
+    ctx.fillStyle = BAND; ctx.fillRect(x0, a.T, x1 - x0, H - a.T - a.B);  // neutral grey: a band in the trace's own colour would hide the trace
   }
 
   // the clusters' mean traces (left axis) and the neuron's own trace (right axis, held to the same part of the plot as the left one)
@@ -110,10 +111,65 @@
     });
   }
 
-  function shown() {  // the cells to draw, with their clusters of the checked result types
-    const types = [...document.querySelectorAll("#cm-types input:checked")].map(b => b.value), motion = $("cm-motion").checked;
-    return Object.keys(D.cells).map(Number).sort((a, b) => a - b).map(cell => ({cell, record: D.cells[cell], clusters: D.clusters.filter(c => c.cell === cell && types.includes(c.result_type))}))
-      .filter(o => o.clusters.length && (motion || o.record.motion !== "motion_suspected"));
+  // the cells of a group on the field of view, each in its own colour: its ROI (bold) and its clusters (filled, with a dashed ring, all in the colour of their cell)
+  function drawGroupFov(canvas, view, members) {
+    const [ctx, W, H] = setup(canvas), width = image.naturalWidth, scale = W / (view.x[1] - view.x[0]);
+    ctx.drawImage(image, view.x[0], view.y[0], view.x[1] - view.x[0], view.y[1] - view.y[0], 0, 0, W, H);
+    ctx.save(); ctx.translate(-view.x[0] * scale, -view.y[0] * scale);
+    members.forEach((o, i) => {  // the ROI: filled, with a bold outline and its cell number; its clusters: only a thin dashed ring and a dot at the centre, so the two are not mistaken for each other
+      const color = CELL_COLORS[i % CELL_COLORS.length], roi = o.record.roi;
+      ctx.fillStyle = color; ctx.globalAlpha = 0.4;
+      roi.ys.forEach((y, k) => ctx.fillRect(roi.xs[k] * scale, y * scale, Math.max(scale, 1.5), Math.max(scale, 1.5)));
+      ctx.globalAlpha = 1; ctx.setLineDash([]);
+      ctx.strokeStyle = "#0b0f14"; ctx.lineWidth = 6; FovOutline.draw(ctx, roi.ys, roi.xs, width, scale);
+      ctx.strokeStyle = color; ctx.lineWidth = 3.4; FovOutline.draw(ctx, roi.ys, roi.xs, width, scale);
+      for (const c of o.clusters) {
+        const reach = Math.max(...c.ys.map((y, k) => Math.hypot(y - c.center[0], c.xs[k] - c.center[1]))), cx = (c.center[1] + 0.5) * scale, cy = (c.center[0] + 0.5) * scale, radius = Math.max(9, (reach + 2) * scale);
+        ctx.beginPath(); ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+        ctx.strokeStyle = "#0b0f14"; ctx.lineWidth = 3.4; ctx.setLineDash([]); ctx.stroke();
+        ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, 2 * Math.PI); ctx.fill();
+      }
+    });
+    members.forEach((o, i) => {  // the cell numbers over the ROIs
+      const roi = o.record.roi, cx = roi.xs.reduce((u, v) => u + v, 0) / roi.xs.length * scale, top = Math.min(...roi.ys) * scale;
+      ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.lineWidth = 3; ctx.strokeStyle = "#0b0f14"; ctx.lineJoin = "round";
+      ctx.strokeText(String(o.cell), cx, top - 4); ctx.fillStyle = CELL_COLORS[i % CELL_COLORS.length]; ctx.fillText(String(o.cell), cx, top - 4);
+    });
+    ctx.restore();
+    ctx.font = "11px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.fillStyle = FG;
+    ctx.fillText("bold filled outline: neuron ROI   |   dashed ring: its clusters", 6, H - 5);
+  }
+
+  // the spikes of the cells of a group over the whole recording, one row per cell: the ticks line up when the spikes are the same
+  function drawSpikeRows(canvas, members) {
+    const [ctx, W, H] = setup(canvas), a = {L: 56, R: 10, T: 4, B: 16}, frames = Math.max(...members.flatMap(o => o.record.spikes)) + 1;
+    const X = f => a.L + f / frames * (W - a.L - a.R), row = (H - a.T - a.B) / members.length;
+    ctx.font = "10px sans-serif"; ctx.textBaseline = "middle"; ctx.textAlign = "right";
+    members.forEach((o, i) => {
+      const y = a.T + row * (i + 0.5), color = CELL_COLORS[i % CELL_COLORS.length];
+      ctx.fillStyle = color; ctx.fillText(`cell ${o.cell}`, a.L - 6, y);
+      ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.beginPath();
+      o.record.spikes.forEach(s => { ctx.moveTo(X(s), y - row * 0.35); ctx.lineTo(X(s), y + row * 0.35); }); ctx.stroke();
+    });
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = FG;
+    for (const v of TimeAxis.nice(0, frames / D.fps, 8)) ctx.fillText(fmt(v), X(v * D.fps), H - a.B + 3);
+  }
+
+  function groupCard(members, wide) {
+    const card = document.createElement("div"); card.className = wide ? "cm-card cm-wide" : "cm-card";
+    card.innerHTML = `<div class="cm-head"><span><b>${members.length} cells</b> with the same spikes</span></div>
+      <div class="cm-pair"><canvas class="cm-fov"></canvas><canvas class="cm-spike-rows"></canvas></div>`;
+    $("cm-grid").appendChild(card);
+    const fov = card.querySelector(".cm-fov"), rows = card.querySelector(".cm-spike-rows");
+    fov.style.aspectRatio = `${image.naturalWidth} / ${image.naturalHeight}`; rows.style.height = `${members.length * 16 + 24}px`;  // the whole field of view on every card, to compare positions
+    const view = PlotView.create({x: [0, image.naturalWidth], y: [0, image.naturalHeight]}, () => drawGroupFov(fov, view, members));
+    PlotView.attach(view, fov, () => ({L: 0, R: 0, T: 0, B: 0}), {inside: true, yDown: true});
+    drawGroupFov(fov, view, members); drawSpikeRows(rows, members);
+  }
+
+  function shown() {  // the cells to draw (every cell with a significant cluster), with their clusters of every result type
+    return Object.keys(D.cells).map(Number).sort((a, b) => a - b).map(cell => ({cell, record: D.cells[cell], clusters: D.clusters.filter(c => c.cell === cell)})).filter(o => o.clusters.length);
   }
 
   function cardFor(o) {
@@ -216,13 +272,28 @@
   }
 
   function render() {
-    const cards = shown(), raw = $("cm-view").value === "raw";
-    $("cm-raw").hidden = !raw; $("cm-grid").hidden = raw; $("cm-cell-field").hidden = !raw;
+    const cards = shown(), view = $("cm-view").value, raw = view === "raw";
+    $("cm-raw").hidden = !raw; $("cm-grid").hidden = raw; $("cm-cell-field").hidden = !raw; $("cm-min-spikes-field").hidden = view !== "same";
     const chosen = $("cm-cell").value;  // the dropdown lists the cells that are shown; the one that was open stays open when it still is
     $("cm-cell").innerHTML = cards.map(o => `<option value="${o.cell}">Cell ${o.cell} · ${[...new Set(o.clusters.map(c => c.result_type))].join(" + ")} · ${o.record.spikes.length} spikes${o.record.motion === "motion_suspected" ? " · motion suspected" : ""}</option>`).join("");
     if (cards.some(o => String(o.cell) === chosen)) $("cm-cell").value = chosen;
     $("cm-summary").textContent = `${cards.length} cells, ${cards.reduce((n, o) => n + o.clusters.length, 0)} significant clusters, of the newest run (${D.run_id}) of this hypothesis.`;
     $("cm-grid").innerHTML = "";
+    if (view === "same") {
+      const minSpikes = Math.max(1, Number($("cm-min-spikes").value) || 1), frames = Math.max(0, Number($("cm-frames").value) || 0), share = Math.min(1, Math.max(0.1, (Number($("cm-share").value) || 100) / 100));
+      const groups = SameSpikes.groups(cards, minSpikes, frames, share);
+      $("cm-summary").textContent = `${groups.length} groups of cells with the same spikes (within ${frames} frames, at least ${(share * 100).toFixed(0)}% of the spikes), ${groups.reduce((n, group) => n + group.length, 0)} cells, among the ${cards.length} cells with a significant cluster of the newest run (${D.run_id}).`;
+      const choice = $("cm-group").value;  // one group at a time, or all of them
+      $("cm-group").innerHTML = '<option value="all">all groups</option>' + groups.map((group, i) => `<option value="${i}">group ${i + 1}: cells ${group.map(o => o.cell).join(", ")}</option>`).join("");
+      if (choice && choice !== "all" && groups[Number(choice)]) $("cm-group").value = choice;
+      const one = $("cm-group").value === "all" ? null : groups[Number($("cm-group").value)];
+      (one ? [one] : groups).forEach(group => groupCard(group, Boolean(one)));
+      if (!groups.length) {
+        const best = SameSpikes.closest(cards, minSpikes, frames);
+        $("cm-grid").innerHTML = `<p class="muted">No two cells match.${best ? ` Closest: cells ${best.a} and ${best.b}, ${(best.share * 100).toFixed(0)}% of their spikes within ${frames} frames of each other.` : ""}</p>`;
+      }
+      return;
+    }
     if (raw) renderRaw(cards.find(o => String(o.cell) === $("cm-cell").value)); else cards.forEach(cardFor);
   }
 
@@ -240,11 +311,10 @@
       if (!res.ok) throw new Error(body.message || `Request failed (${res.status})`);
       await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error("The mean astro image could not be loaded: the motion correction step saves it.")); image.src = `/experiments/${EXP_ID}/preprocessing/roi-fov.png?channel=astro`; });
       D = body;
-      $("cm-types").innerHTML = D.result_types.map(name => `<label class="check"><input type="checkbox" value="${name}" checked> ${name}</label>`).join(" ");
-      root.querySelectorAll("input[type=checkbox]").forEach(box => box.addEventListener("change", render));
       if (new URLSearchParams(location.search).get("view") === "cards") $("cm-view").value = "cards";  // a link to the cards view
       $("cm-view").addEventListener("change", render);
       $("cm-cell").addEventListener("change", render);
+      $("cm-min-spikes").addEventListener("change", render); $("cm-frames").addEventListener("change", render); $("cm-share").addEventListener("change", render); $("cm-group").addEventListener("change", render);
       $("cm-pdf").addEventListener("click", exportCardsToPdf);
       render();
     } catch (error) { $("cm-summary").textContent = error.message; }

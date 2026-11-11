@@ -239,6 +239,14 @@ def confirm_preprocessing(settings: Settings, experiment_id: int) -> None:
     repo.confirm_preprocessing(settings, experiment_id)
 
 
+def unconfirm_suite2p(settings: Settings, experiment_id: int) -> None:
+    """Take back the Suite2p confirmation (to merge ROI groups or run Suite2p again): the runs made with the cells are cancelled and the experiment waits for Suite2p. Raises
+    ValueError when the experiment is unknown or Suite2p is not confirmed."""
+    if repo.workflow_stage_of(settings, experiment_id) != repo.STAGE_ANALYSIS_READY:
+        raise ValueError("Suite2p is not confirmed for this experiment.")
+    repo.unconfirm_suite2p(settings, experiment_id, ANALYSIS_STEPS)
+
+
 def confirm_suite2p(settings: Settings, experiment_id: int) -> int:
     exp = repo.experiment_row(settings, experiment_id)
     if exp is None:
