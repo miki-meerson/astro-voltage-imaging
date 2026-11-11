@@ -63,118 +63,174 @@
     <script type="application/json" id="page-data">{{ {"neuronId": selected.id, "hypothesis": selected_hypothesis}|tojson }}</script>
     <script type="application/json" id="cards-data">{{ cards|tojson }}</script>
 
-    <div class="stats">
-      <div class="stat">
-        <div class="value">{{ selected.spikes }}{% if selected.spikes_before is defined %} <span class="muted small">of {{ selected.spikes_before }}</span>{% endif %}</div>
-        <div class="label">spikes used{% if selected.spikes_before is defined and selected.spikes_before > selected.spikes %} ({{ selected.spikes_before - selected.spikes }} removed by the silence rule){% endif %}</div>
-      </div>
-      <div class="stat"><div class="value">{{ cards | selectattr("n_significant") | list | length }}</div><div class="label">result types with a significant cluster</div></div>
-      <div class="stat"><div class="value">{{ cards | sum(attribute="n_significant") }}</div><div class="label">significant clusters</div></div>
-      <div class="stat"><div class="value">{{ selected.roi_type or "not classified" }}</div><div class="label">ROI type (set on the Preprocessing page)</div></div>
-      {% if selected.group_size %}<div class="stat"><div class="value">group &times;{{ selected.group_size }}</div><div class="label">ROIs merged into this cell (its anatomy is tested around each of them)</div></div>{% endif %}
-      <div class="stat">
-        <div class="value">{% if selected.motion == "ok" %}<span class="chip completed">ok</span>{% elif selected.motion == "motion_suspected" %}<span class="chip warn">motion?</span>{% else %}<span class="chip off">not tested</span>{% endif %}</div>
-        <div class="label">motion test (do the spikes line up with image motion?)</div>
-      </div>
+    <div class="cell-chips">
+      <span class="chip" title="the spikes the analysis used{% if selected.spikes_before is defined and selected.spikes_before > selected.spikes %}; {{ selected.spikes_before - selected.spikes }} removed by the silence rule{% endif %}">{{ selected.spikes }} spikes{% if selected.spikes_before is defined and selected.spikes_before > selected.spikes %} of {{ selected.spikes_before }}{% endif %}</span>
+      {% set n_clusters = cards | sum(attribute="n_significant") %}
+      <span class="chip {{ 'completed' if n_clusters else 'off' }}" title="significant clusters, all result types">{{ n_clusters }} significant cluster{{ "s" if n_clusters != 1 }} in {{ cards | selectattr("n_significant") | list | length }} result type{{ "s" if (cards | selectattr("n_significant") | list | length) != 1 }}</span>
+      <span class="chip off" title="ROI type (set on the Preprocessing page)">{{ selected.roi_type or "not classified" }}</span>
+      {% if selected.group_size %}<span class="chip off" title="ROIs merged into this cell (its anatomy is tested around each of them)">group &times;{{ selected.group_size }}</span>{% endif %}
+      {% if selected.motion == "ok" %}<span class="chip completed" title="motion test: do the spikes line up with image motion?">motion ok</span>
+      {% elif selected.motion == "motion_suspected" %}<span class="chip warn" title="motion test: the spikes line up with image motion">motion?</span>
+      {% else %}<span class="chip off" title="motion test: do the spikes line up with image motion?">motion not tested</span>{% endif %}
     </div>
 
-    <h3 style="margin-top:20px">Results by result type</h3>
-    <p class="muted small">Every card shows the same two plots: the mean image with the significant clusters outlined (the cell outline is yellow), and the change from baseline inside the clusters.</p>
-    <div class="results">
-      {% for card in cards %}
-      <div class="card{% if card.n_significant %} sig{% endif %}">
-        <div class="card-head">
-          <b>{{ card.title }}</b>
-          <span class="chip {{ 'completed' if card.n_significant else 'off' }}">{% if card.n_significant %}{{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% else %}no significant cluster{% endif %}</span>
-        </div>
-        <img class="map" src="{{ map_base }}{{ card.result_type }}&run={{ sta_run.id }}" alt="Mean image of cell {{ selected.cell }} with the clusters of {{ card.title }}">
-        <canvas class="result-plot" data-card="{{ loop.index0 }}"></canvas>
-        <div class="cluster-list">
-          {% for cluster in card.clusters %}
-          <div class="cluster-row"><span class="sign {{ 'dep' if cluster.polarity == 'depolarizing' else 'hyper' }}">{{ cluster.polarity }}</span> {{ "%+.2f"|format(cluster.first_rel / card.fps) }} &hellip; {{ "%+.2f"|format(cluster.last_rel / card.fps) }} s &middot; p {{ cluster.p|pval }} &middot; {{ cluster.n_px }} px</div>
-          {% else %}
-          <div class="cluster-row">{{ card.n_peaks }} spikes &middot; no significant cluster</div>
-          {% endfor %}
-        </div>
-      </div>
-      {% endfor %}
+    <div class="cell-tabs" id="cell-tabs">
+      {% if not pooled %}<button type="button" data-tab="movie">Movie &amp; components</button>{% endif %}
+      <button type="button" data-tab="clusters">Clusters</button>
+      <button type="button" data-tab="motion">Motion</button>
+      {% if not pooled %}<button type="button" data-tab="spikes">Spikes</button>{% endif %}
     </div>
 
-    {% if pooled %}
-    <p class="muted small">A pooled hypothesis tests the spikes of all cells together as one list of events: one result for the whole experiment, so there is no cell outline, no cropped movie and no single spike trace.</p>
-    {% else %}
-    <h3 style="margin-top:24px">STA movie</h3>
-    {% set movie_cards = cards | selectattr("result_type", "in", ["anatomy", "all"]) | list %}
-    {% set movie_default = (movie_cards | selectattr("n_significant") | sort(attribute="result_type", reverse=true) | first).result_type if (movie_cards | selectattr("n_significant") | list) else "anatomy" %}
-    <section id="smv">
+    {% if not pooled %}
+    <section class="tab-pane" data-pane="movie" hidden>
       <div class="toolbar">
-        <label class="field">Result
-          <select id="smv-type" title="The movie of the result type: the crop around the cell (anatomy) or the whole field (all)">
-            {% for card in movie_cards | sort(attribute="result_type") %}<option value="{{ card.result_type }}"{% if card.result_type == movie_default %} selected{% endif %}>{% if card.result_type == "anatomy" %}Anatomy (crop around the cell){% else %}All (whole field){% endif %}{% if card.n_significant %}, {{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% endif %}</option>{% endfor %}
-          </select>
+        <div class="seg" id="cell-source">
+          <button type="button" data-src="sta" class="on">STA movie</button>
+          <button type="button" data-src="pca">PCA</button>
+          <button type="button" data-src="ica">ICA</button>
+          <button type="button" disabled title="Planned">SNAPT (later)</button>
+        </div>
+      </div>
+      {% set movie_cards = cards | selectattr("result_type", "in", ["anatomy", "all"]) | list %}
+      {% set movie_default = (movie_cards | selectattr("n_significant") | sort(attribute="result_type", reverse=true) | first).result_type if (movie_cards | selectattr("n_significant") | list) else "anatomy" %}
+      <section id="smv">
+        <div class="toolbar">
+          <label class="field">Result
+            <select id="smv-type" title="The movie of the result type: the crop around the cell (anatomy) or the whole field (all)">
+              {% for card in movie_cards | sort(attribute="result_type") %}<option value="{{ card.result_type }}"{% if card.result_type == movie_default %} selected{% endif %}>{% if card.result_type == "anatomy" %}Anatomy (crop around the cell){% else %}All (whole field){% endif %}{% if card.n_significant %}, {{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% endif %}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="field">Display
+            <select id="smv-mode" title="The movie is the spike-triggered average as relative change (dF/F). The clusters were found on the change from the pre-spike baseline, which is easier to see. Both modes show the biological sign: brighter = depolarization"><option value="change">Change from baseline</option><option value="raw">Relative change (dF/F, as saved)</option></select>
+          </label>
+          <label class="field">Contrast<select id="smv-contrast"><option value="global">Global contrast</option><option value="frame">Per-frame contrast</option></select></label>
+          <label class="field">Markers<select id="smv-marks" title="Cluster markers sit on top of the voltage signal; arrows are the least intrusive"><option value="arrows">Arrows only</option><option value="full">Arrows + outlines + ROI</option><option value="none">No markers</option></select></label>
+          <label class="check" title="Display only: blur by about 1 pixel, like the smoothing the cluster test applies"><input type="checkbox" id="smv-smooth" checked> smooth</label>
+        </div>
+        <p class="muted small">Sign-corrected: brighter / red = <span class="sign dep">depolarization</span>, darker / blue = <span class="sign hyper">hyperpolarization</span>. <span id="smv-info"></span></p>
+        <div class="movie-layout">
+          <div class="stack">
+            <div class="zv" data-cap="0.75" style="--h:420px"><div class="smv-stage" id="smv-stage"><canvas id="smv-base"></canvas><canvas id="smv-ovl"></canvas></div></div>
+            <div class="controls">
+              <button type="button" id="smv-play" class="secondary small">Play</button>
+              <input type="range" id="smv-scrub" min="0" max="0" value="0" step="1">
+              <button type="button" id="smv-spike" class="secondary small" title="Frame 0: the detected spike time that every frame of this average is aligned to">Spike</button>
+            </div>
+            <div id="smv-readout" class="muted small"></div>
+          </div>
+          <div class="stack">
+            <div>
+              <p class="muted small">Neuron dF/F around the same spikes (up = brighter); click or drag to move in time</p>
+              <canvas id="smv-trace" class="plot"></canvas>
+            </div>
+            <div>
+              <p class="muted small"><span id="smv-groups-note"></span></p>
+              <canvas id="smv-groups" class="plot"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="dec" hidden>
+        <div id="dec-msg" class="empty" hidden></div>
+        <div id="dec-body" hidden>
+          <div class="toolbar">
+            <label class="field">Show
+              <select id="dec-view"><option value="map">Component map</option><option value="movie">Movie from components 1 to k</option></select>
+            </label>
+            <label class="field" id="dec-k-field" hidden>k <input type="number" id="dec-k" min="1" value="3" style="width:64px"></label>
+            <label class="field">Contrast<select id="dec-contrast"><option value="global">Global contrast</option><option value="frame">Per-frame contrast</option></select></label>
+            <label class="check"><input type="checkbox" id="dec-roi" checked> ROI outline</label>
+            <label class="check" title="Display only: blur by about 1 pixel"><input type="checkbox" id="dec-smooth" checked> smooth</label>
+            <span class="chip off" id="dec-info"></span>
+          </div>
+          <div class="movie-layout">
+            <div class="stack">
+              <div class="zv" data-cap="0.75" style="--h:420px"><div class="smv-stage" id="dec-stage"><canvas id="dec-base"></canvas><canvas id="dec-ovl"></canvas></div></div>
+              <div class="controls">
+                <button type="button" id="dec-play" class="secondary small">Play</button>
+                <input type="range" id="dec-scrub" min="0" max="0" value="0" step="1">
+                <button type="button" id="dec-spike" class="secondary small" title="Frame 0: the detected spike time that every frame of this average is aligned to">Spike</button>
+              </div>
+              <div id="dec-readout" class="muted small"></div>
+              <div id="dec-thumbs" class="dec-thumbs"></div>
+            </div>
+            <div class="stack">
+              <div>
+                <p class="muted small">Explained variance (click a bar to choose the component)</p>
+                <canvas id="dec-ev" class="plot"></canvas>
+              </div>
+              <div>
+                <p class="muted small" id="dec-tc-title">Time course</p>
+                <canvas id="dec-tc" class="plot"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+    {% endif %}
+
+    <section class="tab-pane" data-pane="clusters" hidden>
+      <div class="toolbar">
+        <label class="field">Result type
+          <select id="cluster-type"><option value="">All result types</option>{% for card in cards %}<option value="{{ card.result_type }}">{{ card.title }}</option>{% endfor %}</select>
         </label>
       </div>
-      <p class="muted small">Sign-corrected: brighter / red = <span class="sign dep">depolarization</span>, darker / blue = <span class="sign hyper">hyperpolarization</span> (the raw GEVI fluorescence goes the other way). <span id="smv-info"></span></p>
-      <div class="movie-layout">
-        <div class="stack">
-          <div class="zv" data-cap="0.75" style="--h:420px"><div class="smv-stage" id="smv-stage"><canvas id="smv-base"></canvas><canvas id="smv-ovl"></canvas></div></div>
-          <div class="controls">
-            <button type="button" id="smv-play" class="secondary small">Play</button>
-            <input type="range" id="smv-scrub" min="0" max="0" value="0" step="1">
-            <button type="button" id="smv-spike" class="secondary small" title="Frame 0: the detected spike time that every frame of this average is aligned to">Spike</button>
+      <div class="results">
+        {% for card in cards %}
+        <div class="card{% if card.n_significant %} sig{% endif %}" data-result="{{ card.result_type }}">
+          <div class="card-head">
+            <b>{{ card.title }}</b>
+            <span class="chip {{ 'completed' if card.n_significant else 'off' }}">{% if card.n_significant %}{{ card.n_significant }} significant cluster{{ "s" if card.n_significant > 1 }}{% else %}no significant cluster{% endif %}</span>
           </div>
-          <div id="smv-readout" class="muted small"></div>
-        </div>
-        <div class="stack">
-          <div class="controls">
-            <label class="field">Display
-              <select id="smv-mode" title="The movie is the spike-triggered average as relative change (dF/F). The clusters were found on the change from the pre-spike baseline, which is easier to see. Both modes show the biological sign: brighter = depolarization"><option value="change">Change from baseline</option><option value="raw">Relative change (dF/F, as saved)</option></select>
-            </label>
-            <label class="field">Contrast<select id="smv-contrast"><option value="global">Global contrast</option><option value="frame">Per-frame contrast</option></select></label>
-            <label class="field">Markers<select id="smv-marks" title="Cluster markers sit on top of the voltage signal; arrows are the least intrusive"><option value="arrows">Arrows only</option><option value="full">Arrows + outlines + ROI</option><option value="none">No markers</option></select></label>
-            <label class="check" title="Display only: blur by about 1 pixel, like the smoothing the cluster test applies"><input type="checkbox" id="smv-smooth" checked> smooth</label>
-          </div>
-          <div>
-            <p class="muted small">The neuron's own dF/F around the same spikes (as recorded, up = brighter). Click or drag to move through time.</p>
-            <canvas id="smv-trace" class="plot"></canvas>
-          </div>
-          <div>
-            <p class="muted small">Change from baseline: significant-cluster pixels against all other pixels (grey band: 5th to 95th percentile of random patches). <span id="smv-groups-note"></span></p>
-            <canvas id="smv-groups" class="plot"></canvas>
+          <img class="map" src="{{ map_base }}{{ card.result_type }}&run={{ sta_run.id }}" alt="Mean image of cell {{ selected.cell }} with the clusters of {{ card.title }}">
+          <canvas class="result-plot" data-card="{{ loop.index0 }}"></canvas>
+          <div class="cluster-list">
+            {% for cluster in card.clusters %}
+            <div class="cluster-row"><span class="sign {{ 'dep' if cluster.polarity == 'depolarizing' else 'hyper' }}">{{ cluster.polarity }}</span> {{ "%+.2f"|format(cluster.first_rel / card.fps) }} &hellip; {{ "%+.2f"|format(cluster.last_rel / card.fps) }} s &middot; p {{ cluster.p|pval }} &middot; {{ cluster.area_um2|round|int }} &micro;m&sup2;</div>
+            {% else %}
+            <div class="cluster-row">{{ card.n_peaks }} spikes &middot; no significant cluster</div>
+            {% endfor %}
           </div>
         </div>
+        {% endfor %}
+      </div>
+      {% if pooled %}<p class="muted small">A pooled hypothesis tests the spikes of all cells together: one result for the whole experiment, so there is no cell outline, no movie and no single spike trace.</p>{% endif %}
+    </section>
+
+    <section class="tab-pane" data-pane="motion" hidden>
+      {% if motion %}
+      <script type="application/json" id="motion-data">{{ motion|tojson }}</script>
+      <div class="callout {{ 'warn' if motion.verdict == 'flag' else 'info' }}">{{ motion.text }} <span class="muted small">({{ motion.n_peaks }} spikes used)</span></div>
+      <p class="muted small">Line: mean motion around the spikes; grey: random frames (&plusmn;2 sd).</p>
+      <div class="results">
+        {% for series in motion.series %}
+        <div class="card">
+          <div class="card-head">
+            <b>{{ series.label }}</b>
+            {% if series.p is none %}<span class="chip off">no data</span>
+            {% else %}<span class="chip {{ 'warn' if motion.verdict == 'flag' and series.p <= motion.alpha else 'off' }}" title="p of this measure alone, not corrected for the 5 measures">p {{ series.p|pval }} &middot; z {{ "%.1f"|format(series.z) }}</span>{% endif %}
+          </div>
+          <canvas class="result-plot motion-plot" data-motion="{{ loop.index0 }}"></canvas>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">{{ motion_message }}</div>
+      {% endif %}
+    </section>
+
+    {% if not pooled %}
+    <section class="tab-pane" data-pane="spikes" hidden>
+      <div class="spk-wrap">
+        <button type="button" class="secondary spk-full" title="Full screen" onclick="var w=this.parentNode; document.fullscreenElement===w ? document.exitFullscreen() : w.requestFullscreen()">&#x26F6; Full screen</button>
+        <canvas id="spike-preview-{{ selected.id }}" class="plot" data-neuron-id="{{ selected.id }}" style="height:240px"></canvas>
       </div>
     </section>
     {% endif %}
 
-    <h3 style="margin-top:24px">Motion test</h3>
-    <p class="muted small">Is {% if pooled %}the pooled spikes{% else %}the spikes of this cell{% endif %} time-locked to image motion? Line: mean motion around the spikes; grey: random frames (&plusmn;2 sd).</p>
-    {% if motion %}
-    <script type="application/json" id="motion-data">{{ motion|tojson }}</script>
-    <div class="callout {{ 'warn' if motion.verdict == 'flag' else 'info' }}">{{ motion.text }} <span class="muted small">({{ motion.n_peaks }} spikes used)</span></div>
-    <div class="results">
-      {% for series in motion.series %}
-      <div class="card">
-        <div class="card-head">
-          <b>{{ series.label }}</b>
-          {% if series.p is none %}<span class="chip off">no data</span>
-          {% else %}<span class="chip {{ 'warn' if motion.verdict == 'flag' and series.p <= motion.alpha else 'off' }}" title="p of this measure alone, not corrected for the 5 measures">p {{ series.p|pval }} &middot; z {{ "%.1f"|format(series.z) }}</span>{% endif %}
-        </div>
-        <canvas class="result-plot motion-plot" data-motion="{{ loop.index0 }}"></canvas>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="empty">{{ motion_message }}</div>
-    {% endif %}
-
-    {% if not pooled %}
-    <h3 style="margin-top:24px">Spikes of this cell</h3>
-    <div class="spk-wrap">
-      <button type="button" class="secondary spk-full" title="Full screen" onclick="var w=this.parentNode; document.fullscreenElement===w ? document.exitFullscreen() : w.requestFullscreen()">&#x26F6; Full screen</button>
-      <canvas id="spike-preview-{{ selected.id }}" class="plot" data-neuron-id="{{ selected.id }}" style="height:240px"></canvas>
-    </div>
-    {% endif %}
+    <script type="application/json" id="decomposition-state">{{ decomposition|tojson }}</script>
     {% endif %}
   </section>
 </div>
@@ -185,10 +241,14 @@
 <script src="{{ url_for('static', filename='js/polarity.js') }}"></script>
 <script src="{{ url_for('static', filename='js/zoomable.js') }}"></script>
 <script src="{{ url_for('static', filename='js/time_axis.js') }}"></script>
+<script src="{{ url_for('static', filename='js/plot_canvas.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cell_results.js') }}"></script>
 {% if not pooled %}
+<script src="{{ url_for('static', filename='js/fov_outline.js') }}"></script>
 <script src="{{ url_for('static', filename='js/sta_movie.js') }}"></script>
+<script src="{{ url_for('static', filename='js/decomposition.js') }}"></script>
 <script src="{{ url_for('static', filename='js/spike_preview.js') }}"></script>
 {% endif %}
+<script src="{{ url_for('static', filename='js/cell_tabs.js') }}"></script>
 {% endif %}
 {% endblock %}

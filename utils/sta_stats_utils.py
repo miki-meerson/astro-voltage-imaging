@@ -111,12 +111,17 @@ def cluster_trace_wide(
     analysis window are descriptive only: they are not part of the cluster test.
     """
     rels = np.arange(-int(pre_frames), int(post_frames) + 1)
-    base = np.flatnonzero((rels >= baseline_window[0]) & (rels <= baseline_window[1]))
-    baseline_map = np.asarray(sta_movie[base], dtype=np.float32).mean(axis=0)
+    baseline_map = sta_baseline_map(sta_movie, rels, baseline_window)
     sel = np.flatnonzero((rels >= -int(half_window)) & (rels <= int(half_window)))
     mask2d = np.asarray(mask2d, dtype=bool)
     trace = (np.asarray(sta_movie[sel], dtype=np.float32)[:, mask2d] - baseline_map[mask2d]).mean(axis=1)
     return rels[sel], trace.astype(np.float32)
+
+
+def sta_baseline_map(sta_movie: np.ndarray, rels: np.ndarray, baseline_window: tuple[int, int]) -> np.ndarray:
+    """The baseline of an STA movie (frames `rels` relative to the spike): its mean over the frames inside `baseline_window`, per pixel -> (H, W). What 'change from baseline' subtracts."""
+    base = np.flatnonzero((rels >= baseline_window[0]) & (rels <= baseline_window[1]))
+    return np.asarray(sta_movie[base], dtype=np.float32).mean(axis=0)
 
 
 def significant_fraction(significant: int, tested: int, chance: float) -> dict:

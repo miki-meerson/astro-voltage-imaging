@@ -12,7 +12,7 @@ from app.services.runs import ACTIVE_STATUSES, STA_RESULT_TYPES, STEPS, create_r
 from app.services.suite2p_data import experiment_stat_cells, forget_suite2p
 from app.settings import Settings
 from utils.file_utils import path_within
-from utils.hypotheses import hypothesis_name
+from utils.hypotheses import hypothesis_name, sta_step
 from utils.suite2p_utils import roi_center
 from utils.thorsync_utils import find_ts_h5_files, list_h5_datasets
 from utils.paths_utils import PathKind, path_for
@@ -214,6 +214,23 @@ def start_analysis(settings: Settings, experiment_id: int, result_types, sta_opt
     for run_id in feeding + (sta if ready else []):  # every STA run exists before a feeding run starts, so one that completes at once finds the waiting runs
         launch_run(settings, run_id)
     return feeding + sta
+
+
+def start_decomposition(settings: Settings, experiment_id: int) -> int:
+    """Start the PCA / ICA of the STA movies of the experiment by hand (also for an experiment whose other steps are all done); returns the run id. Needs the confirmed Suite2p cells
+    and a completed STA Maps run of the fast hypothesis (with the 'all' result type, which the decomposition reads); a decomposition already in progress is not doubled."""
+    if repo.workflow_stage_of(settings, experiment_id) != repo.STAGE_ANALYSIS_READY:
+        raise ValueError("The decomposition can run only after preprocessing and Suite2p have been confirmed.")
+    fast = sta_step(g.DECOMPOSITION_HYPOTHESIS)
+    if fast not in STEPS:
+        raise ValueError(f"The decomposition reads the STA movies of the hypothesis '{g.DECOMPOSITION_HYPOTHESIS}', which is not in the hypothesis catalogue.")
+    if g.DECOMPOSITION_STEP in run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES):
+        raise ValueError("The decomposition is already running for this experiment.")
+    if fast not in run_repository.steps_with_status(settings, experiment_id, ("completed",)):
+        raise ValueError(f"The decomposition needs a completed STA Maps run of the '{g.DECOMPOSITION_HYPOTHESIS}' hypothesis (with the 'all' result type): run it from Run analysis first.")
+    run_id = create_run(settings, experiment_id, g.DECOMPOSITION_STEP, {}, backend="cluster")
+    launch_run(settings, run_id)
+    return run_id
 
 
 def start_spike_detection(settings: Settings, experiment_id: int) -> int:

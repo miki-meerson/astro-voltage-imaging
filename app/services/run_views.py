@@ -9,7 +9,7 @@ from utils import globals_utils as g
 from utils.hypotheses import hypothesis_name, is_sta_step
 from utils.paths_utils import PathKind, path_for
 
-BASE_STEP_LABELS = {g.PREPROCESSING_STEP: "Preprocessing", g.SPIKE_STEP: "Spike Detection", g.BEHAVIOR_STEP: "Behavior Split", g.ANATOMY_STEP: "Anatomy Crop"}
+BASE_STEP_LABELS = {g.PREPROCESSING_STEP: "Preprocessing", g.SPIKE_STEP: "Spike Detection", g.BEHAVIOR_STEP: "Behavior Split", g.ANATOMY_STEP: "Anatomy Crop", g.DECOMPOSITION_STEP: "PCA / ICA"}
 
 
 def step_label(step: str) -> str:

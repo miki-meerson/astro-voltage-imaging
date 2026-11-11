@@ -133,6 +133,9 @@ class PathKind(Enum):
     STA_JOB_SCRIPT = auto()  # anchor: project
     STA_ALGORITHM_SCRIPT = auto()  # anchor: project
     GROUP_TEST_JOB_SCRIPT = auto()  # anchor: project
+    DECOMPOSITION_JOB_SCRIPT = auto()  # anchor: project
+    DECOMPOSITION_CELL = auto()  # anchor: run; fields: cell
+    DECOMPOSITION_SUMMARY = auto()  # anchor: run
     RUN_DIR = auto()  # anchor: outputs root; fields: canonical_id, cell, step, run_id
     RUN_DIR_ATTEMPT = auto()  # anchor: outputs root; fields: canonical_id, cell, step, run_id, attempt
 
@@ -240,6 +243,9 @@ _REGISTRY: dict[PathKind, _Spec] = {
     PathKind.STA_JOB_SCRIPT: _Spec(Anchor.PROJECT, (g.CLUSTER_CODE_DIR, g.STA_JOB_SCRIPT)),
     PathKind.STA_ALGORITHM_SCRIPT: _Spec(Anchor.PROJECT, (g.CLUSTER_CODE_DIR, g.STA_ALGORITHM_SCRIPT)),
     PathKind.GROUP_TEST_JOB_SCRIPT: _Spec(Anchor.PROJECT, (g.CLUSTER_CODE_DIR, g.GROUP_TEST_JOB_SCRIPT)),
+    PathKind.DECOMPOSITION_JOB_SCRIPT: _Spec(Anchor.PROJECT, (g.CLUSTER_CODE_DIR, g.DECOMPOSITION_JOB_SCRIPT)),
+    PathKind.DECOMPOSITION_CELL: _Spec(_R, (g.DECOMPOSITION_DIR, g.DECOMPOSITION_CELL_TEMPLATE)),
+    PathKind.DECOMPOSITION_SUMMARY: _Spec(_R, (g.DECOMPOSITION_SUMMARY,)),
     PathKind.RUN_DIR: _Spec(Anchor.OUTPUT_ROOT, (g.RUN_DIR_TEMPLATE,)),
     PathKind.RUN_DIR_ATTEMPT: _Spec(Anchor.OUTPUT_ROOT, (g.RUN_DIR_ATTEMPT_TEMPLATE,)),
 }

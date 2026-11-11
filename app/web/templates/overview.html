@@ -29,6 +29,22 @@
         </tbody>
       </table>
     </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Step</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>PCA / ICA</b><div class="muted small">Components of the whole-field STA movie of every cell, from the newest completed run of the fast hypothesis</div></td>
+            <td><span class="chip {{ decomposition.status }}">{{ decomposition.status.replace("_", " ") }}</span></td>
+            <td class="num">
+              {% if analysis_ready and decomposition.status not in ("running", "pending", "waiting", "queued") %}
+              <form method="post" action="/experiments/{{ exp.id }}/run-decomposition"><button class="secondary small" type="submit">{{ "Rerun" if decomposition.status != "not_run" else "Run" }}</button></form>
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
   {% include "_experiment_notes.html" %}

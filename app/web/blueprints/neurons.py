@@ -7,6 +7,7 @@ from flask import jsonify, render_template, request, send_file
 
 from app.db import neuron_repository
 from app.services.cell_views import cell_movie_files, sta_all_stack_payload, sta_crop_stack_payload
+from app.services.decomposition import cell_decomposition
 from app.services.hypothesis_summary import chosen_step
 from app.services.runs import run_dir
 from app.services.spikes import (
@@ -16,7 +17,7 @@ from app.services.spikes import (
     stale_suite2p_cell_message,
 )
 from app.services.visualizations import render_result_map
-from app.web.common import FlatBlueprint, get_settings
+from app.web.common import FlatBlueprint, get_settings, json_payload
 from utils import globals_utils as g
 from utils.paths_utils import PathKind, path_for
 
@@ -51,6 +52,15 @@ def neuron_anatomy_crop_stack(neuron_id):
         return jsonify({"error": str(exc)}), 404
     except (ValueError, KeyError, OSError) as exc:  # unknown cell, movie of another STA run, no fps in Experiment.xml, a file that cannot be read
         return jsonify({"error": str(exc)}), 400
+
+
+@bp.get("/neurons/<int:neuron_id>/decomposition.json")
+def neuron_decomposition(neuron_id):
+    settings = get_settings()
+    n = neuron_repository.neuron_row(settings, neuron_id)
+    if n is None:
+        return jsonify({"message": "Cell not found."}), 404
+    return json_payload(lambda: cell_decomposition(settings, int(n["experiment_id"]), int(n["pipeline_neuron_id"]), n["source_path"]))
 
 
 @bp.post("/neurons/<int:neuron_id>/review/mark")

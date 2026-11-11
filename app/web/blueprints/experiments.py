@@ -21,6 +21,7 @@ from app.services.experiments import (
     reset_experiment_app_data,
     scan_parent,
     start_analysis,
+    start_decomposition,
     validate_experiment,
 )
 from app.services.cluster_map import cluster_delays, cluster_map, cluster_offsets
@@ -196,6 +197,16 @@ def run_analysis(experiment_id):
         return redirect(url_for("experiment_overview", experiment_id=experiment_id))
     except (ValueError, OSError) as exc:
         return render_template("error.html", title="Run Analysis Failed", message=str(exc)), 400
+
+
+@bp.post("/experiments/<int:experiment_id>/run-decomposition")
+def run_decomposition(experiment_id):
+    """Start the PCA / ICA step by hand, from the Overview tab or the Cells tab (the form says which to come back to)."""
+    try:
+        start_decomposition(get_settings(), experiment_id)
+    except (ValueError, OSError) as exc:
+        return render_template("error.html", title="Decomposition Failed", message=str(exc)), 400
+    return redirect(url_for({"cells": "experiment_cells"}.get(request.form.get("back"), "experiment_overview"), experiment_id=experiment_id))
 
 
 @bp.get("/experiments/<int:experiment_id>/behavior/data")

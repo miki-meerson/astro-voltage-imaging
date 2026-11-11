@@ -12,6 +12,7 @@ from app.db import experiment_repository as repo
 from app.db import neuron_repository
 from app.db.run_repository import latest_run
 from app.services.cell_views import pooled_row
+from app.services.decomposition import decomposition_status
 from app.services.excluded_segments import excluded_segments, set_excluded_segments
 from app.services.experiments import start_spike_detection
 from app.services.hypothesis_summary import cell_table, chosen_step, hypothesis_status, hypothesis_summaries, waiting_for
@@ -43,7 +44,7 @@ def experiment_overview(experiment_id):
     rows = build_validation_rows(json.loads(data["exp"]["validation_report"] or "{}"))
     return render_template(
         "overview.html", **data,
-        hypotheses=[hypothesis_status(settings, experiment_id, step) for step in sta_steps()],
+        hypotheses=[hypothesis_status(settings, experiment_id, step) for step in sta_steps()], decomposition=decomposition_status(settings, experiment_id),
         result_types=STA_RESULT_TYPES, sta_defaults=dict(settings.defaults.get("sta", {})),
         analysis_ready=data["exp"]["workflow_stage"] == repo.STAGE_ANALYSIS_READY,
         validation_rows=rows, validation_ok=validation_all_ok(rows) and data["exp"]["validation_state"] == "valid",
@@ -159,14 +160,14 @@ def experiment_cells(experiment_id):
         row = pooled_row(settings, experiment_id) if pooled else neuron_repository.neuron_row(settings, selected["id"])
         try:
             cards = cell_result_cards(settings, row, step)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:  # a missing file, or no pixel size in Experiment.xml
             message = str(exc)
         try:
             motion = cell_motion(settings, row, step)
-        except FileNotFoundError as exc:  # the cards can exist without the motion test (an older run): say so next to the test
+        except (FileNotFoundError, ValueError) as exc:  # the cards can exist without the motion test (an older run), or the pixel size cannot be read: say so next to the test
             motion_message = str(exc)
     map_base = f"/experiments/{experiment_id}/pooled-sta-map.png?h={hypothesis_name(step)}&type=" if pooled else (f"/neurons/{selected['id']}/sta-map.png?h={hypothesis_name(step)}&type=" if selected else "")
-    return render_template("cells.html", **data, hypotheses=[hypothesis_name(s) for s in sta_steps()], selected_hypothesis=hypothesis_name(step), cells=cells, message=message,
+    return render_template("cells.html", **data, decomposition=decomposition_status(settings, experiment_id), hypotheses=[hypothesis_name(s) for s in sta_steps()], selected_hypothesis=hypothesis_name(step), cells=cells, message=message,
                            selected=selected, pooled=pooled, map_base=map_base, sta_run=sta_run, stale=stale, cards=cards, motion=motion, motion_message=motion_message, only_significant=request.args.get("significant") == "1", only_anatomy=request.args.get("anatomy") == "1")
 
 

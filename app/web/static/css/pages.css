@@ -109,6 +109,8 @@ button.tab.active { border-bottom-color: var(--accent); }
 .zv-bar { position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; z-index: 5; opacity: .35; transition: opacity .15s; }
 .zv:hover .zv-bar, .zv:fullscreen .zv-bar { opacity: 1; }
 .zv-bar button { min-height: 0; padding: 1px 7px; font-size: var(--fs-sm); line-height: 18px; background: #17202a; color: #e7edf4; border: 1px solid #333e4b; border-radius: 4px; cursor: pointer; }
+.zv-scale { position: absolute; left: 10px; bottom: 10px; z-index: 4; pointer-events: none; font-size: var(--fs-sm); font-weight: 700; color: #fff; text-shadow: 0 0 3px #0b0f14, 0 0 3px #0b0f14; display: none; }
+.zv-scale i { display: block; height: 3px; margin-top: 2px; background: #fff; box-shadow: 0 0 0 1.5px rgba(11, 15, 20, 0.85); }
 .smv-stage canvas { position: absolute; left: 0; top: 0; }
 #smv-base { image-rendering: pixelated; }
 .smv-controls { display: flex; gap: 6px; align-items: center; margin-top: 5px; flex-wrap: wrap; font-size: var(--fs-sm); }
@@ -133,7 +135,7 @@ button.tab.active { border-bottom-color: var(--accent); }
 
 
 /* ---- results of a cell: one card per result type, all the same size ---- */
-.results { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--s4); }
+.results { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s4); }  /* auto-fill: a single card keeps the width of one column instead of the whole row */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3); display: grid; gap: var(--s2); align-content: start; min-width: 0; }
 .card.sig { border-color: var(--ok-fg); }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
@@ -146,7 +148,21 @@ button.tab.active { border-bottom-color: var(--accent); }
 .movie-layout { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); gap: var(--s4); align-items: start; }
 .controls { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
 .controls input[type=range] { flex: 1 1 120px; width: auto; min-width: 100px; padding: 0; }
-#smv-trace, #smv-groups { height: 150px; margin-top: 0; }
+#smv-trace, #smv-groups, #dec-ev, #dec-tc { height: 150px; margin-top: 0; }
+.cell-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+.cell-tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--line); margin: 14px 0 12px; }
+.cell-tabs button { min-height: 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; color: var(--muted); font-weight: 400; }
+.cell-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-pane[hidden], #smv[hidden], #dec[hidden], #dec-msg[hidden], #dec-body[hidden], .card[hidden], #dec-k-field[hidden] { display: none !important; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { min-height: 0; border: 0; border-radius: 0; background: var(--surface); color: var(--text); padding: 4px 14px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: var(--accent-text); }
+.seg button:disabled { opacity: .5; cursor: not-allowed; }
+.dec-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.dec-thumb { width: 64px; text-align: center; font-size: var(--fs-sm); color: var(--muted); cursor: pointer; border: 2px solid transparent; border-radius: 6px; padding: 2px; }
+.dec-thumb.on { border-color: var(--accent); color: var(--text); }
+.dec-thumb canvas { display: block; width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 3px; background: var(--plot-bg); }
 @media (max-width: 1000px) { .movie-layout { grid-template-columns: minmax(0, 1fr); } }
 
 /* the cards on paper (Export cards to PDF; last in the file, so the narrow-window rules above do not undo it): only the cluster-map panel, its cards two across, none split between pages */
