@@ -13,16 +13,16 @@
   const YELLOW = Polarity.NEURON, FG = "#c9d4df", GRID = "#1c2630", CONTROL = "#c9d4df", SPIKE_LINE = "rgba(255, 255, 255, 0.85)", BAND = "rgba(154, 168, 183, 0.16)", DASH = {all: [], anatomy: [5, 3]};
   const PLOT = {L: 44, R: 44, T: 20, B: 28}, SPIKE_PLOT = {L: 44, R: 10, T: 20, B: 28}, RAW_ROW = {L: 64, R: 14, T: 6, B: 6}, RAW_AXIS = {L: 64, R: 14, T: 2, B: 18};
   const CELL_COLORS = ["#4fa3ff", "#ff7a59", "#2fbf71", "#d65db1", "#f2b84b", "#7bd3ea", "#b79cff", "#e8e26d", "#ff6b9a", "#9ad06a"];
-  const image = new Image();
+  const image = new Image(), neuronImage = new Image();  // the mean images of the astro and the neuron channel
   let D = null, repaintRaw = () => {};  // repaintRaw: draws the rows again (the window changed size)
   const {setup, format: fmt, pValue} = PlotCanvas;
   const pct = a => a.map(v => v * 100);
   const span = a => { let lo = Infinity, hi = -Infinity; for (const v of a) { if (v < lo) lo = v; if (v > hi) hi = v; } const pad = (hi - lo) * 0.08 || 1; return [lo - pad, hi + pad]; };
 
-  // the field of view: the part of the image in `view` (x and y in image pixels), the cell's ROI and its clusters on it
-  function drawFov(canvas, view, cell, clusters) {
-    const [ctx, W, H] = setup(canvas), width = image.naturalWidth, scale = W / (view.x[1] - view.x[0]);
-    ctx.drawImage(image, view.x[0], view.y[0], view.x[1] - view.x[0], view.y[1] - view.y[0], 0, 0, W, H);
+  // the field of view: the part of the mean image `img` in `view` (x and y in image pixels), the cell's ROI and its clusters on it, and the name of the channel
+  function drawFov(canvas, img, label, view, cell, clusters) {
+    const [ctx, W, H] = setup(canvas), width = img.naturalWidth, scale = W / (view.x[1] - view.x[0]);
+    ctx.drawImage(img, view.x[0], view.y[0], view.x[1] - view.x[0], view.y[1] - view.y[0], 0, 0, W, H);
     ctx.save(); ctx.translate(-view.x[0] * scale, -view.y[0] * scale);
     ctx.strokeStyle = YELLOW; ctx.lineWidth = 1.6;
     FovOutline.draw(ctx, cell.roi.ys, cell.roi.xs, width, scale);
@@ -33,6 +33,8 @@
       ctx.beginPath(); ctx.arc(c.center[1] * scale, c.center[0] * scale, 10, 0, 2 * Math.PI); ctx.stroke(); ctx.globalAlpha = 1;
     }
     ctx.restore();
+    ctx.font = "bold 11px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.lineWidth = 3; ctx.strokeStyle = "rgba(11, 15, 20, 0.85)"; ctx.fillStyle = "#ffffff";
+    ctx.strokeText(label, 6, 5); ctx.fillText(label, 6, 5); ctx.lineWidth = 1;
     ScaleBar.draw(ctx, W, H, ScaleBar.umPerPixel() / scale);  // the image is the field of view at the recorded pixels
   }
 
@@ -178,15 +180,16 @@
     const types = [...new Set(o.clusters.map(c => c.result_type))].join(" + "), flagged = o.record.motion === "motion_suspected";
     const card = document.createElement("div"); card.className = "cm-card";
     card.innerHTML = `<div class="cm-head"><a href="/experiments/${EXP_ID}/cells?cell=${o.cell}&h=${encodeURIComponent(HYPOTHESIS)}" title="Open the cell"><b>Cell ${o.cell}</b></a><span class="muted">${types}${flagged ? " &middot; motion suspected" : ""} &middot; ${o.record.n_spikes} spikes</span></div>
-      <div class="cm-pair"><canvas class="cm-fov"></canvas><canvas class="cm-trace"></canvas></div>`;
+      <div class="cm-pair"><div class="cm-fovs"><canvas class="cm-fov"></canvas><canvas class="cm-fov"></canvas></div><canvas class="cm-trace"></canvas></div>`;
     $("cm-grid").appendChild(card);
-    const fov = card.querySelector(".cm-fov"), trace = card.querySelector(".cm-trace"), t = o.clusters[0].t.map(f => f / D.fps);
-    fov.style.aspectRatio = `${image.naturalWidth} / ${image.naturalHeight}`;
-    const fovView = PlotView.create({x: [0, image.naturalWidth], y: [0, image.naturalHeight]}, () => drawFov(fov, fovView, o.record, o.clusters));
-    PlotView.attach(fovView, fov, () => ({L: 0, R: 0, T: 0, B: 0}), {inside: true, yDown: true});
+    const fovs = [...card.querySelectorAll(".cm-fov")], trace = card.querySelector(".cm-trace"), t = o.clusters[0].t.map(f => f / D.fps);
+    const drawFovs = view => { drawFov(fovs[0], image, "astro", view, o.record, o.clusters); drawFov(fovs[1], neuronImage, "neuron", view, o.record, o.clusters); };
+    fovs.forEach(canvas => { canvas.style.aspectRatio = `${image.naturalWidth} / ${image.naturalHeight}`; });
+    const fovView = PlotView.create({x: [0, image.naturalWidth], y: [0, image.naturalHeight]}, () => drawFovs(fovView));  // one view for both: zooming one zooms the other
+    fovs.forEach(canvas => PlotView.attach(fovView, canvas, () => ({L: 0, R: 0, T: 0, B: 0}), {inside: true, yDown: true}));
     const traceView = PlotView.create({x: [t[0], t[t.length - 1]], y: span(o.clusters.flatMap(c => pct(c.trace)))}, () => drawTrace(trace, traceView, o.record, o.clusters));
     PlotView.attach(traceView, trace, () => PLOT);
-    drawFov(fov, fovView, o.record, o.clusters); drawTrace(trace, traceView, o.record, o.clusters);
+    drawFovs(fovView); drawTrace(trace, traceView, o.record, o.clusters);
     o.clusters.forEach(c => spikeSection(card, c));
   }
 
@@ -311,7 +314,7 @@
     try {
       const res = await fetch(`/experiments/${EXP_ID}/cluster-map.json?h=${encodeURIComponent(HYPOTHESIS)}`), body = await res.json();
       if (!res.ok) throw new Error(body.message || `Request failed (${res.status})`);
-      await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error("The mean astro image could not be loaded: the motion correction step saves it.")); image.src = `/experiments/${EXP_ID}/preprocessing/roi-fov.png?channel=astro`; });
+      await Promise.all([[image, "astro"], [neuronImage, "neuron"]].map(([img, channel]) => new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(new Error(`The mean ${channel} image could not be loaded: the motion correction step saves it.`)); img.src = `/experiments/${EXP_ID}/preprocessing/roi-fov.png?channel=${channel}`; })));
       D = body;
       if (new URLSearchParams(location.search).get("view") === "cards") $("cm-view").value = "cards";  // a link to the cards view
       $("cm-view").addEventListener("change", render);

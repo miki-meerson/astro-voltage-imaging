@@ -22,11 +22,12 @@ from app.services.experiments import (
     scan_parent,
     start_analysis,
     start_decomposition,
+    start_snapt,
     validate_experiment,
 )
 from app.services.cluster_map import cluster_delays, cluster_map, cluster_offsets
 from app.services.global_trends import global_trends
-from app.services.hypothesis_summary import chosen_step
+from app.services.hypothesis_summary import chosen_step, cluster_counts
 from app.services.run_views import STEP_LABELS
 from app.services.runs import pipeline_status
 from app.services.visualizations import render_result_map
@@ -117,6 +118,11 @@ def experiment_cluster_offsets(experiment_id):
     return json_payload(lambda: cluster_offsets(get_settings(), experiment_id, chosen_step(request.args.get("h"))))
 
 
+@bp.get("/experiments/<int:experiment_id>/cluster-counts.json")
+def experiment_cluster_counts(experiment_id):
+    return json_payload(lambda: cluster_counts(get_settings(), experiment_id, chosen_step(request.args.get("h"))))
+
+
 @bp.get("/experiments/<int:experiment_id>/cluster-delays.json")
 def experiment_cluster_delays(experiment_id):
     types = request.args.get("types")  # the result types to use, comma separated (all of them when absent)
@@ -199,14 +205,23 @@ def run_analysis(experiment_id):
         return render_template("error.html", title="Run Analysis Failed", message=str(exc)), 400
 
 
+def _started_by_hand(start, title, experiment_id):
+    """Start a step by hand (`start(settings, experiment_id)`), from the Overview tab or the Cells tab (the form says which to come back to)."""
+    try:
+        start(get_settings(), experiment_id)
+    except (ValueError, OSError) as exc:
+        return render_template("error.html", title=title, message=str(exc)), 400
+    return redirect(url_for({"cells": "experiment_cells"}.get(request.form.get("back"), "experiment_overview"), experiment_id=experiment_id))
+
+
 @bp.post("/experiments/<int:experiment_id>/run-decomposition")
 def run_decomposition(experiment_id):
-    """Start the PCA / ICA step by hand, from the Overview tab or the Cells tab (the form says which to come back to)."""
-    try:
-        start_decomposition(get_settings(), experiment_id)
-    except (ValueError, OSError) as exc:
-        return render_template("error.html", title="Decomposition Failed", message=str(exc)), 400
-    return redirect(url_for({"cells": "experiment_cells"}.get(request.form.get("back"), "experiment_overview"), experiment_id=experiment_id))
+    return _started_by_hand(start_decomposition, "Decomposition Failed", experiment_id)
+
+
+@bp.post("/experiments/<int:experiment_id>/run-snapt")
+def run_snapt(experiment_id):
+    return _started_by_hand(start_snapt, "SNAPT Failed", experiment_id)
 
 
 @bp.get("/experiments/<int:experiment_id>/behavior/data")

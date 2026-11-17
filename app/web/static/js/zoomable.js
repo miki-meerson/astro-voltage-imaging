@@ -10,7 +10,10 @@ function zoomable(host) {
   function updateScale() {
     const um = Number(host.dataset.um);
     if (!um) { scale.style.display = "none"; return; }
-    const perScreenPixel = um / st.k, length = ScaleBar.roundLength(host.clientWidth * perScreenPixel);
+    const [w, h] = nat(), left = Math.max(0, st.x), right = Math.min(host.clientWidth, st.x + w * st.k), bottom = Math.min(host.clientHeight, st.y + h * st.k);  // the part of the picture in view
+    if (!(right - left > 0)) { scale.style.display = "none"; return; }
+    const perScreenPixel = um / st.k, length = ScaleBar.roundLength((right - left) * perScreenPixel);
+    scale.style.left = `${left + 10}px`; scale.style.bottom = `${host.clientHeight - bottom + 10}px`;
     scale.style.display = "block"; scale.firstChild.textContent = ScaleBar.label(length); scale.lastChild.style.width = `${length / perScreenPixel}px`;
   }
   const apply = () => { content.style.transform = `translate(${st.x}px,${st.y}px) scale(${st.k})`; updateScale(); };

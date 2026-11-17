@@ -97,12 +97,6 @@ def experiment_neurons(settings: Settings, experiment_id: int) -> list[dict]:
         return rows(conn, "SELECT id,pipeline_neuron_id FROM neurons WHERE experiment_id=? ORDER BY CAST(pipeline_neuron_id AS INTEGER)", (experiment_id,))
 
 
-def pipeline_neuron_ids(settings: Settings, experiment_id: int) -> list[str]:
-    """The pipeline cell numbers (text) of an experiment, in database order."""
-    with connect(settings) as conn:
-        return [r["pipeline_neuron_id"] for r in conn.execute("SELECT pipeline_neuron_id FROM neurons WHERE experiment_id=?", (experiment_id,))]
-
-
 def experiment_page_data(settings: Settings, experiment_id: int, analysis_steps) -> dict | None:
     """Everything the analysis page reads from the database, or None when the experiment is unknown:
     {exp, neurons, runs (newest first), latest_real_runs {step: newest real run row of each of analysis_steps}, notes}."""

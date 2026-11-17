@@ -116,33 +116,6 @@
   </div>
   <div class="ac-lower">
     <div id="ac-test"></div>
-    <div id="roi-class-panel">
-      <h3 style="margin:0 0 4px">Soma vs dendrite <span class="muted small">{{ selected }}</span></h3>
-      {% if not class_stats.available %}
-      <p class="muted">{{ class_stats.message }}</p>
-      {% else %}
-      {% for rt in class_stats.result_types %}
-      <div class="muted small">{{ rt.name }}</div>
-      <table>
-        <thead><tr><th>Class</th><th class="num">Tested</th><th class="num">Significant</th><th class="num">Fraction (95%)</th><th class="num">p vs chance ({{ "%g"|format(class_stats.alpha) }})</th></tr></thead>
-        <tbody>
-          {% for c in rt.classes %}
-          <tr>
-            <td>{{ c.label }}</td><td class="num">{{ c.tested }}</td><td class="num">{{ c.significant }}</td>
-            <td class="num">{{ "%.0f%%"|format(c.fraction * 100) if c.fraction is not none else "&ndash;"|safe }}{% if c.ci %} ({{ "%.0f"|format(c.ci[0] * 100) }}&ndash;{{ "%.0f"|format(c.ci[1] * 100) }}){% endif %}</td>
-            <td class="num">{{ c.p_vs_chance|pval }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% if rt.comparison %}
-      <p class="small">Soma &minus; dendrite: <b>{{ "%+.0f"|format(rt.comparison.difference * 100) }} points</b>; Fisher p = <b>{{ rt.comparison.fisher_p|pval }}</b>; spike-matched p = <b>{{ "%.3f"|format(rt.comparison.matched_p) }}</b></p>
-      {% else %}
-      <p class="muted small">{{ rt.comparison_message }}</p>
-      {% endif %}
-      {% endfor %}
-      {% endif %}
-    </div>
   </div>
   <div id="ac-tip"></div>
 </section>
@@ -167,6 +140,7 @@
   <div id="cm-grid" class="cm-grid" hidden></div>
 </section>
 
+<div class="panel-row">
 <section class="panel" id="remote-panel">
   <div class="panel-head">
     <div>
@@ -177,8 +151,44 @@
   <div class="ac-controls">
     <span id="rc-rule" class="muted"></span>
   </div>
-  <canvas id="rc-hist"></canvas>
+  <div class="plot-fill"><canvas id="rc-hist"></canvas></div>
 </section>
+
+<section class="panel" id="polarity-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Depolarizing vs. hyperpolarizing</h2>
+      <p id="pl-summary" class="muted">Loading...</p>
+    </div>
+  </div>
+  <div class="ac-controls"></div>
+  <div class="plot-fill"><canvas id="pl-bars"></canvas></div>
+</section>
+
+<section class="panel" id="soma-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Soma vs dendrite</h2>
+      <p id="sd-summary" class="muted">Loading...</p>
+    </div>
+  </div>
+  <div class="ac-controls"></div>
+  <div class="plot-fill"><canvas id="sd-bars"></canvas></div>
+</section>
+
+<section class="panel" id="counts-panel">
+  <div class="panel-head">
+    <div>
+      <h2>Clusters vs. spikes</h2>
+      <p id="cs-summary" class="muted">Loading...</p>
+    </div>
+  </div>
+  <div class="ac-controls">
+    <label class="check">clusters <select id="cs-type" style="width:auto"></select></label>
+  </div>
+  <div class="plot-fill"><canvas id="cs-scatter"></canvas><div id="cs-tip"></div></div>
+</section>
+</div>
 
 <section class="panel" id="delay-panel">
   <div class="panel-head">
@@ -240,6 +250,7 @@
 <script src="{{ url_for('static', filename='js/same_spikes.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cluster_map.js') }}"></script>
 <script src="{{ url_for('static', filename='js/remote_clusters.js') }}"></script>
+<script src="{{ url_for('static', filename='js/cluster_counts.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cluster_delays.js') }}"></script>
 <script src="{{ url_for('static', filename='js/global_trends.js') }}"></script>
 {% endblock %}

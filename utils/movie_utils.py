@@ -109,7 +109,7 @@ def cast_movie_for_tiff_save(movie, target_dtype) -> np.ndarray:
     return arr.astype(target_dtype)
 
 
-def read_movie(path, dtype=np.uint16, as_memmap=False, is_negative_gevi=False):
+def read_movie(path, as_memmap=False, is_negative_gevi=False):
     """ Read a movie from path
         Each file type requires different handling
         If the GEVI used is negatively-going, flip the movie
@@ -128,7 +128,7 @@ def read_movie(path, dtype=np.uint16, as_memmap=False, is_negative_gevi=False):
         movie = _reorder_tiff_to_thw(movie, axes)
     elif movie_type == 'raw':
         # a .raw movie has no header: its size comes from the Experiment.xml in the same folder
-        raw_movie_1d = np.fromfile(path, dtype)
+        raw_movie_1d = np.fromfile(path, np.uint16)
         size = read_experiment_xml(os.path.split(path)[0])
         movie = np.reshape(raw_movie_1d, (-1, size['height'], size['width']))
         print(f"Movie shape: {movie.shape}")
@@ -147,14 +147,14 @@ def read_movie(path, dtype=np.uint16, as_memmap=False, is_negative_gevi=False):
     return movie
 
 
-def read_astro_movie(path, dtype=np.uint16, as_memmap=False):
+def read_astro_movie(path, as_memmap=False):
     """Read the astro GEVI movie in app-standard polarity.
 
     Astro movies use a negatively-going GEVI, so this is the single ingestion
     point that flips them once. Neuron movies and Suite2p traces should not use
     this helper.
     """
-    return read_movie(path, dtype=dtype, as_memmap=as_memmap, is_negative_gevi=True)
+    return read_movie(path, as_memmap=as_memmap, is_negative_gevi=True)
 
 
 def spatial_bin_movie(movie: np.ndarray, bin_factor: int) -> np.ndarray:
@@ -176,18 +176,14 @@ def spatial_bin_movie(movie: np.ndarray, bin_factor: int) -> np.ndarray:
     ).mean(axis=(2, 4))
 
 
-def _bin_image(img2d: np.ndarray, spatial_bin: int) -> np.ndarray:
-    if int(spatial_bin) <= 1:
-        return np.asarray(img2d, dtype=np.float32)
-    b = spatial_bin_movie(np.asarray(img2d, dtype=np.float32)[None, :, :], int(spatial_bin))[0]
-    return np.asarray(b, dtype=np.float32)
+def _load_mean_image(path, spatial_bin: int) -> np.ndarray:
+    """The saved mean image at `path`, binned by `spatial_bin`."""
+    return spatial_bin_movie(np.load(path)[None, :, :], int(spatial_bin))[0]
+
+
+def get_astro_mean_image(mc_dir, spatial_bin=1) -> np.ndarray:
+    return _load_mean_image(path_for(PathKind.MC_ASTRO_MEAN_IMAGE, mc_dir), spatial_bin)
 
 
 def get_mean_images(mc_dir, spatial_bin=1):
-    astro_mean_img = np.asarray(np.load(path_for(PathKind.MC_ASTRO_MEAN_IMAGE, mc_dir)), dtype=np.float32)
-    neuron_mean_img = np.asarray(np.load(path_for(PathKind.MC_NEURON_MEAN_IMAGE, mc_dir)), dtype=np.float32)
-
-    astro_mean_img_b = _bin_image(astro_mean_img, spatial_bin)
-    neuron_mean_img_b = _bin_image(neuron_mean_img, spatial_bin)
-    
-    return astro_mean_img_b, neuron_mean_img_b
+    return get_astro_mean_image(mc_dir, spatial_bin), _load_mean_image(path_for(PathKind.MC_NEURON_MEAN_IMAGE, mc_dir), spatial_bin)

@@ -17,7 +17,7 @@ from utils.cluster_result import cluster_records, load_cluster_result
 from utils.db_utils import collect_cluster_result_metadata
 from utils.format_utils import format_p
 from utils.hypotheses import hypothesis_name
-from utils.movie_utils import get_mean_images, read_frame_rate, read_pixel_size_um
+from utils.movie_utils import get_astro_mean_image, read_frame_rate, read_pixel_size_um
 from utils.paths_utils import PathKind, path_for, resolve_sta_paths, sta_dir_of_run
 from utils.scale_bar import format_length_um, scale_bar_length_um, um_per_pixel
 from utils.suite2p_utils import suite2p_roi_mask
@@ -133,7 +133,7 @@ def _astro_mean_image(paths, spatial_bin: int) -> np.ndarray | None:
     image = caches.MEAN_IMAGE.get(key)
     if image is None:
         try:
-            astro_mean, _ = get_mean_images(paths.mc_dir, spatial_bin=int(spatial_bin))
+            astro_mean = get_astro_mean_image(paths.mc_dir, spatial_bin=int(spatial_bin))
         except (OSError, ValueError):  # the motion-corrected mean image is not saved: the tile says so
             return None
         image = polarity.to_biological(astro_mean)  # astro_mean_image.npy is raw; the binned movies are already flipped, so flip this one to match

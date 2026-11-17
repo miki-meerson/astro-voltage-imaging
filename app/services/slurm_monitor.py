@@ -148,7 +148,7 @@ def _copy_remote_log(settings: Settings, remote_log_path: str, local_path: Path)
 
 
 def poll_slurm_once(settings: Settings) -> int:
-    runs = run_repository.active_cluster_runs(settings, f"{g.STA_STEP_PREFIX}%") + run_repository.active_cluster_runs(settings, g.DECOMPOSITION_STEP)  # every hypothesis step, and the decomposition
+    runs = [run for pattern in (f"{g.STA_STEP_PREFIX}%", g.DECOMPOSITION_STEP, g.SNAPT_STEP) for run in run_repository.active_cluster_runs(settings, pattern)]  # every hypothesis step, the decomposition and SNAPT
     changed = 0
     known = {}  # run id -> (job id, status, exit code, note) of the runs whose local log already says how they ended
     for run in runs:

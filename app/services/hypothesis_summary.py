@@ -12,11 +12,14 @@ from app.services import caches
 from app.services.runs import default_sta_step, feeding_steps, hypothesis_for, run_dir, sta_steps
 from utils import globals_utils as g
 from utils.file_utils import read_json
+from utils.delay_distance import delay_distance_stats
 from utils.hypotheses import hypothesis_name, sta_step
 from utils.output_errors import missing_output_message
 from utils.sta_stats_utils import significant_fraction
 from utils.paths_utils import PathKind, path_for, sta_dir_of_run
 from utils.roi_groups import fold_anatomy_parts
+
+COUNT_ALL = "total"  # the choice of the clusters panel that adds the clusters of every result type
 
 
 def completed_sta_run(settings, experiment_id: int, step: str) -> tuple[dict, str]:
@@ -139,3 +142,24 @@ def cell_table(settings, experiment_id: int, step: str) -> dict:
     result = {"run_id": int(run["id"]), "cells": cells}
     caches.STA_CELL_TABLE.put(key, result)
     return result
+
+
+def cluster_counts(settings, experiment_id: int, step: str) -> dict:
+    """The number of spikes and of significant clusters of every tested cell of the newest completed run of a hypothesis, for the "Clusters vs. spikes" panel: {available, run_id, result_types, count_all (the name of the added-up choice),
+    cells: [{cell, spikes (the most any result type used), clusters: {result type: number}, motion}], stats: {choice: {n, rho, p (Spearman), slope, intercept, slope_p} or None} for the choice
+    COUNT_ALL (the clusters of every result type added up) and for each result type}. Cells with fewer spikes than the run needs, or skipped, were not tested and are left out (their
+    zero clusters would say nothing). A pooled hypothesis gives {available: False, message}."""
+    if hypothesis_for(step).pool_cells:
+        return {"available": False, "message": "The clusters against the spikes need the cells of one result each: a pooled hypothesis has one result for the whole experiment."}
+    run, sta_dir = completed_sta_run(settings, experiment_id, step)
+    used = read_json(path_for(PathKind.STA_USED_PARAMETERS_JSON, sta_dir), "The STA used-parameters file", missing=missing_output_message("The used-parameters file", run["id"]))
+    tested = tested_cells(fold_anatomy_parts(pd.read_csv(path_for(PathKind.STA_SUMMARY_CSV, sta_dir))), used)
+    cells = []
+    for cell, rows in tested.groupby("cell_id"):
+        clusters = {str(kind): int(n) for kind, n in zip(rows["spike_group"], rows["n_significant_clusters"].fillna(0))}
+        cells.append({"cell": int(cell), "spikes": int(rows["n_peaks"].max()), "clusters": clusters, "motion": str(rows[g.MOTION_STATUS_COLUMN].iloc[0]) if g.MOTION_STATUS_COLUMN in rows else g.MOTION_NOT_TESTED})
+    result_types = sorted({kind for c in cells for kind in c["clusters"]})
+    spikes = [c["spikes"] for c in cells]
+    stats = {COUNT_ALL: delay_distance_stats(spikes, [sum(c["clusters"].values()) for c in cells])}
+    stats.update({kind: delay_distance_stats(spikes, [c["clusters"].get(kind, 0) for c in cells]) for kind in result_types})
+    return {"available": True, "run_id": int(run["id"]), "result_types": result_types, "count_all": COUNT_ALL, "motion_suspected": g.MOTION_SUSPECTED, "cells": cells, "stats": stats}

@@ -88,7 +88,7 @@
           <button type="button" data-src="sta" class="on">STA movie</button>
           <button type="button" data-src="pca">PCA</button>
           <button type="button" data-src="ica">ICA</button>
-          <button type="button" disabled title="Planned">SNAPT (later)</button>
+          <button type="button" data-src="snapt">SNAPT</button>
         </div>
       </div>
       {% set movie_cards = cards | selectattr("result_type", "in", ["anatomy", "all"]) | list %}
@@ -168,6 +168,46 @@
           </div>
         </div>
       </section>
+
+      <section id="snapt" hidden>
+        <div id="snapt-msg" class="empty" hidden></div>
+        <div id="snapt-body" hidden>
+          <div class="toolbar">
+            <label class="field">Clusters<select id="snapt-sign"></select></label>
+            <label class="field">Show
+              <select id="snapt-view"><option value="delay">Delay</option><option value="width">Width</option><option value="amplitude">Amplitude</option><option value="r2">R²</option><option value="movie">Fitted movie</option></select>
+            </label>
+            <label class="field" title="Pixels whose fit explains less of their trace than this are hidden">Min R² <input type="range" id="snapt-r2" min="0" max="1" step="0.05" value="0.7" style="width:90px"> <span id="snapt-r2-value">0.70</span></label>
+            <label class="check" title="Dim the pixels with a small amplitude"><input type="checkbox" id="snapt-weight" checked> weight by amplitude</label>
+            <label class="check"><input type="checkbox" id="snapt-roi" checked> ROI outline</label>
+            <label class="check" title="The clusters the kernels are made from: solid = whole-field result, dashed = anatomy result; red = depolarizing, blue = hyperpolarizing"><input type="checkbox" id="snapt-clusters" checked> cluster outlines</label>
+            <label class="check" title="Display only: blur by about 1 pixel"><input type="checkbox" id="snapt-smooth" checked> smooth</label>
+            <span class="chip off" id="snapt-info"></span>
+          </div>
+          <div class="movie-layout">
+            <div class="stack">
+              <div class="zv" data-cap="0.75" style="--h:420px"><div class="smv-stage" id="snapt-stage"><canvas id="snapt-base"></canvas><canvas id="snapt-ovl"></canvas></div></div>
+              <div class="controls" id="snapt-controls">
+                <button type="button" id="snapt-play" class="secondary small">Play</button>
+                <input type="range" id="snapt-scrub" min="0" max="0" value="0" step="1">
+              </div>
+              <canvas id="snapt-bar" class="snapt-bar"></canvas>
+              <div id="snapt-readout" class="muted small"></div>
+            </div>
+            <div class="stack">
+              <div>
+                <p class="muted small">Kernel: mean cluster trace around its peak (0 to 1)</p>
+                <canvas id="snapt-kernel" class="plot"></canvas>
+              </div>
+              <div>
+                <p class="muted small">Delay against distance from the centre of the clusters (line: binned median)</p>
+                <canvas id="snapt-dist" class="plot"></canvas>
+                <div id="snapt-slope" class="muted small"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </section>
     {% endif %}
 
@@ -231,6 +271,7 @@
     {% endif %}
 
     <script type="application/json" id="decomposition-state">{{ decomposition|tojson }}</script>
+    <script type="application/json" id="snapt-state">{{ snapt|tojson }}</script>
     {% endif %}
   </section>
 </div>
@@ -247,6 +288,7 @@
 <script src="{{ url_for('static', filename='js/fov_outline.js') }}"></script>
 <script src="{{ url_for('static', filename='js/sta_movie.js') }}"></script>
 <script src="{{ url_for('static', filename='js/decomposition.js') }}"></script>
+<script src="{{ url_for('static', filename='js/snapt.js') }}"></script>
 <script src="{{ url_for('static', filename='js/spike_preview.js') }}"></script>
 {% endif %}
 <script src="{{ url_for('static', filename='js/cell_tabs.js') }}"></script>

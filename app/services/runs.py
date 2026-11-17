@@ -16,13 +16,14 @@ from utils import globals_utils as g
 from utils.hypotheses import Hypothesis, catalogue_file, hypothesis_name, is_sta_step, load_hypotheses, sta_step
 from utils.paths_utils import PathKind, path_for
 
-BASE_STEPS = (g.PREPROCESSING_STEP, g.SPIKE_STEP, g.BEHAVIOR_STEP, g.ANATOMY_STEP, g.DECOMPOSITION_STEP)
+BASE_STEPS = (g.PREPROCESSING_STEP, g.SPIKE_STEP, g.BEHAVIOR_STEP, g.ANATOMY_STEP, g.DECOMPOSITION_STEP, g.SNAPT_STEP)
 BASE_ADAPTER_MODULES = {
     g.PREPROCESSING_STEP: "preprocessing_adapter",
     g.SPIKE_STEP: "spike_adapter",
     g.BEHAVIOR_STEP: "behavior_adapter",
     g.ANATOMY_STEP: "anatomy_adapter",
     g.DECOMPOSITION_STEP: "decomposition_adapter",
+    g.SNAPT_STEP: "snapt_adapter",
 }
 STA_ADAPTER_MODULE = "sta_adapter"  # the adapter of every hypothesis step
 
@@ -57,6 +58,12 @@ _EXECUTOR_SIZE = 0
 def sta_steps() -> tuple[str, ...]:
     """The STA step of every hypothesis, in catalogue order."""
     return tuple(step for step in STEPS if is_sta_step(step))
+
+
+def step_status(settings: Settings, experiment_id: int, step: str) -> dict:
+    """{experiment_id, status (of the newest run of the step, or 'not_run'), run_id} of a step that is started by hand (the decomposition, SNAPT)."""
+    newest = run_repository.latest_run(settings, int(experiment_id), step, status=None)
+    return {"experiment_id": int(experiment_id), "status": newest["status"] if newest else "not_run", "run_id": int(newest["id"]) if newest else None}
 
 
 def default_sta_step() -> str:
@@ -268,16 +275,23 @@ def _sta_command(settings: Settings, run, out: Path) -> list[str]:
     return _adapter_command(run, out, json.dumps(params))
 
 
-def _decomposition_command(settings: Settings, run, out: Path) -> list[str]:
-    """The adapter call of the decomposition step, with the folder of the newest completed STA run of its hypothesis (empty when there is none: the adapter says what to run first) and the
-    cluster settings (without the credentials: those reach the adapter through the environment)."""
-    sta_run = _latest_completed_output(settings, int(run["experiment_id"]), sta_step(g.DECOMPOSITION_HYPOTHESIS))
-    params = {**json.loads(run["parameters_json"]), "sta_run": "" if sta_run is None else str(sta_run), "cluster": {key: value for key, value in settings.cluster.items() if key not in CLUSTER_ENV_VARS}}
-    return _adapter_command(run, out, json.dumps(params))
+def _reads_runs_command(inputs: dict[str, str]):
+    """The command builder of a cluster step that reads the newest completed runs of other steps: `inputs` is {adapter parameter: step}. The parameter holds the run folder (empty when
+    there is none: the adapter says what to run first), and the cluster settings are added (without the credentials: those reach the adapter through the environment)."""
+    def build(settings: Settings, run, out: Path) -> list[str]:
+        found = {key: _latest_completed_output(settings, int(run["experiment_id"]), step) for key, step in inputs.items()}
+        params = {**json.loads(run["parameters_json"]), **{key: "" if path is None else str(path) for key, path in found.items()},
+                  "cluster": {key: value for key, value in settings.cluster.items() if key not in CLUSTER_ENV_VARS}}
+        return _adapter_command(run, out, json.dumps(params))
+    return build
 
 
 # step -> function(settings, run, out) giving the command line; a step that is not listed is a plain adapter call
-_COMMAND_BUILDERS = {g.PREPROCESSING_STEP: _preprocessing_command, g.DECOMPOSITION_STEP: _decomposition_command}
+_COMMAND_BUILDERS = {
+    g.PREPROCESSING_STEP: _preprocessing_command,
+    g.DECOMPOSITION_STEP: _reads_runs_command({"sta_run": sta_step(g.DECOMPOSITION_HYPOTHESIS)}),
+    g.SNAPT_STEP: _reads_runs_command({"sta_run": sta_step(g.DECOMPOSITION_HYPOTHESIS), "decomposition_run": g.DECOMPOSITION_STEP}),
+}
 
 
 def _process_env(settings: Settings) -> dict:

@@ -10,6 +10,7 @@ from app.services.cell_views import cell_movie_files, sta_all_stack_payload, sta
 from app.services.decomposition import cell_decomposition
 from app.services.hypothesis_summary import chosen_step
 from app.services.runs import run_dir
+from app.services.snapt import cell_snapt
 from app.services.spikes import (
     load_spike_payload,
     refresh_review_entry,
@@ -54,13 +55,24 @@ def neuron_anatomy_crop_stack(neuron_id):
         return jsonify({"error": str(exc)}), 400
 
 
-@bp.get("/neurons/<int:neuron_id>/decomposition.json")
-def neuron_decomposition(neuron_id):
+def _cell_json(neuron_id, read):
+    """The JSON of what `read(settings, experiment_id, cell, source_path)` gives for the cell, or its message when the step has not saved it."""
     settings = get_settings()
     n = neuron_repository.neuron_row(settings, neuron_id)
     if n is None:
         return jsonify({"message": "Cell not found."}), 404
-    return json_payload(lambda: cell_decomposition(settings, int(n["experiment_id"]), int(n["pipeline_neuron_id"]), n["source_path"]))
+    return json_payload(lambda: read(settings, int(n["experiment_id"]), int(n["pipeline_neuron_id"]), n["source_path"]))
+
+
+@bp.get("/neurons/<int:neuron_id>/decomposition.json")
+def neuron_decomposition(neuron_id):
+    return _cell_json(neuron_id, cell_decomposition)
+
+
+@bp.get("/neurons/<int:neuron_id>/snapt.json")
+def neuron_snapt(neuron_id):
+    """The SNAPT maps of the cell; ?movie=<sign> adds the fitted movie of that sign (a large part, so only when asked for)."""
+    return _cell_json(neuron_id, lambda *args: cell_snapt(*args, movie_sign=request.args.get("movie")))
 
 
 @bp.post("/neurons/<int:neuron_id>/review/mark")

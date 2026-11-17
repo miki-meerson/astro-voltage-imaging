@@ -12,15 +12,13 @@ from app.db import experiment_repository as repo
 from app.db import neuron_repository
 from app.db.run_repository import latest_run
 from app.services.cell_views import pooled_row
-from app.services.decomposition import decomposition_status
 from app.services.excluded_segments import excluded_segments, set_excluded_segments
 from app.services.experiments import start_spike_detection
 from app.services.hypothesis_summary import cell_table, chosen_step, hypothesis_status, hypothesis_summaries, waiting_for
-from app.services.roi_class_stats import roi_class_statistics
 from app.services.roi_classes import roi_class_payload
 from app.services.roi_groups import merged_group_sizes
 from app.services.run_views import build_validation_rows, run_view, validation_all_ok
-from app.services.runs import STA_RESULT_TYPES, hypothesis_for, sta_steps
+from app.services.runs import STA_RESULT_TYPES, hypothesis_for, sta_steps, step_status
 from app.services.spikes import current_suite2p_neurons, experiment_spike_review, spikes_edited_after_sta
 from app.services.visualizations import cell_motion, cell_result_cards
 from app.services.workspace import page_data
@@ -44,7 +42,8 @@ def experiment_overview(experiment_id):
     rows = build_validation_rows(json.loads(data["exp"]["validation_report"] or "{}"))
     return render_template(
         "overview.html", **data,
-        hypotheses=[hypothesis_status(settings, experiment_id, step) for step in sta_steps()], decomposition=decomposition_status(settings, experiment_id),
+        hypotheses=[hypothesis_status(settings, experiment_id, step) for step in sta_steps()],
+        decomposition=step_status(settings, experiment_id, g.DECOMPOSITION_STEP), snapt=step_status(settings, experiment_id, g.SNAPT_STEP),
         result_types=STA_RESULT_TYPES, sta_defaults=dict(settings.defaults.get("sta", {})),
         analysis_ready=data["exp"]["workflow_stage"] == repo.STAGE_ANALYSIS_READY,
         validation_rows=rows, validation_ok=validation_all_ok(rows) and data["exp"]["validation_state"] == "valid",
@@ -91,16 +90,12 @@ def experiment_hypotheses(experiment_id):
     except ValueError as exc:
         return render_template("error.html", title="Unknown Hypothesis", message=str(exc)), 400
     try:
-        class_stats = roi_class_statistics(settings, data["exp"], step)
-    except FileNotFoundError as exc:  # the hypothesis has no completed run, or Suite2p results are missing
-        class_stats = {"available": False, "message": str(exc)}
-    try:
         excluded = excluded_segments(settings, experiment_id)
     except (FileNotFoundError, ValueError) as exc:  # no corrected movie to count the frames of, or a damaged file
         excluded = {"error": str(exc), "segments": [], "listed": [], "text": ""}
     summaries = hypothesis_summaries(settings, experiment_id)
     n_tests = sum(len(summary["results"]["result_types"]) for summary in summaries if summary["results"])  # hypothesis x result type: each is one test per cell
-    return render_template("hypotheses.html", **data, summaries=summaries, selected=hypothesis_name(step), class_stats=class_stats, excluded=excluded, n_tests=n_tests, result_types=STA_RESULT_TYPES,
+    return render_template("hypotheses.html", **data, summaries=summaries, selected=hypothesis_name(step), excluded=excluded, n_tests=n_tests, result_types=STA_RESULT_TYPES,
                            sta_defaults=dict(settings.defaults.get("sta", {})), analysis_ready=data["exp"]["workflow_stage"] == repo.STAGE_ANALYSIS_READY)
 
 
@@ -167,7 +162,7 @@ def experiment_cells(experiment_id):
         except (FileNotFoundError, ValueError) as exc:  # the cards can exist without the motion test (an older run), or the pixel size cannot be read: say so next to the test
             motion_message = str(exc)
     map_base = f"/experiments/{experiment_id}/pooled-sta-map.png?h={hypothesis_name(step)}&type=" if pooled else (f"/neurons/{selected['id']}/sta-map.png?h={hypothesis_name(step)}&type=" if selected else "")
-    return render_template("cells.html", **data, decomposition=decomposition_status(settings, experiment_id), hypotheses=[hypothesis_name(s) for s in sta_steps()], selected_hypothesis=hypothesis_name(step), cells=cells, message=message,
+    return render_template("cells.html", **data, decomposition=step_status(settings, experiment_id, g.DECOMPOSITION_STEP), snapt=step_status(settings, experiment_id, g.SNAPT_STEP), hypotheses=[hypothesis_name(s) for s in sta_steps()], selected_hypothesis=hypothesis_name(step), cells=cells, message=message,
                            selected=selected, pooled=pooled, map_base=map_base, sta_run=sta_run, stale=stale, cards=cards, motion=motion, motion_message=motion_message, only_significant=request.args.get("significant") == "1", only_anatomy=request.args.get("anatomy") == "1")
 
 

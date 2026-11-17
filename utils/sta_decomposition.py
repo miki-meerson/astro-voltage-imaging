@@ -65,6 +65,12 @@ def _spatial_ica(pca_maps: np.ndarray, seed: int) -> tuple[np.ndarray, bool]:
     return (unmixing @ whitening @ centred).astype(np.float32), converged
 
 
+def rebuild_movie(maps: np.ndarray, courses: np.ndarray, k: int) -> np.ndarray:
+    """The change from the baseline (frames x H x W) rebuilt from the first `k` components of a decomposition: maps (K x H x W) and courses (frames x K), the PCA or the ICA ones."""
+    k = min(int(k), maps.shape[0])
+    return (courses[:, :k] @ maps[:k].reshape(k, -1)).reshape(courses.shape[0], *maps.shape[1:])
+
+
 def decompose_sta_movie(sta_movie: np.ndarray, pre_frames: int, post_frames: int, baseline_window: tuple[int, int], seed: int = 0,
                         variance_target: float = VARIANCE_TARGET, max_components: int = MAX_COMPONENTS) -> dict:
     """The PCA and ICA of an STA movie (frames x H x W; frame i is `i - pre_frames` frames from the spike; `baseline_window` in frames from the spike).

@@ -12,11 +12,11 @@ def um_per_pixel(pixel_um: float, spatial_bin: int = 1) -> float:
     return float(pixel_um) * int(spatial_bin)
 
 
-def scale_bar_length_um(width_um: float, fraction: float = BAR_FRACTION) -> float:
-    """A round length (1, 2 or 5 x a power of ten micrometres) that is at most `fraction` of an image of `width_um` and as long as that allows. Raises ValueError for no width."""
+def scale_bar_length_um(width_um: float) -> float:
+    """A round length (1, 2 or 5 x a power of ten micrometres) that is at most BAR_FRACTION of an image of `width_um` and as long as that allows. Raises ValueError for no width."""
     if not width_um > 0:
         raise ValueError(f"A scale bar needs an image width above zero, not {width_um!r}.")
-    target = width_um * fraction
+    target = width_um * BAR_FRACTION
     power = 10.0 ** math.floor(math.log10(target))
     return next(step * power for step in (5, 2, 1) if step * power <= target * (1 + 1e-9))
 

@@ -150,8 +150,10 @@
     if (!button || button.disabled) return;
     [...$("cell-source").children].forEach(b => b.classList.toggle("on", b === button));
     const source = button.dataset.src;
-    $("smv").hidden = source !== "sta"; root.hidden = source === "sta";
-    if (source === "sta") { stop(); window.dispatchEvent(new Event("resize")); return; }
+    $("smv").hidden = source !== "sta"; root.hidden = !(source in NAMES);
+    stop();
+    if (source === "sta") { window.dispatchEvent(new Event("resize")); return; }
+    if (!(source in NAMES)) return;
     method = source;
     load().then(() => { if (D) { buildThumbs(); host._zv.fit(); host._zv.update(); draw(); } });
   });

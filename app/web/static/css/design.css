@@ -215,8 +215,6 @@ tbody tr:last-child td { border-bottom: 0; }
 .stat { padding: var(--s3); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
 .stat .value { font-size: var(--fs-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
 .stat .label { color: var(--muted); font-size: var(--fs-sm); }
-dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s4); margin: 0; }
-dl.kv dt { color: var(--muted); } dl.kv dd { margin: 0; }
 .progress { height: 8px; overflow: hidden; background: var(--surface-3); border-radius: 999px; }
 .progress > span { display: block; height: 100%; width: var(--value, 0%); background: var(--accent); border-radius: inherit; }
 

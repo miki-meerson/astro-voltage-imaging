@@ -9,7 +9,7 @@ from utils import globals_utils as g
 from utils.hypotheses import hypothesis_name, is_sta_step
 from utils.paths_utils import PathKind, path_for
 
-BASE_STEP_LABELS = {g.PREPROCESSING_STEP: "Preprocessing", g.SPIKE_STEP: "Spike Detection", g.BEHAVIOR_STEP: "Behavior Split", g.ANATOMY_STEP: "Anatomy Crop", g.DECOMPOSITION_STEP: "PCA / ICA"}
+BASE_STEP_LABELS = {g.PREPROCESSING_STEP: "Preprocessing", g.SPIKE_STEP: "Spike Detection", g.BEHAVIOR_STEP: "Behavior Split", g.ANATOMY_STEP: "Anatomy Crop", g.DECOMPOSITION_STEP: "PCA / ICA", g.SNAPT_STEP: "SNAPT"}
 
 
 def step_label(step: str) -> str:
@@ -43,29 +43,6 @@ def run_view(row, settings):
     except json.JSONDecodeError:
         run["artifacts"] = []
     run["artifact_count"] = len(run["artifacts"])
-    return run
-
-
-def run_view_for_neuron(row, settings, pipeline_neuron_id: str):
-    run = run_view(row, settings)
-    output_name = run["output_name"]
-    cell_prefixes = (
-        path_for(PathKind.SPIKE_CELL_DIR, output_name, cell=pipeline_neuron_id).as_posix() + "/",
-        path_for(PathKind.CELL_DIR, path_for(PathKind.STA_ANALYSIS, output_name), cell=pipeline_neuron_id).as_posix() + "/",
-    )
-    if run["step"] == g.BEHAVIOR_STEP:
-        filtered = [
-            a for a in run["artifacts"]
-            if Path(a.get("path", "")).name in {g.BEHAVIOR_SEGMENTS, g.BEHAVIOR_SPEED_PNG, g.RUN_METRICS_JSON}
-        ]
-    else:
-        filtered = [a for a in run["artifacts"] if str(a.get("path", "")).replace("\\", "/").startswith(cell_prefixes)]
-    run["artifacts"] = filtered
-    run["artifact_count"] = len(filtered)
-    run["preview_artifacts"] = [
-        a for a in filtered
-        if str(a.get("path", "")).lower().endswith((".png", ".jpg", ".jpeg"))
-    ]
     return run
 
 

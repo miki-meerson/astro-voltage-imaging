@@ -16,12 +16,6 @@ from utils.paths_utils import PathKind, path_for
 METHODS = ("pca", "ica")
 
 
-def decomposition_status(settings, experiment_id: int) -> dict:
-    """{experiment_id, status (of the newest run of the step, or 'not_run'), run_id} of an experiment."""
-    newest = run_repository.latest_run(settings, int(experiment_id), g.DECOMPOSITION_STEP, status=None)
-    return {"experiment_id": int(experiment_id), "status": newest["status"] if newest else "not_run", "run_id": int(newest["id"]) if newest else None}
-
-
 def _map_rows(maps: np.ndarray) -> tuple[list[list[float]], list[float]]:
     """([each map as a flat list of values between -1 and 1], [the largest absolute value of each map]): a map is its list times its scale. Keeps the size of the answer small."""
     flat = maps.reshape(maps.shape[0], -1).astype(np.float64)

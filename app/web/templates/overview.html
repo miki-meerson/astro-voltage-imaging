@@ -33,15 +33,19 @@
       <table>
         <thead><tr><th>Step</th><th>Status</th><th></th></tr></thead>
         <tbody>
+          {% for name, note, step, action in [
+            ("PCA / ICA", "Components of the whole-field STA movie of every cell, from the newest completed run of the fast hypothesis", decomposition, "run-decomposition"),
+            ("SNAPT", "Propagation maps of every cell, from its significant clusters and the newest completed PCA / ICA", snapt, "run-snapt")] %}
           <tr>
-            <td><b>PCA / ICA</b><div class="muted small">Components of the whole-field STA movie of every cell, from the newest completed run of the fast hypothesis</div></td>
-            <td><span class="chip {{ decomposition.status }}">{{ decomposition.status.replace("_", " ") }}</span></td>
+            <td><b>{{ name }}</b><div class="muted small">{{ note }}</div></td>
+            <td><span class="chip {{ step.status }}">{{ step.status.replace("_", " ") }}</span></td>
             <td class="num">
-              {% if analysis_ready and decomposition.status not in ("running", "pending", "waiting", "queued") %}
-              <form method="post" action="/experiments/{{ exp.id }}/run-decomposition"><button class="secondary small" type="submit">{{ "Rerun" if decomposition.status != "not_run" else "Run" }}</button></form>
+              {% if analysis_ready and step.status not in ("running", "pending", "waiting", "queued") %}
+              <form method="post" action="/experiments/{{ exp.id }}/{{ action }}"><button class="secondary small" type="submit">{{ "Rerun" if step.status != "not_run" else "Run" }}</button></form>
               {% endif %}
             </td>
           </tr>
+          {% endfor %}
         </tbody>
       </table>
     </div>

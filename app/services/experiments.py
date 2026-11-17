@@ -216,21 +216,32 @@ def start_analysis(settings: Settings, experiment_id: int, result_types, sta_opt
     return feeding + sta
 
 
-def start_decomposition(settings: Settings, experiment_id: int) -> int:
-    """Start the PCA / ICA of the STA movies of the experiment by hand (also for an experiment whose other steps are all done); returns the run id. Needs the confirmed Suite2p cells
-    and a completed STA Maps run of the fast hypothesis (with the 'all' result type, which the decomposition reads); a decomposition already in progress is not doubled."""
+def _start_cluster_step(settings: Settings, experiment_id: int, step: str, label: str, needs: str, needs_text: str) -> int:
+    """Start a cluster step that reads the saved results of the step `needs` by hand (also for an experiment whose other steps are all done); returns the run id. Needs the confirmed
+    Suite2p cells and a completed run of `needs`; a run of the step already in progress is not doubled."""
     if repo.workflow_stage_of(settings, experiment_id) != repo.STAGE_ANALYSIS_READY:
-        raise ValueError("The decomposition can run only after preprocessing and Suite2p have been confirmed.")
+        raise ValueError(f"{label} can run only after preprocessing and Suite2p have been confirmed.")
+    if step in run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES):
+        raise ValueError(f"{label} is already running for this experiment.")
+    if needs not in run_repository.steps_with_status(settings, experiment_id, ("completed",)):
+        raise ValueError(f"{label} needs {needs_text}")
+    run_id = create_run(settings, experiment_id, step, {}, backend="cluster")
+    launch_run(settings, run_id)
+    return run_id
+
+
+def start_decomposition(settings: Settings, experiment_id: int) -> int:
+    """Start the PCA / ICA of the STA movies of the experiment by hand; needs a completed STA Maps run of the fast hypothesis (with the 'all' result type, which the decomposition reads)."""
     fast = sta_step(g.DECOMPOSITION_HYPOTHESIS)
     if fast not in STEPS:
         raise ValueError(f"The decomposition reads the STA movies of the hypothesis '{g.DECOMPOSITION_HYPOTHESIS}', which is not in the hypothesis catalogue.")
-    if g.DECOMPOSITION_STEP in run_repository.steps_with_status(settings, experiment_id, ACTIVE_STATUSES):
-        raise ValueError("The decomposition is already running for this experiment.")
-    if fast not in run_repository.steps_with_status(settings, experiment_id, ("completed",)):
-        raise ValueError(f"The decomposition needs a completed STA Maps run of the '{g.DECOMPOSITION_HYPOTHESIS}' hypothesis (with the 'all' result type): run it from Run analysis first.")
-    run_id = create_run(settings, experiment_id, g.DECOMPOSITION_STEP, {}, backend="cluster")
-    launch_run(settings, run_id)
-    return run_id
+    return _start_cluster_step(settings, experiment_id, g.DECOMPOSITION_STEP, "The decomposition", fast,
+                               f"a completed STA Maps run of the '{g.DECOMPOSITION_HYPOTHESIS}' hypothesis (with the 'all' result type): run it from Run analysis first.")
+
+
+def start_snapt(settings: Settings, experiment_id: int) -> int:
+    """Start the SNAPT propagation maps of the experiment by hand; needs a completed PCA / ICA run."""
+    return _start_cluster_step(settings, experiment_id, g.SNAPT_STEP, "SNAPT", g.DECOMPOSITION_STEP, "a completed PCA / ICA run: start it from the Overview tab first.")
 
 
 def start_spike_detection(settings: Settings, experiment_id: int) -> int:
